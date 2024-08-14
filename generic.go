@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"sync"
-
-	"bitbucket.org/iqhive/apierror/v3"
-	"bitbucket.org/iqhive/iqlog/v3"
 )
 
 var configMutex sync.RWMutex
@@ -48,39 +45,39 @@ func (c *GenericConfig) Init(parent interface{}, name string, filename string) {
 		ptr := reflect.New(v.Type())
 		ptr.Elem().Set(v)
 		parent = ptr.Interface()
-		iqlog.Warnf("GenericConfig: Init() must be called with a parent struct pointer, not a struct")
+		Logger.Warn("GenericConfig: Init() must be called with a parent struct pointer, not a struct")
 	}
 
 	if c.parent != nil {
-		iqlog.Warnf("GenericConfig: Init() called more than once")
+		Logger.Warn("GenericConfig: Init() called more than once")
 		return
 	}
 	c.parent = parent
 	c.SetName(name)
 	c.SetFilename(filename)
 
-	// iqlog.Debug("SetupConfigData ", name)
+	// Logger.Debug("SetupConfigData ", name)
 	c.SetupConfigData()
 
-	// iqlog.Debug("ReplaceConfigFuncs ", name)
+	// Logger.Debug("ReplaceConfigFuncs ", name)
 	c.ReplaceConfigFuncs()
 
-	// iqlog.Debug("SetDefaults ", name)
+	// Logger.Debug("SetDefaults ", name)
 	c.SetDefaults()
 
-	// iqlog.Debug("loadConfig ", name)
+	// Logger.Debug("loadConfig ", name)
 	c.loadConfig()
 
-	// iqlog.Debug("loadFromEnv ", name)
+	// Logger.Debug("loadFromEnv ", name)
 	c.loadFromEnv()
 
-	// iqlog.Debug("CreateFlags ", name)
+	// Logger.Debug("CreateFlags ", name)
 	c.CreateFlags()
 
-	// // iqlog.Debug("loadFlags ", name)
+	// // Logger.Debug("loadFlags ", name)
 	// c.loadFlags()
 
-	// iqlog.Debug("Done Init")
+	// Logger.Debug("Done Init")
 }
 
 func (c *GenericConfig) SetupConfigData() {
@@ -96,7 +93,7 @@ func (c *GenericConfig) SetupConfigData() {
 	}
 
 	if v.Kind() != reflect.Struct {
-		iqlog.Warnf("SetupConfigData: expected struct, got %v", v.Kind())
+		Logger.Warn("SetupConfigData: expected struct, got %v", v.Kind())
 		return
 	}
 
@@ -119,7 +116,7 @@ func (c *GenericConfig) SetupConfigData() {
 		}
 
 		if configVarName == "" {
-			iqlog.Warnf("No config or json tag found for field %s", field.Name)
+			Logger.Warn("No config or json tag found for field %s", field.Name)
 			configVarName = t.Field(i).Name
 		}
 
@@ -162,7 +159,7 @@ func (c *GenericConfig) setDefaultValue(configVarName string, kind reflect.Type)
 }
 
 func (c *GenericConfig) setValueFromFunc(configVarName string, fieldValue reflect.Value) {
-	// iqlog.Warnf("setValueFromFunc %s of type %s", configVarName, fieldValue.Type())
+	// Logger.Warn("setValueFromFunc %s of type %s", configVarName, fieldValue.Type())
 	c.set(configVarName, fieldValue.Call(nil)[0].Interface())
 }
 
@@ -182,9 +179,9 @@ func (c *GenericConfig) Set(key string, value interface{}) error {
 func (c *GenericConfig) set(key string, value interface{}) error {
 	// before := fmt.Sprintf("%T", c.configData[key])
 	// if before != "<nil>" {
-	// 	iqlog.Infof("set before type: %s", before)
+	// 	Logger.Info("set before type: %s", before)
 	// }
-	// iqlog.Infof("Setting %s", key)
+	// Logger.Info("Setting %s", key)
 
 	switch val := value.(type) {
 	case nil:
@@ -193,14 +190,14 @@ func (c *GenericConfig) set(key string, value interface{}) error {
 			case reflect.Slice:
 				c.setValue(key, reflect.MakeSlice(reflect.TypeOf(existingVal), 0, 0).Interface())
 			case reflect.Map:
-				// iqlog.Debugf("making map %s of type %T", key, existingVal)
+				// Logger.Debugf("making map %s of type %T", key, existingVal)
 				c.setValue(key, reflect.MakeMap(reflect.TypeOf(existingVal)).Interface())
 			default:
-				return apierror.New(nil, 400, "nil is not a valid type for key %s", key)
+				return ErrorWrapper(nil, 400, "nil is not a valid type for key %s", key)
 				// c.setValue(key, nil)
 			}
 		} else {
-			return apierror.New(nil, 400, "nil set into unknown key %s", key)
+			return ErrorWrapper(nil, 400, "nil set into unknown key %s", key)
 			// c.setValue(key, nil)
 		}
 	case time.Duration:
@@ -249,18 +246,18 @@ func (c *GenericConfig) set(key string, value interface{}) error {
 			case int64:
 				c.setValue(key, convertToInt64Slice(val))
 			default:
-				return apierror.New(fmt.Errorf("Unsupported slice type for key %s: %T", key, val[0]), 0, "")
+				return ErrorWrapper(fmt.Errorf("Unsupported slice type for key %s: %T", key, val[0]), 0, "")
 			}
 		} else {
 			c.setEmptySlice(key)
 		}
 	default:
-		return apierror.New(nil, 400, "Unsupported type for key %s: %T", key, value)
+		return ErrorWrapper(nil, 400, "Unsupported type for key %s: %T", key, value)
 	}
 
 	// after := fmt.Sprintf("%T", c.configData[key])
 	// if before != "<nil>" && before != after {
-	// 	iqlog.Warnf("set WARNING: before type: %s != after type: %s", before, after)
+	// 	Logger.Warn("set WARNING: before type: %s != after type: %s", before, after)
 	// }
 
 	return nil
@@ -270,7 +267,7 @@ func (c *GenericConfig) setEmptySlice(key string) {
 	if existingVal, exists := c.configData[key]; exists {
 		c.setValue(key, reflect.MakeSlice(reflect.TypeOf(existingVal), 0, 0).Interface())
 	} else {
-		iqlog.Errorf("Missing key in configData for %s", key)
+		Logger.Error("Missing key in configData for %s", key)
 		c.configData[key] = nil
 	}
 }
@@ -340,7 +337,8 @@ func (c *GenericConfig) SetFilename(filename string) error {
 		c.configData = make(map[string]interface{})
 	}
 	if c.parent == nil {
-		iqlog.Panic("SetFilename should only ever be called after Init()")
+		Logger.Error("SetFilename should only ever be called after Init()")
+		os.Exit(1)
 	}
 
 	c.filename = filename
@@ -350,7 +348,8 @@ func (c *GenericConfig) SetFilename(filename string) error {
 
 func (c *GenericConfig) SetName(name string) {
 	if c.parent == nil {
-		iqlog.Panic("SetName should only ever be called after Init()")
+		Logger.Error("SetName should only ever be called after Init()")
+		os.Exit(1)
 	}
 	c.name = name
 }
@@ -369,7 +368,7 @@ func (c *GenericConfig) ReplaceConfigFuncs() {
 	// Keep dereferencing until we get to a non-pointer value
 	for v.Kind() == reflect.Ptr {
 		if v.IsNil() {
-			iqlog.Warnf("ReplaceConfigFuncs: received nil pointer")
+			Logger.Warn("ReplaceConfigFuncs: received nil pointer")
 			return
 		}
 		v = v.Elem()
@@ -377,7 +376,7 @@ func (c *GenericConfig) ReplaceConfigFuncs() {
 
 	// Ensure we're working with a struct
 	if v.Kind() != reflect.Struct {
-		iqlog.Warnf("ReplaceConfigFuncs: expected struct or pointer to struct, got %v", v.Kind())
+		Logger.Warn("ReplaceConfigFuncs: expected struct or pointer to struct, got %v", v.Kind())
 		return
 	}
 
@@ -394,12 +393,12 @@ func (c *GenericConfig) ReplaceConfigFuncs() {
 			}
 
 			if _, exists := c.configData[configVarName]; !exists {
-				iqlog.Errorf("Missing configData value for key %s", configVarName)
+				Logger.Error("Missing configData value for key %s", configVarName)
 				continue
 			}
 
 			if configVarName != "" && configVarName != "-" {
-				// iqlog.Debugf("making Func %s of type %s", configVarName, fieldValue.Type())
+				// Logger.Debugf("making Func %s of type %s", configVarName, fieldValue.Type())
 				fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
 					return []reflect.Value{c.convertConfigValue(configVarName, fieldValue.Type().Out(0))}
 				}))
@@ -410,7 +409,7 @@ func (c *GenericConfig) ReplaceConfigFuncs() {
 
 func (c *GenericConfig) convertConfigValue(key string, kind reflect.Type) reflect.Value {
 	value := c.configData[key]
-	// iqlog.Errorf("key (%s) = (%T) kind: %s", key, value, kind.Kind())
+	// Logger.Info("key (%s) = (%T) kind: %s", key, value, kind.Kind())
 	switch kind.Kind() {
 	case reflect.Int:
 		return reflect.ValueOf(value.(int))
@@ -463,22 +462,22 @@ func (c *GenericConfig) loadFromEnv() {
 				var t time.Time
 				t, err = time.Parse(time.RFC3339, value)
 				if err == nil {
-					// iqlog.Warnf("loadFromEnv time.Parse %s of type %s", key, reflect.TypeOf(c.configData[key]))
+					// Logger.Warn("loadFromEnv time.Parse %s of type %s", key, reflect.TypeOf(c.configData[key]))
 					err = c.set(key, t)
 				}
 			} else if reflect.TypeOf(c.configData[key]) == reflect.TypeOf(time.Duration(0)) {
 				var d time.Duration
 				d, err = time.ParseDuration(value)
 				if err == nil {
-					// iqlog.Warnf("loadFromEnv time.ParseDuration %s of type %s", key, reflect.TypeOf(c.configData[key]))
+					// Logger.Warn("loadFromEnv time.ParseDuration %s of type %s", key, reflect.TypeOf(c.configData[key]))
 					err = c.set(key, d)
 				}
 			} else {
-				// iqlog.Warnf("loadFromEnv set %s=(%s) of type %s", key, value, reflect.TypeOf(c.configData[key]))
+				// Logger.Warn("loadFromEnv set %s=(%s) of type %s", key, value, reflect.TypeOf(c.configData[key]))
 				err = c.set(key, value)
 			}
 			if err != nil {
-				iqlog.Errorf("Error setting config from environment variable %s: %v", envVar, err)
+				Logger.Info("Error setting config from environment variable %s: %v", envVar, err)
 			}
 		}
 	}
@@ -492,39 +491,39 @@ func (c *GenericConfig) loadConfig() error {
 	}
 	file, err := os.Open(c.filename)
 	if err != nil {
-		return apierror.New(err, 0, "")
+		return ErrorWrapper(err, 0, "")
 	}
 	defer file.Close()
 
 	tempConfigData := make(map[string]interface{})
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&tempConfigData); err != nil {
-		return apierror.New(err, 0, "")
+		return ErrorWrapper(err, 0, "")
 	}
 
 	for key, value := range tempConfigData {
-		// iqlog.Warnf("loadConfig setting %s with type %T", key, value)
+		// Logger.Warn("loadConfig setting %s with type %T", key, value)
 		if reflect.TypeOf(value) == nil {
-			iqlog.Warnf("loadConfig is skipping nil value for %s", key)
+			Logger.Warn("loadConfig is skipping nil value for %s", key)
 			continue
 		}
 		var err error
 		if reflect.TypeOf(c.configData[key]) == reflect.TypeOf(time.Time{}) {
-			// iqlog.Debugf("loadConfig Setting time.Time %s", key)
+			// Logger.Debugf("loadConfig Setting time.Time %s", key)
 			var t time.Time
 			t, err = time.Parse(time.RFC3339, value.(string))
 			if err == nil {
 				err = c.set(key, t)
 			}
 		} else if reflect.TypeOf(c.configData[key]) == reflect.TypeOf(time.Duration(0)) {
-			// iqlog.Debugf("loadConfig Setting time.Duration %s", key)
+			// Logger.Debugf("loadConfig Setting time.Duration %s", key)
 			var d time.Duration
 			d, err = time.ParseDuration(value.(string))
 			if err == nil {
 				err = c.set(key, d)
 			}
 		} else if reflect.TypeOf(c.configData[key]) == reflect.TypeOf(map[string]string{}) {
-			// iqlog.Debugf("loadConfig Setting map[string]string %s to type %T", key, value)
+			// Logger.Debugf("loadConfig Setting map[string]string %s to type %T", key, value)
 			// Convert map[string]interface{} to map[string]string
 			convertedMap := make(map[string]string)
 			for k, v := range value.(map[string]interface{}) {
@@ -532,15 +531,15 @@ func (c *GenericConfig) loadConfig() error {
 			}
 			err = c.set(key, convertedMap)
 		} else {
-			// iqlog.Debugf("loadConfig Setting something else %s (%T)", key, value)
+			// Logger.Debugf("loadConfig Setting something else %s (%T)", key, value)
 			err = c.set(key, value)
 		}
 		if err != nil {
-			iqlog.Errorf("loadConfig ERROR: %v", err)
+			Logger.Error("loadConfig ERROR: %v", err)
 			continue
 		}
 	}
-	// iqlog.Debugf("loadConfig Done")
+	// Logger.Debugf("loadConfig Done")
 	return nil
 }
 
@@ -660,7 +659,7 @@ func (s *intSliceValue) Set(val string) error {
 	for _, v := range strings.Split(val, ",") {
 		var intValue int
 		if _, err := fmt.Sscanf(v, "%d", &intValue); err != nil {
-			return apierror.New(err, 0, "")
+			return ErrorWrapper(err, 0, "")
 		}
 		intSlice = append(intSlice, intValue)
 	}
@@ -702,7 +701,7 @@ func (s *boolSliceValue) Set(val string) error {
 	for _, v := range strings.Split(val, ",") {
 		var boolValue bool
 		if _, err := fmt.Sscanf(v, "%t", &boolValue); err != nil {
-			return apierror.New(err, 0, "")
+			return ErrorWrapper(err, 0, "")
 		}
 		boolSlice = append(boolSlice, boolValue)
 	}
@@ -727,7 +726,7 @@ func (s *float64SliceValue) Set(val string) error {
 	for _, v := range strings.Split(val, ",") {
 		var float64Value float64
 		if _, err := fmt.Sscanf(v, "%f", &float64Value); err != nil {
-			return apierror.New(err, 0, "")
+			return ErrorWrapper(err, 0, "")
 		}
 		float64Slice = append(float64Slice, float64Value)
 	}
@@ -752,7 +751,7 @@ func (s *float32SliceValue) Set(val string) error {
 	for _, v := range strings.Split(val, ",") {
 		var float32Value float32
 		if _, err := fmt.Sscanf(v, "%f", &float32Value); err != nil {
-			return apierror.New(err, 0, "")
+			return ErrorWrapper(err, 0, "")
 		}
 		float32Slice = append(float32Slice, float32Value)
 	}
@@ -777,7 +776,7 @@ func (s *int64SliceValue) Set(val string) error {
 	for _, v := range strings.Split(val, ",") {
 		var int64Value int64
 		if _, err := fmt.Sscanf(v, "%d", &int64Value); err != nil {
-			return apierror.New(err, 0, "")
+			return ErrorWrapper(err, 0, "")
 		}
 		int64Slice = append(int64Slice, int64Value)
 	}
@@ -846,7 +845,7 @@ func (c *GenericConfig) SetDefaults() {
 	}
 
 	if v.Kind() != reflect.Struct {
-		iqlog.Warnf("SetDefaults: expected struct, got %v", v.Kind())
+		Logger.Warn("SetDefaults: expected struct, got %v", v.Kind())
 		return
 	}
 

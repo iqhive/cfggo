@@ -2,8 +2,6 @@ package cfggo
 
 import (
 	"reflect"
-
-	"bitbucket.org/iqhive/iqlog/v3"
 )
 
 var commandLineOnlyFlags []string
@@ -24,7 +22,7 @@ func (c *GenericConfig) CheckUnrecognizedItems(s interface{}) {
 	}
 
 	if v.Kind() != reflect.Struct {
-		iqlog.Warnf("CheckUnrecognizedItems: expected struct, got %v", v.Kind())
+		Logger.Warn("CheckUnrecognizedItems: expected struct, got %v", v.Kind())
 		return
 	}
 
@@ -37,7 +35,7 @@ func (c *GenericConfig) CheckUnrecognizedItems(s interface{}) {
 
 	for _, key := range allKeys {
 		if !recognizedKeys[key] {
-			iqlog.Warnf("Warning: Unrecognized %s item '%s' found", c.name, key)
+			Logger.Warn("Warning: Unrecognized %s item '%s' found", c.name, key)
 		}
 	}
 }

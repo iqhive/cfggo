@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"time"
-
-	"bitbucket.org/iqhive/iqlog/v3"
 )
 
 // NewVar creates a new configuration item, using the type of the defaultValue
@@ -16,7 +14,7 @@ func (c *GenericConfig) NewVar(configVarName string, defaultValue interface{}, c
 	c.configData[configVarName] = defaultValue
 
 	if flag.Lookup(configVarName) != nil {
-		iqlog.Errorf("Flag %s is already set, skipping...\n", configVarName)
+		Logger.Error("Flag %s is already set, skipping...\n", configVarName)
 		return
 	}
 

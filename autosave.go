@@ -8,9 +8,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"bitbucket.org/iqhive/apierror/v3"
-	"bitbucket.org/iqhive/iqlog/v3"
 )
 
 var configsToSave []*GenericConfig
@@ -26,9 +23,9 @@ func (c *GenericConfig) SetupConfigSaver() {
 			<-sigchan
 			for _, config := range configsToSave {
 				if config.changed {
-					iqlog.Infof("Saving %s before exit...", config.filename)
+					Logger.Info("Saving %s before exit...", config.filename)
 					if err := config.saveConfig(); err != nil {
-						iqlog.Errorf("Error saving configuration: %v", err)
+						Logger.Error("Error saving configuration: %v", err)
 					}
 				}
 			}
@@ -40,7 +37,7 @@ func (c *GenericConfig) SetupConfigSaver() {
 func (c *GenericConfig) saveConfig() error {
 	file, err := os.Create(c.filename)
 	if err != nil {
-		return apierror.New(err, 0, "")
+		return ErrorWrapper(err, 0, "")
 	}
 	defer file.Close()
 
@@ -57,7 +54,7 @@ func (c *GenericConfig) saveConfig() error {
 
 	encoder := json.NewEncoder(file)
 	if err := encoder.Encode(tempConfigData); err != nil {
-		return apierror.New(err, 0, "")
+		return ErrorWrapper(err, 0, "")
 	}
 
 	return nil

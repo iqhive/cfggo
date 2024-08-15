@@ -1,13 +1,11 @@
 package cfggo
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"reflect"
 	"strings"
-	"time"
 
 	"sync"
 )
@@ -27,7 +25,8 @@ func init() {
 
 type Structure struct {
 	name               string                 // Name given to this configuration (useful when loading multiple configs)
-	filename           string                 // Config filename, eg: application.json
+	configHandler      configHandler          // Configuration handler (optional)
+	skipEnv            bool                   // Skip Environment variables
 	createdFile        bool                   // Did we create the config file
 	changed            bool                   // Has the config changed (used to trigger save on exit)
 	defaultsAlreadySet bool                   // Are the defaults already set
@@ -42,7 +41,7 @@ func DefaultValue[T any](x T) func() T {
 	}
 }
 
-func (c *Structure) Init(parent interface{}, name string, filename string) {
+func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	// Ensure parent is a pointer
 	v := reflect.ValueOf(parent)
@@ -64,8 +63,19 @@ func (c *Structure) Init(parent interface{}, name string, filename string) {
 		return
 	}
 	c.parent = parent
-	c.SetName(name)
-	c.SetFilename(filename)
+
+	// Apply options
+	for _, option := range options {
+		err := option(c)
+		if err != nil {
+			Logger.Error("Structure: Init() option returned error: %v", err)
+			os.Exit(1)
+		}
+	}
+
+	if c.name == "" {
+		c.name = reflect.TypeOf(c.parent).Elem().Name() // Set c.name as the name of the parent struct
+	}
 
 	// Logger.Info("SetupConfigData %s", name)
 	c.setupConfigData()
@@ -76,8 +86,10 @@ func (c *Structure) Init(parent interface{}, name string, filename string) {
 	// Logger.Info("SetDefaults %s", name)
 	c.setDefaults()
 
-	// Logger.Info("loadConfig %s", name)
-	c.loadConfig()
+	// LoadConfig
+	if c.configHandler != nil {
+		c.loadConfig()
+	}
 
 	// Logger.Info("loadFromEnv %s", name)
 	c.loadFromEnv()
@@ -97,12 +109,9 @@ func (c *Structure) setupConfigData() {
 
 	// Ensure we're working with the struct value, not a pointer
 	for v.Kind() == reflect.Ptr {
+		// Logger.Debug("SetupConfigData: dereferencing pointer")
 		v = v.Elem()
 	}
-	// if v.Kind() != reflect.Struct {
-	// 	Logger.Error("SetupConfigData: parent is not a pointer to a struct")
-	// 	os.Exit(1)
-	// }
 
 	if v.Kind() != reflect.Struct {
 		Logger.Warn("SetupConfigData: expected struct, got %v", v.Kind())
@@ -160,19 +169,6 @@ func (c *Structure) set(key string, value interface{}) error {
 	return nil
 }
 
-func (c *Structure) setEmptySlice(key string) {
-	if existingVal, exists := c.configData[key]; exists {
-		c.setValue(key, reflect.MakeSlice(reflect.TypeOf(existingVal), 0, 0).Interface())
-	} else {
-		Logger.Error("Missing key in configData for %s", key)
-		c.configData[key] = nil
-	}
-}
-
-func (c *Structure) setValue(key string, value interface{}) {
-	c.configData[key] = value
-}
-
 // Get gets a configuration value and whether it exists from the configData
 func (c *Structure) Get(key string) (interface{}, bool) {
 	configMutex.RLock()
@@ -181,32 +177,10 @@ func (c *Structure) Get(key string) (interface{}, bool) {
 	return value, exists
 }
 
-func (c *Structure) SetFilename(filename string) error {
-	if c.configData == nil {
-		c.configData = make(map[string]interface{})
-	}
-	if c.parent == nil {
-		Logger.Error("SetFilename should only ever be called after Init()")
-		os.Exit(1)
-	}
-
-	c.filename = filename
-
-	return nil
-}
-
-func (c *Structure) SetName(name string) {
-	if c.parent == nil {
-		Logger.Error("SetName should only ever be called after Init()")
-		os.Exit(1)
-	}
-	c.name = name
-}
-
 func (c *Structure) createFlags() {
 	for key, value := range c.configData {
 		configDescription := "" // You can set a default description or fetch it from somewhere if needed
-		c.NewVar(key, value, configDescription)
+		c.NewFlag(key, value, configDescription)
 	}
 }
 
@@ -256,39 +230,6 @@ func (c *Structure) replaceConfigFuncs() {
 	}
 }
 
-func (c *Structure) loadFromEnv() {
-	configMutex.Lock()
-	defer configMutex.Unlock()
-
-	for key := range c.configData {
-		envVar := strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
-		if value, exists := os.LookupEnv(envVar); exists {
-			var err error
-			if reflect.TypeOf(c.configData[key]) == reflect.TypeOf(time.Time{}) {
-				var t time.Time
-				t, err = time.Parse(time.RFC3339, value)
-				if err == nil {
-					// Logger.Warn("loadFromEnv time.Parse %s of type %s", key, reflect.TypeOf(c.configData[key]))
-					err = c.set(key, t)
-				}
-			} else if reflect.TypeOf(c.configData[key]) == reflect.TypeOf(time.Duration(0)) {
-				var d time.Duration
-				d, err = time.ParseDuration(value)
-				if err == nil {
-					// Logger.Warn("loadFromEnv time.ParseDuration %s of type %s", key, reflect.TypeOf(c.configData[key]))
-					err = c.set(key, d)
-				}
-			} else {
-				// Logger.Warn("loadFromEnv set %s=(%s) of type %s", key, value, reflect.TypeOf(c.configData[key]))
-				err = c.set(key, value)
-			}
-			if err != nil {
-				Logger.Info("Error setting config from environment variable %s: %v", envVar, err)
-			}
-		}
-	}
-}
-
 // create struct create a new struct based on the config data
 func (c *Structure) createStruct() interface{} {
 	ptype := reflect.TypeOf(c.parent).Elem() // always a pointer.
@@ -329,42 +270,6 @@ func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
 		return name
 	}
 	return field.Name
-}
-
-func (c *Structure) loadConfig() error {
-	configMutex.Lock()
-	defer configMutex.Unlock()
-
-	if c.filename == "" {
-		return nil
-	}
-	file, err := os.Open(c.filename)
-	if err != nil {
-		return ErrorWrapper(err, 0, "")
-	}
-	defer file.Close()
-
-	tempConfigData := c.createStruct()
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(tempConfigData); err != nil {
-		return ErrorWrapper(err, 0, "")
-	}
-
-	rvalue := reflect.ValueOf(tempConfigData).Elem()
-	rtype := rvalue.Type()
-	for i := range rvalue.NumField() {
-		field := rtype.Field(i)
-		configKey := c.getConfigNameFromField(field)
-		if configKey == "" || configKey == "-" {
-			continue
-		}
-		err := c.set(configKey, rvalue.Field(i).Interface())
-		if err != nil {
-			Logger.Warn("loadConfig error setting %s to (%v): %v", configKey, rvalue.Field(i).Interface(), err)
-		}
-	}
-
-	return nil
 }
 
 func (c *Structure) getAllKeys() []string {

@@ -88,15 +88,47 @@ func (c *Structure) String() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%s:\n", c.name))
 	maxKeyLen := 0
+	maxValueLen := 0
 	for key := range c.configData {
 		if len(key) > maxKeyLen {
 			maxKeyLen = len(key)
 		}
+		s := fmt.Sprintf("%v", c.configData[key])
+		if len(s) > maxValueLen {
+			maxValueLen = len(s)
+		}
 	}
 	for key, value := range c.configData {
-		sb.WriteString(fmt.Sprintf("%*s: %v\n", maxKeyLen, key, value))
+		valueStr := fmt.Sprintf("%v", value)
+		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
+
+		helpTag := c.GetHelpTag(key)
+		if helpTag != "" {
+			sb.WriteString(fmt.Sprintf("%*s: %v %s// %s\n", maxKeyLen, key, valueStr, helpSpacer, helpTag))
+		} else {
+			sb.WriteString(fmt.Sprintf("%*s: %v\n", maxKeyLen, key, valueStr))
+		}
 	}
 	return sb.String()
+}
+
+func (c *Structure) GetHelpTag(key string) string {
+	v := reflect.ValueOf(c.parent)
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return ""
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		configVarName := c.getConfigNameFromField(field)
+		if configVarName == key {
+			return field.Tag.Get("help")
+		}
+	}
+	return ""
 }
 
 func (c *Structure) saveConfig() error {

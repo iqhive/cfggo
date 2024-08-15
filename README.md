@@ -131,10 +131,12 @@ func main() {
 	fmt.Println("DurationField:", mycfg.DurationField())
 	fmt.Println("TimeField:", mycfg.TimeField())
 }
+```
 
 ### Thread-Safety
 
 `cfggo` is thread-safe, meaning you can access and update the configuration from multiple goroutines concurrently without worrying about data races.
+
 ```go
 package main
 
@@ -173,6 +175,7 @@ func main() {
     // Wait for goroutines to finish (for demonstration purposes)
     time.Sleep(2 * time.Second)
 }
+```
 
 ## Contributing
 

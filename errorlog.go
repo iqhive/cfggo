@@ -1,8 +1,9 @@
 package cfggo
 
 import (
-	"bitbucket.org/iqhive/apierror/v3"
-	"bitbucket.org/iqhive/iqlog/v3"
+	"fmt"
+	"log/slog"
+	"os"
 )
 
 type errorWrapper func(err error, errorcode int, msg string, args ...interface{}) error
@@ -14,7 +15,11 @@ type logger interface {
 	Error(format string, args ...interface{})
 }
 
-var ErrorWrapper errorWrapper = apierror.NewIfError
+var (
+	ErrorWrapper errorWrapper = DefaultErrorWrapper
+	Logger       logger       = slog.New(slog.NewTextHandler(os.Stdout, nil))
+)
 
-// var Logger logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
-var Logger logger = iqlog.GlobalLogger
+func DefaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
+	return fmt.Errorf(msg, args...)
+}

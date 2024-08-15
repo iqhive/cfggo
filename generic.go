@@ -68,13 +68,13 @@ func (c *Structure) Init(parent interface{}, name string, filename string) {
 	c.SetFilename(filename)
 
 	// Logger.Info("SetupConfigData %s", name)
-	c.SetupConfigData()
+	c.setupConfigData()
 
 	// Logger.Info("ReplaceConfigFuncs %s", name)
-	c.ReplaceConfigFuncs()
+	c.replaceConfigFuncs()
 
 	// Logger.Info("SetDefaults %s", name)
-	c.SetDefaults()
+	c.setDefaults()
 
 	// Logger.Info("loadConfig %s", name)
 	c.loadConfig()
@@ -83,12 +83,12 @@ func (c *Structure) Init(parent interface{}, name string, filename string) {
 	c.loadFromEnv()
 
 	// Logger.Info("CreateFlags %s", name)
-	c.CreateFlags()
+	c.createFlags()
 
 	// Logger.Info("Done Init")
 }
 
-func (c *Structure) SetupConfigData() {
+func (c *Structure) setupConfigData() {
 	if c.configData == nil {
 		c.configData = make(map[string]interface{})
 	}
@@ -203,7 +203,7 @@ func (c *Structure) SetName(name string) {
 	c.name = name
 }
 
-func (c *Structure) CreateFlags() {
+func (c *Structure) createFlags() {
 	for key, value := range c.configData {
 		configDescription := "" // You can set a default description or fetch it from somewhere if needed
 		c.NewVar(key, value, configDescription)
@@ -211,7 +211,7 @@ func (c *Structure) CreateFlags() {
 }
 
 // var once sync.Once
-func (c *Structure) ReplaceConfigFuncs() {
+func (c *Structure) replaceConfigFuncs() {
 	v := reflect.ValueOf(c.parent)
 
 	// Keep dereferencing until we get to a non-pointer value
@@ -375,7 +375,7 @@ func (c *Structure) getAllKeys() []string {
 	return keys
 }
 
-func (c *Structure) SetDefaults() {
+func (c *Structure) setDefaults() {
 	if c.defaultsAlreadySet {
 		return
 	}

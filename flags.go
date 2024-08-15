@@ -10,13 +10,13 @@ import (
 	"strings"
 )
 
-type DynamicVar struct {
+type dynamicVar struct {
 	config *Structure
 	name   string
 	want   reflect.Type
 }
 
-func (d *DynamicVar) Set(s string) error {
+func (d *dynamicVar) Set(s string) error {
 	var value = reflect.New(d.want).Elem()
 	switch d.want.Kind() {
 	case reflect.String:
@@ -74,7 +74,7 @@ func (d *DynamicVar) Set(s string) error {
 	return nil
 }
 
-func (d *DynamicVar) String() string {
+func (d *dynamicVar) String() string {
 	if d.config == nil {
 		return ""
 	}
@@ -95,5 +95,5 @@ func (c *Structure) NewVar(configVarName string, defaultValue interface{}, confi
 		Logger.Error("Flag %s is already set, skipping...\n", configVarName)
 		return
 	}
-	flag.Var(&DynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
+	flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
 }

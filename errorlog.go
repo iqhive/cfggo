@@ -16,10 +16,10 @@ type logger interface {
 }
 
 var (
-	ErrorWrapper errorWrapper = DefaultErrorWrapper
+	ErrorWrapper errorWrapper = defaultErrorWrapper
 	Logger       logger       = slog.New(slog.NewTextHandler(os.Stdout, nil))
 )
 
-func DefaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
+func defaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
 	return fmt.Errorf(msg, args...)
 }

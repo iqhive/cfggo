@@ -10,7 +10,7 @@ func IgnoreFlags(flags ...string) {
 	commandLineOnlyFlags = append(commandLineOnlyFlags, flags...)
 }
 
-func (c *GenericConfig) CheckUnrecognizedItems(s interface{}) {
+func (c *Structure) CheckUnrecognizedItems(s interface{}) {
 	allKeys := c.getAllKeys()
 	recognizedKeys := make(map[string]bool)
 
@@ -40,7 +40,7 @@ func (c *GenericConfig) CheckUnrecognizedItems(s interface{}) {
 	}
 }
 
-func (c *GenericConfig) walkStructFieldsWithKeys(v reflect.Value, prefix string, recognizedKeys map[string]bool) {
+func (c *Structure) walkStructFieldsWithKeys(v reflect.Value, prefix string, recognizedKeys map[string]bool) {
 	for v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}

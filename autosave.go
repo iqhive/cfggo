@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-var configsToSave []*GenericConfig
+var configsToSave []*Structure
 var once sync.Once
 
-func (c *GenericConfig) SetupConfigSaver() {
+func (c *Structure) SetupConfigSaver() {
 	configsToSave = append(configsToSave, c)
 
 	once.Do(func() {
@@ -34,7 +34,7 @@ func (c *GenericConfig) SetupConfigSaver() {
 	})
 }
 
-func (c *GenericConfig) saveConfig() error {
+func (c *Structure) saveConfig() error {
 	file, err := os.Create(c.filename)
 	if err != nil {
 		return ErrorWrapper(err, 0, "")

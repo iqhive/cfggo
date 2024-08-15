@@ -11,7 +11,7 @@ import (
 var timeNow = time.Now()
 
 type TestConfig struct {
-	GenericConfig
+	Structure
 	StringEmptyField  func() string                 `json:"string_empty_field" config:"string_empty_field"`
 	StringField       func() string                 `json:"string_field" config:"string_field"`
 	IntZeroField      func() int                    `json:"int_zero_field" config:"int_zero_field"`

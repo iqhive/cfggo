@@ -18,6 +18,10 @@ func init() {
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
+		// fmt.Println("Configuration parameters:")
+		// for name := range flag.CommandLine.NFlag() {
+		// 	fmt.Printf("  %s\n", name)
+		// }
 	}
 }
 
@@ -39,6 +43,7 @@ func DefaultValue[T any](x T) func() T {
 }
 
 func (c *GenericConfig) Init(parent interface{}, name string, filename string) {
+
 	// Ensure parent is a pointer
 	v := reflect.ValueOf(parent)
 	if v.Kind() != reflect.Ptr {
@@ -56,28 +61,28 @@ func (c *GenericConfig) Init(parent interface{}, name string, filename string) {
 	c.SetName(name)
 	c.SetFilename(filename)
 
-	// Logger.Debug("SetupConfigData ", name)
+	// Logger.Info("SetupConfigData %s", name)
 	c.SetupConfigData()
 
-	// Logger.Debug("ReplaceConfigFuncs ", name)
+	// Logger.Info("ReplaceConfigFuncs %s", name)
 	c.ReplaceConfigFuncs()
 
-	// Logger.Debug("SetDefaults ", name)
+	// Logger.Info("SetDefaults %s", name)
 	c.SetDefaults()
 
-	// Logger.Debug("loadConfig ", name)
+	// Logger.Info("loadConfig %s", name)
 	c.loadConfig()
 
-	// Logger.Debug("loadFromEnv ", name)
+	// Logger.Info("loadFromEnv %s", name)
 	c.loadFromEnv()
 
-	// Logger.Debug("CreateFlags ", name)
+	// Logger.Info("CreateFlags %s", name)
 	c.CreateFlags()
 
-	// // Logger.Debug("loadFlags ", name)
+	// Logger.Info("loadFlags %s", name)
 	// c.loadFlags()
 
-	// Logger.Debug("Done Init")
+	// Logger.Info("Done Init")
 }
 
 func (c *GenericConfig) SetupConfigData() {
@@ -409,7 +414,8 @@ func (c *GenericConfig) ReplaceConfigFuncs() {
 
 func (c *GenericConfig) convertConfigValue(key string, kind reflect.Type) reflect.Value {
 	value := c.configData[key]
-	// Logger.Info("key (%s) = (%T) kind: %s", key, value, kind.Kind())
+	fmt.Printf("key (%s) = (%T) kind: %s\n", key, value, kind.Kind())
+	Logger.Info("key (%s) = (%T) kind: %s", key, value, kind.Kind())
 	switch kind.Kind() {
 	case reflect.Int:
 		return reflect.ValueOf(value.(int))
@@ -443,6 +449,37 @@ func (c *GenericConfig) convertConfigValue(key string, kind reflect.Type) reflec
 			return reflect.ValueOf(value.(map[string]string))
 		} else if kind == reflect.TypeOf(map[string]interface{}{}) {
 			return reflect.ValueOf(value.(map[string]interface{}))
+		}
+	case reflect.Slice:
+		switch kind.Elem().Kind() {
+		case reflect.Int:
+			return reflect.ValueOf(value.([]int))
+		case reflect.Int8:
+			return reflect.ValueOf(value.([]int8))
+		case reflect.Int16:
+			return reflect.ValueOf(value.([]int16))
+		case reflect.Int32:
+			return reflect.ValueOf(value.([]int32))
+		case reflect.Int64:
+			return reflect.ValueOf(value.([]int64))
+		case reflect.Uint:
+			return reflect.ValueOf(value.([]uint))
+		case reflect.Uint8:
+			return reflect.ValueOf(value.([]uint8))
+		case reflect.Uint16:
+			return reflect.ValueOf(value.([]uint16))
+		case reflect.Uint32:
+			return reflect.ValueOf(value.([]uint32))
+		case reflect.Uint64:
+			return reflect.ValueOf(value.([]uint64))
+		case reflect.Float32:
+			return reflect.ValueOf(value.([]float32))
+		case reflect.Float64:
+			return reflect.ValueOf(value.([]float64))
+		case reflect.Bool:
+			return reflect.ValueOf(value.([]bool))
+		case reflect.String:
+			return reflect.ValueOf(value.([]string))
 		}
 	default:
 		return reflect.ValueOf(value)

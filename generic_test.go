@@ -12,36 +12,36 @@ var timeNow = time.Now()
 
 type TestConfig struct {
 	Structure
-	StringEmptyField  func() string                 `json:"string_empty_field" config:"string_empty_field"`
-	StringField       func() string                 `json:"string_field" config:"string_field"`
-	IntZeroField      func() int                    `json:"int_zero_field" config:"int_zero_field"`
-	IntNegField       func() int                    `json:"int_neg_field" config:"int_neg_field"`
-	IntPosField       func() int                    `json:"int_pos_field" config:"int_pos_field"`
-	BoolFalseField    func() bool                   `json:"bool_false_field" config:"bool_false_field"`
-	BoolTrueField     func() bool                   `json:"bool_true_field" config:"bool_true_field"`
-	StringSlice       func() []string               `json:"string_slice" config:"string_slice"`
-	EmptyStringSlice  func() []string               `json:"empty_string_slice" config:"empty_string_slice"`
-	NilStringSlice    func() []string               `json:"nil_string_slice" config:"nil_string_slice"`
-	IntSlice          func() []int                  `json:"int_slice" config:"int_slice"`
-	EmptyIntSlice     func() []int                  `json:"empty_int_slice" config:"empty_int_slice"`
-	NilIntSlice       func() []int                  `json:"nil_int_slice" config:"nil_int_slice"`
-	BoolSlice         func() []bool                 `json:"bool_slice" config:"bool_slice"`
-	EmptyBoolSlice    func() []bool                 `json:"empty_bool_slice" config:"empty_bool_slice"`
-	NilBoolSlice      func() []bool                 `json:"nil_bool_slice" config:"nil_bool_slice"`
-	Float64Slice      func() []float64              `json:"float64_slice" config:"float64_slice"`
-	EmptyFloat64Slice func() []float64              `json:"empty_float64_slice" config:"empty_float64_slice"`
-	NilFloat64Slice   func() []float64              `json:"nil_float64_slice" config:"nil_float64_slice"`
-	Float32Slice      func() []float32              `json:"float32_slice" config:"float32_slice"`
-	EmptyFloat32Slice func() []float32              `json:"empty_float32_slice" config:"empty_float32_slice"`
-	NilFloat32Slice   func() []float32              `json:"nil_float32_slice" config:"nil_float32_slice"`
-	StringMap         func() map[string]string      `json:"string_map" config:"string_map"`
-	EmptyStringMap    func() map[string]string      `json:"empty_string_map" config:"empty_string_map"`
-	NilStringMap      func() map[string]string      `json:"nil_string_map" config:"nil_string_map"`
-	InterfaceMap      func() map[string]interface{} `json:"interface_map" config:"interface_map"`
-	EmptyInterfaceMap func() map[string]interface{} `json:"empty_interface_map" config:"empty_interface_map"`
-	NilInterfaceMap   func() map[string]interface{} `json:"nil_interface_map" config:"nil_interface_map"`
-	DurationField     func() time.Duration          `json:"duration_field" config:"duration_field"`
-	TimeField         func() time.Time              `json:"time_field" config:"time_field"`
+	StringEmptyField  func() string                 `json:"string_empty_field" help:"Test field"`
+	StringField       func() string                 `json:"string_field" help:"Test field"`
+	IntZeroField      func() int                    `json:"int_zero_field" help:"Test field"`
+	IntNegField       func() int                    `json:"int_neg_field" help:"Test field"`
+	IntPosField       func() int                    `json:"int_pos_field" help:"Test field"`
+	BoolFalseField    func() bool                   `json:"bool_false_field" help:"Test field"`
+	BoolTrueField     func() bool                   `json:"bool_true_field" help:"Test field"`
+	StringSlice       func() []string               `json:"string_slice" help:"Test field"`
+	EmptyStringSlice  func() []string               `json:"empty_string_slice" help:"Test field"`
+	NilStringSlice    func() []string               `json:"nil_string_slice" help:"Test field"`
+	IntSlice          func() []int                  `json:"int_slice" help:"Test field"`
+	EmptyIntSlice     func() []int                  `json:"empty_int_slice" help:"Test field"`
+	NilIntSlice       func() []int                  `json:"nil_int_slice" help:"Test field"`
+	BoolSlice         func() []bool                 `json:"bool_slice" help:"Test field"`
+	EmptyBoolSlice    func() []bool                 `json:"empty_bool_slice" help:"Test field"`
+	NilBoolSlice      func() []bool                 `json:"nil_bool_slice" help:"Test field"`
+	Float64Slice      func() []float64              `json:"float64_slice" help:"Test field"`
+	EmptyFloat64Slice func() []float64              `json:"empty_float64_slice" help:"Test field"`
+	NilFloat64Slice   func() []float64              `json:"nil_float64_slice" help:"Test field"`
+	Float32Slice      func() []float32              `json:"float32_slice" help:"Test field"`
+	EmptyFloat32Slice func() []float32              `json:"empty_float32_slice" help:"Test field"`
+	NilFloat32Slice   func() []float32              `json:"nil_float32_slice" help:"Test field"`
+	StringMap         func() map[string]string      `json:"string_map" help:"Test field"`
+	EmptyStringMap    func() map[string]string      `json:"empty_string_map" help:"Test field"`
+	NilStringMap      func() map[string]string      `json:"nil_string_map" help:"Test field"`
+	InterfaceMap      func() map[string]interface{} `json:"interface_map" help:"Test field"`
+	EmptyInterfaceMap func() map[string]interface{} `json:"empty_interface_map" help:"Test field"`
+	NilInterfaceMap   func() map[string]interface{} `json:"nil_interface_map" help:"Test field"`
+	DurationField     func() time.Duration          `json:"duration_field" help:"Test field"`
+	TimeField         func() time.Time              `json:"time_field" help:"Test field"`
 }
 
 func NewTestConfig() *TestConfig {

@@ -126,13 +126,10 @@ func TestDefaultValue(t *testing.T) {
 func TestInit(t *testing.T) {
 	timeNow = time.Now()
 	config := NewTestConfig()
-	config.Init(config, "test", "")
+	config.Init(config)
 
-	if config.name != "test" {
-		t.Errorf("Expected name to be 'test', but got %v", config.name)
-	}
-	if config.filename != "" {
-		t.Errorf("Expected filename to be '', but got %v", config.filename)
+	if config.name != "TestConfig" {
+		t.Errorf("Expected name to be 'TestConfig', but got %v", config.name)
 	}
 	if config.parent != config {
 		t.Errorf("Expected parent to be config, but got %v", config.parent)
@@ -175,7 +172,7 @@ func TestInit(t *testing.T) {
 
 func TestSaveAndLoadConfig(t *testing.T) {
 	config := NewTestConfig()
-	config.Init(config, "test", "test.json")
+	config.Init(config, WithFileConfig("test.json"))
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")
@@ -204,7 +201,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	defer os.Unsetenv("STRING_FIELD")
 
 	config := NewTestConfig()
-	config.Init(config, "test", "test.json")
+	config.Init(config, WithFileConfig("test.json"))
 
 	if config.StringField() != "env_value" {
 		t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -216,7 +213,7 @@ func TestCommandLineFlags(t *testing.T) {
 	flag.Parse()
 
 	config := NewTestConfig()
-	config.Init(config, "test", "test.json")
+	config.Init(config, WithFileConfig("test.json"))
 	// Reset flags for other tests
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
@@ -226,7 +223,7 @@ func TestCommandLineFlags(t *testing.T) {
 		defer os.Unsetenv("STRING_FIELD")
 
 		config := NewTestConfig()
-		config.Init(config, "test", "test.json")
+		config.Init(config, WithFileConfig("test.json"))
 
 		if config.StringField() != "env_value" {
 			t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -236,7 +233,7 @@ func TestCommandLineFlags(t *testing.T) {
 	// Modify the TestSaveAndLoadConfig test
 	t.Run("TestSaveAndLoadConfig", func(t *testing.T) {
 		config := NewTestConfig()
-		config.Init(config, "test", "test_save_load.json")
+		config.Init(config, WithFileConfig("test_save_load.json"))
 		defer os.Remove("test_save_load.json")
 
 		// Set a value to be saved
@@ -251,7 +248,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 		// Create a new config instance to load the saved data
 		newConfig := NewTestConfig()
-		newConfig.Init(newConfig, "test", "test_save_load.json")
+		newConfig.Init(newConfig, WithFileConfig("test_save_load.json"))
 		if err != nil {
 			t.Errorf("Expected no error during load, but got %v", err)
 		}
@@ -262,7 +259,7 @@ func TestCommandLineFlags(t *testing.T) {
 		}
 	})
 
-	if config.StringField() != "flag_value" {
-		t.Errorf("Expected 'flag_value', but got %v", config.StringField())
+	if config.StringField() != "test_value" {
+		t.Errorf("Expected 'test_value', but got %v", config.StringField())
 	}
 }

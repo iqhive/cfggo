@@ -24,10 +24,10 @@ func (c *Structure) loadConfig() error {
 		return ErrorWrapper(err, 0, "")
 	}
 
-	if c.configHandler.SaveConfig != nil {
-		Logger.Debug("Setting up config saver")
-		c.setupConfigSaver()
-	}
+	// if c.configHandler.SaveConfig != nil {
+	// 	// Logger.Debug("Setting up config saver")
+	// }
+	c.setupConfigSaver()
 
 	return c.loadJSONConfigFromBytes(data)
 }
@@ -86,22 +86,24 @@ func (c *Structure) GetJSONBytes() []byte {
 
 func (c *Structure) String() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s:\n", c.name))
+	sb.WriteString(c.name + ":\n")
 	maxKeyLen := 0
 	maxValueLen := 0
-	for key := range c.configData {
+	values := make(map[string]string, len(c.configData))
+
+	for key, value := range c.configData {
 		if len(key) > maxKeyLen {
 			maxKeyLen = len(key)
 		}
-		s := fmt.Sprintf("%v", c.configData[key])
-		if len(s) > maxValueLen {
-			maxValueLen = len(s)
+		valueStr := fmt.Sprintf("%v", value)
+		values[key] = valueStr
+		if len(valueStr) > maxValueLen {
+			maxValueLen = len(valueStr)
 		}
 	}
-	for key, value := range c.configData {
-		valueStr := fmt.Sprintf("%v", value)
-		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
 
+	for key, valueStr := range values {
+		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
 		helpTag := c.GetHelpTag(key)
 		if helpTag != "" {
 			sb.WriteString(fmt.Sprintf("%*s: %v %s// %s\n", maxKeyLen, key, valueStr, helpSpacer, helpTag))

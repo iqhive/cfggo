@@ -4,6 +4,7 @@
 
 ## Features
 
+- Type safety for configuration keys
 - Load configuration from JSON files, environment variables, and HTTP endpoints.
 - Support for default values and dynamic configuration updates.
 - Command-line flag integration.

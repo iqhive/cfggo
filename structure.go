@@ -210,10 +210,7 @@ func (c *Structure) replaceConfigFuncs() {
 		fieldValue := v.Field(i)
 
 		if fieldValue.Kind() == reflect.Func {
-			configVarName := field.Tag.Get("config")
-			if configVarName == "" {
-				configVarName = field.Tag.Get("json")
-			}
+			configVarName := c.getConfigNameFromField(field)
 
 			if _, exists := c.configData[configVarName]; !exists {
 				Logger.Error("Missing configData value for key %s", configVarName)

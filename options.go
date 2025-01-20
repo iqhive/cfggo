@@ -3,10 +3,18 @@ package cfggo
 import (
 	"net/http"
 	"os"
+	"strings"
 )
 
 // Option is a function that configures a Structure
 type Option func(*Structure) error
+
+// withNoop returns an Option that does nothing
+func withNoop() Option {
+	return func(c *Structure) error {
+		return nil
+	}
+}
 
 // WithName sets the name of the configuration
 func WithName(name string) Option {
@@ -29,6 +37,29 @@ func WithFileConfig(filename string) Option {
 		c.configHandler = handler
 		return nil
 	}
+}
+
+// WithFileConfigParamName sets the config source/dest to a filename defined in the command line arguments
+func WithFileConfigParamName(argName string) Option {
+	var fname string
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		// Handle --config=filename.json format
+		if strings.HasPrefix(arg, argName+"=") {
+			fname = strings.TrimPrefix(arg, argName+"=")
+			break
+		}
+		// Handle --config filename.json format
+		if arg == argName && i+1 < len(os.Args) {
+			fname = os.Args[i+1]
+			break
+		}
+	}
+	if fname == "" {
+		// Logger.Warn("no filename found for argument %s", argName)
+		return withNoop()
+	}
+	return WithFileConfig(fname)
 }
 
 // WithHTTPConfig sets the config source/dest to a filename

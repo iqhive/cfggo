@@ -27,7 +27,7 @@ func WithName(name string) Option {
 // WithFileConfig sets the config source/dest to a filename
 func WithFileConfig(filename string) Option {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		Logger.Warn("filename %s does not exist", filename)
+		Logger.Warn("filename (" + filename + ") does not exist")
 	}
 	return func(c *Structure) error {
 		if c.configHandler != nil {
@@ -41,25 +41,25 @@ func WithFileConfig(filename string) Option {
 
 // WithFileConfigParamName sets the config source/dest to a filename defined in the command line arguments
 func WithFileConfigParamName(argName string) Option {
-	var fname string
+	var filename string
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		// Handle --config=filename.json format
-		if strings.HasPrefix(arg, argName+"=") {
-			fname = strings.TrimPrefix(arg, argName+"=")
+		if strings.HasPrefix(arg, "--"+argName+"=") {
+			filename = strings.TrimPrefix(arg, "--"+argName+"=")
 			break
 		}
 		// Handle --config filename.json format
-		if arg == argName && i+1 < len(os.Args) {
-			fname = os.Args[i+1]
+		if arg == "--"+argName && i+1 < len(os.Args) {
+			filename = os.Args[i+1]
 			break
 		}
 	}
-	if fname == "" {
+	if filename == "" {
 		// Logger.Warn("no filename found for argument %s", argName)
 		return withNoop()
 	}
-	return WithFileConfig(fname)
+	return WithFileConfig(filename)
 }
 
 // WithHTTPConfig sets the config source/dest to a filename

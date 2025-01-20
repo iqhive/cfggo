@@ -69,3 +69,133 @@ func TestWithFileConfigParamName(t *testing.T) {
 		})
 	}
 }
+
+// TestWithFileConfig tests the WithFileConfig function
+func TestWithFileConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		filename       string
+		createFile     bool
+		expectNoop     bool
+		expectFilename string
+	}{
+		{
+			name:           "existing file",
+			filename:       "test.json",
+			createFile:     true,
+			expectNoop:     false,
+			expectFilename: "test.json",
+		},
+		{
+			name:       "non-existent file",
+			filename:   "missing.json",
+			createFile: false,
+			expectNoop: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test file if needed
+			if tt.createFile {
+				f, err := os.Create(tt.filename)
+				if err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				f.Close()
+				defer os.Remove(tt.filename)
+			}
+
+			s := &Structure{}
+			opt := WithFileConfig(tt.filename)
+			err := opt(s)
+
+			if err != nil {
+				t.Errorf("WithFileConfig() error = %v", err)
+				return
+			}
+
+			if tt.expectNoop {
+				if s.configHandler != nil {
+					t.Error("Expected noop but got configHandler")
+				}
+				return
+			}
+
+			handler, ok := s.configHandler.(*handlerFile)
+			if !ok {
+				t.Error("configHandler is not a handlerFile")
+				return
+			}
+
+			if handler.filename != tt.expectFilename {
+				t.Errorf("filename = %v, want %v", handler.filename, tt.expectFilename)
+			}
+		})
+	}
+}
+
+// TestWithDefaultFileConfig tests the WithDefaultFileConfig function
+func TestWithDefaultFileConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		filename       string
+		createFile     bool
+		expectNoop     bool
+		expectFilename string
+	}{
+		{
+			name:           "existing file",
+			filename:       "test.json",
+			createFile:     true,
+			expectNoop:     false,
+			expectFilename: "test.json",
+		},
+		{
+			name:       "non-existent file",
+			filename:   "missing.json",
+			createFile: false,
+			expectNoop: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create test file if needed
+			if tt.createFile {
+				f, err := os.Create(tt.filename)
+				if err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				f.Close()
+				defer os.Remove(tt.filename)
+			}
+
+			s := &Structure{}
+			opt := WithDefaultFileConfig(tt.filename)
+			err := opt(s)
+
+			if err != nil {
+				t.Errorf("WithDefaultFileConfig() error = %v", err)
+				return
+			}
+
+			if tt.expectNoop {
+				if s.configHandler != nil {
+					t.Error("Expected noop but got configHandler")
+				}
+				return
+			}
+
+			handler, ok := s.configHandler.(*handlerFile)
+			if !ok {
+				t.Error("configHandler is not a handlerFile")
+				return
+			}
+
+			if handler.filename != tt.expectFilename {
+				t.Errorf("filename = %v, want %v", handler.filename, tt.expectFilename)
+			}
+		})
+	}
+}

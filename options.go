@@ -24,16 +24,38 @@ func WithName(name string) Option {
 	}
 }
 
-// WithFileConfig sets the config source/dest to a filename
+// withFileConfig sets the config source/dest to a filename, and logs and error if unable to find file
 func WithFileConfig(filename string) Option {
-	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		Logger.Warn("filename (" + filename + ") does not exist")
+	return withFileConfig(filename, "WithFileConfig", false)
+}
+
+// withFileConfig sets the config source/dest to a filename, and ignores if unable to find file
+func WithDefaultFileConfig(filename string) Option {
+	return withFileConfig(filename, "WithDefaultFileConfig", true)
+}
+
+func withFileConfig(filename string, funcName string, defaultConfig bool) Option {
+	if _, err := os.Stat(filename); err != nil {
+		if os.IsNotExist(err) {
+			if !defaultConfig {
+				Logger.Warn("filename (" + filename + ") does not exist")
+			}
+			return withNoop()
+		}
+
+		Logger.Warn("error loading filename (" + filename + "): " + err.Error())
+		return withNoop()
 	}
 	return func(c *Structure) error {
 		if c.configHandler != nil {
-			return ErrorWrapper(nil, 400, "configHandler is already set, ignoring WithFileConfig")
+			if defaultConfig {
+				return nil
+			}
+			if !c.configHandler.IsDefault() {
+				return ErrorWrapper(nil, 400, "configHandler is already set, ignoring "+funcName)
+			}
 		}
-		handler := &handlerFile{filename: filename}
+		handler := &handlerFile{filename: filename, defaultConfig: defaultConfig}
 		c.configHandler = handler
 		return nil
 	}

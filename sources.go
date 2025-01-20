@@ -8,12 +8,18 @@ import (
 )
 
 type configHandler interface {
+	IsDefault() bool
 	LoadConfig() ([]byte, error)
 	SaveConfig(data []byte) error
 }
 
 type handlerFile struct {
-	filename string
+	filename      string
+	defaultConfig bool
+}
+
+func (h *handlerFile) IsDefault() bool {
+	return h.defaultConfig
 }
 
 func (h *handlerFile) LoadConfig() ([]byte, error) {
@@ -39,8 +45,13 @@ func (h *handlerFile) SaveConfig(data []byte) error {
 }
 
 type handlerHTTP struct {
-	source http.Request
-	dest   http.Request
+	source        http.Request
+	dest          http.Request
+	defaultConfig bool
+}
+
+func (h *handlerHTTP) IsDefault() bool {
+	return h.defaultConfig
 }
 
 func (h *handlerHTTP) LoadConfig() ([]byte, error) {

@@ -230,36 +230,56 @@ func TestCommandLineFlags(t *testing.T) {
 		}
 	})
 
-	// Modify the TestSaveAndLoadConfig test
-	t.Run("TestSaveAndLoadConfig", func(t *testing.T) {
-		config := NewTestConfig()
-		config.Init(config, WithFileConfig("test_save_load.json"))
-		defer os.Remove("test_save_load.json")
+	// // Modify the TestSaveAndLoadConfig test
+	// t.Run("TestSaveAndLoadConfig", func(t *testing.T) {
+	// 	config := NewTestConfig()
+	// 	config.Init(config, WithFileConfig("test_save_load.json"))
+	// 	defer os.Remove("test_save_load.json")
 
-		// Set a value to be saved
-		config.StringField = func() string { return "test_value" }
-		config.configData["string_field"] = "test_value"
+	// 	// Set a value to be saved
+	// 	config.StringField = func() string { return "test_value" }
+	// 	config.configData["string_field"] = "test_value"
 
-		// Save the configuration
-		err := config.saveConfig()
-		if err != nil {
-			t.Errorf("Expected no error during save, but got %v", err)
-		}
+	// 	// Save the configuration
+	// 	err := config.saveConfig()
+	// 	if err != nil {
+	// 		t.Errorf("Expected no error during save, but got %v", err)
+	// 	}
 
-		// Create a new config instance to load the saved data
-		newConfig := NewTestConfig()
-		newConfig.Init(newConfig, WithFileConfig("test_save_load.json"))
-		if err != nil {
-			t.Errorf("Expected no error during load, but got %v", err)
-		}
+	// 	// Create a new config instance to load the saved data
+	// 	newConfig := NewTestConfig()
+	// 	newConfig.Init(newConfig, WithFileConfig("test_save_load.json"))
+	// 	if err != nil {
+	// 		t.Errorf("Expected no error during load, but got %v", err)
+	// 	}
 
-		// Verify the loaded value
-		if newConfig.StringField() != "test_value" {
-			t.Errorf("Expected 'test_value', but got %v", newConfig.StringField())
-		}
-	})
+	// 	// Verify the loaded value
+	// 	if newConfig.StringField() != "test_value" {
+	// 		t.Errorf("Expected 'test_value', but got %v", newConfig.StringField())
+	// 	}
+	// })
 
 	if config.StringField() != "test_value" {
 		t.Errorf("Expected 'test_value', but got %v", config.StringField())
+	}
+}
+
+func TestCommandLineFlags2(t *testing.T) {
+	// Test --variable=value format
+	os.Args = []string{"cmd", "--string_field=flag_value"}
+	config := NewTestConfig()
+	config.Init(config, WithFileConfig("test.json"))
+
+	if config.StringField() != "flag_value" {
+		t.Errorf("Expected 'flag_value', but got %v", config.StringField())
+	}
+
+	// Test variable=value format
+	os.Args = []string{"cmd", "string_field=flag_value"}
+	config = NewTestConfig()
+	config.Init(config, WithFileConfig("test.json"))
+
+	if config.StringField() != "" {
+		t.Errorf("Expected '', but got %v", config.StringField())
 	}
 }

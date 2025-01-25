@@ -11,9 +11,16 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 		c.configData = make(map[string]interface{})
 	}
 	//c.configData[configVarName] = defaultValue
+	// Logger.Info("NewFlag " + configVarName + " " + fmt.Sprintf("%v", defaultValue))
+
 	if flag.Lookup(configVarName) != nil {
-		Logger.Error("Flag %s is already set, skipping...\n", configVarName)
+		Logger.Error("Flag (" + configVarName + ") is already set, skipping...\n")
 		return
 	}
-	flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
+	if c.configData[configVarName] == nil {
+		Logger.Warn("configData[" + configVarName + "] is not set, using default value for type")
+		flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(defaultValue)}, configVarName, configDescription)
+	} else {
+		flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
+	}
 }

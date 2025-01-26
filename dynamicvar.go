@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type dynamicVar struct {
@@ -22,14 +23,38 @@ func (d *dynamicVar) Set(s string) error {
 		if len(s) == 0 {
 			value.SetBool(false)
 		} else {
-			lowerFirst := strings.ToLower(s)
-			if lowerFirst[0] == '1' || lowerFirst[0] == 't' || lowerFirst[0] == 'y' {
+			switch s[0] {
+			case '1', 't', 'T', 'y', 'Y':
 				value.SetBool(true)
+			case '0', 'f', 'F', 'n', 'N':
+				value.SetBool(false)
+			default:
+				return fmt.Errorf("invalid bool value %s", s)
 			}
 		}
 	case reflect.String:
 		value.SetString(s)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+	case reflect.TypeOf(time.Time{}).Kind():
+		parsedTime, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return err
+		}
+		value.Set(reflect.ValueOf(parsedTime))
+	case reflect.Int64, reflect.TypeOf(time.Duration(0)).Kind():
+		if d.want == reflect.TypeOf(int64(0)) {
+			parsedInt, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return err
+			}
+			value.SetInt(parsedInt)
+		} else if d.want == reflect.TypeOf(time.Duration(0)) {
+			parsedDuration, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			value.Set(reflect.ValueOf(parsedDuration))
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		if _, err := fmt.Sscan(s, value.Addr().Interface()); err != nil {
 			return err
 		}
@@ -40,6 +65,10 @@ func (d *dynamicVar) Set(s string) error {
 			if _, err := fmt.Sscan(v, value.Index(i).Addr().Interface()); err != nil {
 				return err
 			}
+		}
+	case reflect.Float32, reflect.Float64:
+		if _, err := fmt.Sscan(s, value.Addr().Interface()); err != nil {
+			return err
 		}
 	case reflect.Map:
 		split := strings.Split(s, ",")

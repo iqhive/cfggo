@@ -51,7 +51,7 @@ type MyConfig struct {
 
 func main() {
     mycfg := &MyConfig{}
-    cfggo.Init(mycfg, cfggo.WithFileConfig("myconfig.json"))
+    cfggo.Init(mycfg, cfggo.WithDefaultFileConfig("myconfig.json"), cfggo.WithFileConfigParamName("config"))
 
     fmt.Println("StringField:", mycfg.StringField())
     fmt.Println("IntField:", mycfg.IntField())
@@ -72,7 +72,9 @@ func main() {
 
 `cfggo` supports the following options:
 
-- `WithFileConfig(filename string) Option`: Sets the config source/dest to a filename.
+- `WithFileConfig(filename string) Option`: Sets the config source/dest to a filename (requires the file to exist).
+- `WithDefaultFileConfig(filename string) Option`: Sets the config source/dest to a filename.
+- `WithFileConfigParamName(argName string) Option`: Sets the config source/dest to a filename defined in the command line arguments
 - `WithHTTPConfig(httpLoader *http.Request, httpSaver *http.Request) Option`: Sets the config source/dest to HTTP requests.
 - `WithSkipEnvironment() Option`: Skips loading from environment variables.
 - `WithName(name string) Option`: Sets the name of the configuration.

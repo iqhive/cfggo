@@ -80,11 +80,11 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	// Logger.Info("SetupConfigData %s", name)
 	c.setupConfigData()
 
+	// // Logger.Info("setDefaultsFromTags %s", name)
+	c.setDefaultsFromTags()
+
 	// Logger.Info("ReplaceConfigFuncs %s", name)
 	c.replaceConfigFuncs()
-
-	// Logger.Info("SetDefaults %s", name)
-	c.setDefaults()
 
 	// LoadConfig
 	if c.configHandler != nil {
@@ -129,12 +129,8 @@ func (c *Structure) setupConfigData() {
 
 		configVarName := c.getConfigNameFromField(field)
 		if configVarName == "" || configVarName == "-" {
+			// Logger.Warn("No config or json tag found for field %s", field.Name)
 			continue
-		}
-
-		if configVarName == "" {
-			Logger.Warn("No config or json tag found for field %s", field.Name)
-			configVarName = t.Field(i).Name
 		}
 
 		if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
@@ -277,7 +273,7 @@ func (c *Structure) getAllKeys() []string {
 	return keys
 }
 
-func (c *Structure) setDefaults() {
+func (c *Structure) setDefaultsFromTags() {
 	if c.defaultsAlreadySet {
 		return
 	}
@@ -300,16 +296,26 @@ func (c *Structure) setDefaults() {
 		field := t.Field(i)
 		fieldValue := v.Field(i)
 
-		if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
-			configVarName := field.Tag.Get("config")
-			if configVarName == "" {
-				configVarName = field.Tag.Get("json")
-			}
+		configVarName := c.getConfigNameFromField(field)
+		if configVarName == "" || configVarName == "-" {
+			continue
+		}
 
-			if configVarName != "" && configVarName != "-" {
-				fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
-					return []reflect.Value{reflect.Zero(fieldValue.Type().Out(0))}
-				}))
+		if fieldValue.Kind() != reflect.Func || !fieldValue.IsNil() {
+			continue
+		}
+
+		// Attempt to read the "default" tag
+		if defaultStr, ok := field.Tag.Lookup("default"); ok && defaultStr != "" {
+			// Parse defaultStr into the proper type using a dynamicVar
+			dv := &dynamicVar{
+				config: c,
+				name:   configVarName,
+				want:   fieldValue.Type().Out(0), // the return type of the function
+			}
+			// If parsing fails, log a warning but continue
+			if err := dv.Set(defaultStr); err != nil {
+				Logger.Warn("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
 			}
 		}
 	}

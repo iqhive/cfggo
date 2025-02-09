@@ -14,6 +14,9 @@ type TestConfig struct {
 	Structure
 	StringEmptyField  func() string                 `json:"string_empty_field" help:"Test field"`
 	StringField       func() string                 `json:"string_field" help:"Test field"`
+	StringField2      func() string                 `json:"string_field2" help:"Test field" default:"default_string2"`
+	StringField3      func() string                 `json:"string_field3" help:"Test field"`
+	StringField4      func() string                 `json:"string_field4" help:"Test field" default:"default_string4"`
 	IntZeroField      func() int                    `json:"int_zero_field" help:"Test field"`
 	IntNegField       func() int                    `json:"int_neg_field" help:"Test field"`
 	IntPosField       func() int                    `json:"int_pos_field" help:"Test field"`
@@ -49,8 +52,11 @@ func NewTestConfig() *TestConfig {
 		timeNow = time.Now()
 	}
 	return &TestConfig{
-		StringEmptyField:  DefaultValue(""),
-		StringField:       DefaultValue("default_string"),
+		StringEmptyField: DefaultValue(""),
+		StringField:      DefaultValue("default_string"),
+		// StringField2:      DefaultValue(""), // should NOT be set
+		// StringField3:      DefaultValue(""), // should be empty string
+		StringField4:      DefaultValue("override_string4"),
 		IntZeroField:      DefaultValue(0),
 		IntNegField:       DefaultValue(-1),
 		IntPosField:       DefaultValue(1),
@@ -86,6 +92,8 @@ func NewMutatedTestConfig() *TestConfig {
 	config := NewTestConfig()
 
 	config.StringField = DefaultValue("mutated_string")
+	// config.StringField2 = DefaultValue("mutated_string2")
+	// config.StringField3 = DefaultValue("mutated_string3")
 	config.IntNegField = DefaultValue(-2)
 	config.IntPosField = DefaultValue(2)
 	config.BoolTrueField = DefaultValue(false)
@@ -136,37 +144,46 @@ func TestInit(t *testing.T) {
 	}
 
 	if config.StringField() != "default_string" {
-		t.Errorf("Expected 'default_string', but got %v", config.StringField())
+		t.Errorf("Expected 'default_string' for StringField, but got %v", config.StringField())
+	}
+	if config.StringField2() != "default_string2" {
+		t.Errorf("Expected 'default_string2' for StringField2, but got %v", config.StringField2())
+	}
+	if config.StringField3() != "" {
+		t.Errorf("Expected '' for StringField3, but got %v", config.StringField3())
+	}
+	if config.StringField4() != "override_string4" {
+		t.Errorf("Expected 'override_string4' for StringField4, but got %v", config.StringField4())
 	}
 	if config.IntZeroField() != 0 {
-		t.Errorf("Expected 0, but got %v", config.IntZeroField())
+		t.Errorf("Expected 0 for IntZeroField, but got %v", config.IntZeroField())
 	}
 	if config.IntNegField() != -1 {
-		t.Errorf("Expected -1, but got %v", config.IntNegField())
+		t.Errorf("Expected -1 for IntNegField, but got %v", config.IntNegField())
 	}
 	if config.IntPosField() != 1 {
-		t.Errorf("Expected 1, but got %v", config.IntPosField())
+		t.Errorf("Expected 1 for IntPosField, but got %v", config.IntPosField())
 	}
 	if config.BoolFalseField() != false {
-		t.Errorf("Expected false, but got %v", config.BoolFalseField())
+		t.Errorf("Expected false for BoolFalseField, but got %v", config.BoolFalseField())
 	}
 	if config.BoolTrueField() != true {
-		t.Errorf("Expected true, but got %v", config.BoolTrueField())
+		t.Errorf("Expected true for BoolTrueField, but got %v", config.BoolTrueField())
 	}
 	if len(config.StringSlice()) != 1 || config.StringSlice()[0] != "default" {
-		t.Errorf("Expected slice with 'default', but got %v", config.StringSlice())
+		t.Errorf("Expected slice with 'default' for StringSlice, but got %v", config.StringSlice())
 	}
 	if len(config.StringMap()) != 1 || config.StringMap()["key"] != "value" {
-		t.Errorf("Expected map with 'key': 'value', but got %v", config.StringMap())
+		t.Errorf("Expected map with 'key': 'value' for StringMap, but got %v", config.StringMap())
 	}
 	if len(config.InterfaceMap()) != 1 || config.InterfaceMap()["key"] != "value" {
-		t.Errorf("Expected map with 'key': 'value', but got %v", config.InterfaceMap())
+		t.Errorf("Expected map with 'key': 'value' for InterfaceMap, but got %v", config.InterfaceMap())
 	}
 	if config.DurationField() != 0 {
-		t.Errorf("Expected 0 duration, but got %v", config.DurationField())
+		t.Errorf("Expected 0 duration for DurationField, but got %v", config.DurationField())
 	}
 	if config.TimeField() != timeNow {
-		t.Errorf("Expected %v, but got %v", timeNow, config.TimeField())
+		t.Errorf("Expected %v for TimeField, but got %v", timeNow, config.TimeField())
 	}
 }
 
@@ -193,6 +210,9 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	// Verify the loaded value
 	if config.StringField() != "test_value" {
 		t.Errorf("Expected 'test_value', but got %v", config.StringField())
+	}
+	if config.StringField2() != "default_string2" {
+		t.Errorf("Expected 'default_string2', but got %v", config.StringField2())
 	}
 }
 
@@ -282,4 +302,148 @@ func TestCommandLineFlags2(t *testing.T) {
 	if config.StringField() != "" {
 		t.Errorf("Expected '', but got %v", config.StringField())
 	}
+}
+
+func TestValuePrecedence(t *testing.T) {
+	// We'll create a small struct to test the precedence of values.
+	type PrecedenceConfig struct {
+		Structure
+		// Default tag is the lowest precedence
+		Field func() string `json:"field" default:"tag_value"`
+	}
+
+	// We'll create a temporary JSON file to simulate the "config file" layer.
+	tempFileName := "precedence_test.json"
+	jsonData := []byte(`{"field":"file_value"}`)
+	if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+	defer os.Remove(tempFileName)
+
+	// For environment variables, use "FIELD" because the code transforms "field" -> upper+underscore => "FIELD".
+	// The code checks environment variables in the form: strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+	envKey := "FIELD"
+	envVal := "env_value"
+
+	// For command line flags, we use "--field=flag_value".
+	flagVal := "flag_value"
+
+	// 1) Only struct tag -> should be "tag_value"
+	t.Run("tag_only", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd"} // no flags
+		os.Unsetenv(envKey)
+
+		config := &PrecedenceConfig{}
+		config.Init(config)
+		if got := config.Field(); got != "tag_value" {
+			t.Errorf("expected 'tag_value' from default tag, got %q", got)
+		}
+	})
+
+	// 2) Struct tag + function assignment -> function should override tag
+	t.Run("function_overrides_tag", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd"}
+		os.Unsetenv(envKey)
+
+		config := &PrecedenceConfig{
+			Field: DefaultValue("function_value"),
+		}
+		config.Init(config)
+		if got := config.Field(); got != "function_value" {
+			t.Errorf("expected 'function_value' to override 'tag_value', got %q", got)
+		}
+	})
+
+	// 3) File vs. function -> file should override function
+	t.Run("file_overrides_function", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd"}
+		os.Unsetenv(envKey)
+
+		config := &PrecedenceConfig{
+			Field: DefaultValue("function_value"),
+		}
+		config.Init(config, WithFileConfig(tempFileName))
+		if got := config.Field(); got != "file_value" {
+			t.Errorf("expected 'file_value' to override 'function_value', got %q", got)
+		}
+	})
+
+	// 4) Environment vs. file -> environment should override file
+	t.Run("env_overrides_file", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd"}
+		if err := os.Setenv(envKey, envVal); err != nil {
+			t.Fatalf("failed to set env var: %v", err)
+		}
+		defer os.Unsetenv(envKey)
+
+		config := &PrecedenceConfig{
+			Field: DefaultValue("function_value"),
+		}
+		config.Init(config, WithFileConfig(tempFileName))
+		if got := config.Field(); got != envVal {
+			t.Errorf("expected %q to override 'file_value', got %q", envVal, got)
+		}
+	})
+
+	// 5) Command line flag vs. environment -> flag should override environment
+	t.Run("flag_overrides_env", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		if err := os.Setenv(envKey, envVal); err != nil {
+			t.Fatalf("failed to set env var: %v", err)
+		}
+		defer os.Unsetenv(envKey)
+
+		// Simulate command line: ./cmd --field=flag_value
+		os.Args = []string{"cmd", "--field=" + flagVal}
+
+		config := &PrecedenceConfig{
+			Field: DefaultValue("function_value"),
+		}
+		config.Init(config, WithFileConfig(tempFileName))
+		flag.Parse()
+
+		// Reset the flags so other tests are not affected.
+		defer func() {
+			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+			os.Args = []string{"cmd"}
+		}()
+
+		if got := config.Field(); got != flagVal {
+			t.Errorf("expected %q from flag to override %q from env, got %q", flagVal, envVal, got)
+		}
+	})
+
+	// 6) All layers at once -> the highest precedence is command line
+	t.Run("all_layers", func(t *testing.T) {
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		// tag_value -> function_value -> file_value -> env_value -> flag_value
+		if err := os.Setenv(envKey, envVal); err != nil {
+			t.Fatalf("failed to set env var: %v", err)
+		}
+		defer os.Unsetenv(envKey)
+
+		os.Args = []string{"cmd", "--field=" + flagVal}
+		defer func() {
+			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+			os.Args = []string{"cmd"}
+		}()
+
+		config := &PrecedenceConfig{
+			Field: DefaultValue("function_value"),
+		}
+		config.Init(config, WithFileConfig(tempFileName))
+		flag.Parse()
+		got := config.Field()
+		if got != flagVal {
+			t.Errorf(
+				"when all are set, expected final override to be '%s' (flag), got '%s'",
+				flagVal,
+				got,
+			)
+		}
+	})
 }

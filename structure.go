@@ -97,6 +97,8 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	// Logger.Info("CreateFlags %s", name)
 	c.createFlags()
 
+	c.parseFlags()
+
 	// Logger.Info("Done Init")
 }
 

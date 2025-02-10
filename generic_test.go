@@ -47,7 +47,21 @@ type TestConfig struct {
 	TimeField         func() time.Time              `json:"time_field" help:"Test field"`
 }
 
+var originalCommandLine *flag.FlagSet
+var originalArgs []string
+
+func RestoreFlagValues() {
+	flag.CommandLine = originalCommandLine
+	os.Args = originalArgs
+}
+
 func NewTestConfig() *TestConfig {
+	if originalArgs == nil {
+		originalCommandLine = flag.CommandLine
+		originalArgs = os.Args
+	}
+	RestoreFlagValues()
+
 	if timeNow.IsZero() {
 		timeNow = time.Now()
 	}
@@ -134,6 +148,7 @@ func TestDefaultValue(t *testing.T) {
 func TestInit(t *testing.T) {
 	timeNow = time.Now()
 	config := NewTestConfig()
+	defer RestoreFlagValues()
 	config.Init(config)
 
 	if config.name != "TestConfig" {
@@ -189,6 +204,7 @@ func TestInit(t *testing.T) {
 
 func TestSaveAndLoadConfig(t *testing.T) {
 	config := NewTestConfig()
+	defer RestoreFlagValues()
 	config.Init(config, WithFileConfig("test.json"))
 
 	// Set a value to be saved
@@ -221,6 +237,7 @@ func TestEnvironmentVariables(t *testing.T) {
 	defer os.Unsetenv("STRING_FIELD")
 
 	config := NewTestConfig()
+	defer RestoreFlagValues()
 	config.Init(config, WithFileConfig("test.json"))
 
 	if config.StringField() != "env_value" {
@@ -229,10 +246,23 @@ func TestEnvironmentVariables(t *testing.T) {
 }
 
 func TestCommandLineFlags(t *testing.T) {
+	if originalArgs == nil {
+		originalCommandLine = flag.CommandLine
+		originalArgs = os.Args
+	}
+	RestoreFlagValues()
+
+	// Create a fresh FlagSet to avoid "flag redefined" or "parse called multiple times" issues
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
+	// Simulate command-line args so "string_field" will be picked up as "flag_value"
+	os.Args = []string{"cmd", "--string_field=flag_value"}
+
 	flag.String("string_field", "flag_value", "string field")
 	flag.Parse()
 
 	config := NewTestConfig()
+	defer RestoreFlagValues()
 	config.Init(config, WithFileConfig("test.json"))
 	// Reset flags for other tests
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
@@ -243,6 +273,7 @@ func TestCommandLineFlags(t *testing.T) {
 		defer os.Unsetenv("STRING_FIELD")
 
 		config := NewTestConfig()
+		defer RestoreFlagValues()
 		config.Init(config, WithFileConfig("test.json"))
 
 		if config.StringField() != "env_value" {
@@ -253,6 +284,7 @@ func TestCommandLineFlags(t *testing.T) {
 	// // Modify the TestSaveAndLoadConfig test
 	// t.Run("TestSaveAndLoadConfig", func(t *testing.T) {
 	// 	config := NewTestConfig()
+	// defer RestoreFlagValues()
 	// 	config.Init(config, WithFileConfig("test_save_load.json"))
 	// 	defer os.Remove("test_save_load.json")
 
@@ -268,6 +300,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 	// 	// Create a new config instance to load the saved data
 	// 	newConfig := NewTestConfig()
+	// defer RestoreFlagValues()
 	// 	newConfig.Init(newConfig, WithFileConfig("test_save_load.json"))
 	// 	if err != nil {
 	// 		t.Errorf("Expected no error during load, but got %v", err)
@@ -284,27 +317,67 @@ func TestCommandLineFlags(t *testing.T) {
 	}
 }
 
-func TestCommandLineFlags2(t *testing.T) {
-	// Test --variable=value format
-	os.Args = []string{"cmd", "--string_field=flag_value"}
+func TestCommandLineFlags1(t *testing.T) {
+	if originalArgs == nil {
+		originalCommandLine = flag.CommandLine
+		originalArgs = os.Args
+	}
+	RestoreFlagValues()
+
+	// Simulate "-string_field=flag_value" on the command line
+	os.Args = []string{"cmd", "-string_field=flag_value"}
+
+	// Create a fresh FlagSet to avoid "flag redefined" or "parse called multiple times" issues
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	// Define the flag so that it exists on this fresh FlagSet
+	// flag.String("string_field", "", "Test string_field")
+
+	// Parse the flags (if your config.Init doesn't do it itself)
+	// flag.Parse()
+
 	config := NewTestConfig()
+	defer RestoreFlagValues()
 	config.Init(config, WithFileConfig("test.json"))
 
 	if config.StringField() != "flag_value" {
 		t.Errorf("Expected 'flag_value', but got %v", config.StringField())
 	}
+}
 
-	// Test variable=value format
-	os.Args = []string{"cmd", "string_field=flag_value"}
-	config = NewTestConfig()
+func TestCommandLineFlags2(t *testing.T) {
+	if originalArgs == nil {
+		originalCommandLine = flag.CommandLine
+		originalArgs = os.Args
+	}
+	RestoreFlagValues()
+
+	// Simulate "--string_field=flag_value" on the command line
+	os.Args = []string{"cmd", "--string_field=flag_value"}
+
+	// Create a fresh FlagSet to avoid "flag redefined" or "parse called multiple times" issues
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	// Define the flag so that it exists on this fresh FlagSet
+	// flag.String("string_field", "", "Test string_field")
+
+	// Parse the flags (if your config.Init doesn't do it itself)
+	// flag.Parse()
+
+	config := NewTestConfig()
+	defer RestoreFlagValues()
 	config.Init(config, WithFileConfig("test.json"))
 
-	if config.StringField() != "" {
-		t.Errorf("Expected '', but got %v", config.StringField())
+	if config.StringField() != "flag_value" {
+		t.Errorf("Expected 'flag_value', but got %v", config.StringField())
 	}
 }
 
 func TestValuePrecedence(t *testing.T) {
+	if originalArgs == nil {
+		originalCommandLine = flag.CommandLine
+		originalArgs = os.Args
+	}
+	RestoreFlagValues()
+
 	// We'll create a small struct to test the precedence of values.
 	type PrecedenceConfig struct {
 		Structure

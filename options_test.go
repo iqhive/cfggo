@@ -103,7 +103,7 @@ func TestWithFileConfig(t *testing.T) {
 					t.Fatalf("Failed to create test file: %v", err)
 				}
 				f.Close()
-				defer os.Remove(tt.filename)
+				// defer os.Remove(tt.filename)
 			}
 
 			s := &Structure{}
@@ -168,7 +168,7 @@ func TestWithDefaultFileConfig(t *testing.T) {
 					t.Fatalf("Failed to create test file: %v", err)
 				}
 				f.Close()
-				defer os.Remove(tt.filename)
+				// defer os.Remove(tt.filename)
 			}
 
 			s := &Structure{}

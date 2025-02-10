@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestNewFlag tests the NewFlag function to ensure that the format "--variable=value" works and that the format "variable=value" is not expected
-func TestNewFlag(t *testing.T) {
+// TestNewFlagSpace tests the NewFlag function to ensure that the format "variable=value"
+func TestNewFlagSpace(t *testing.T) {
 	type TestConfig struct {
 		Structure
 		StringField func() string `json:"string_field" config:"string_field" description:"string field"`
@@ -26,6 +26,19 @@ func TestNewFlag(t *testing.T) {
 	if config.configData["string_field"] != "flag_value" {
 		t.Errorf("Expected 'flag_value', but got %v", config.configData["string_field"])
 	}
+
+}
+
+// TestNewFlagEquals tests the NewFlag function to ensure that the format "--variable=value" works
+func TestNewFlagEquals(t *testing.T) {
+	type TestConfig struct {
+		Structure
+		StringField func() string `json:"string_field" config:"string_field" description:"string field"`
+	}
+	config := &TestConfig{
+		StringField: func() string { return "default_struct_value" },
+	}
+	config.Init(config)
 
 	// Test --variable value format
 	os.Args = []string{"cmd", "--string_field", "flag_value_space"}

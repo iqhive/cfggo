@@ -50,17 +50,27 @@ type TestConfig struct {
 var originalCommandLine *flag.FlagSet
 var originalArgs []string
 
+func SetupNewFlags() {
+	originalCommandLine = flag.CommandLine
+	originalArgs = os.Args
+
+	// Find the index of "--" in os.Args
+	args := os.Args
+	for i, arg := range args {
+		if arg == "--" {
+			args = args[i+1:] // Skip everything before and including "--"
+			break
+		}
+	}
+}
+
 func RestoreFlagValues() {
 	flag.CommandLine = originalCommandLine
 	os.Args = originalArgs
 }
 
 func NewTestConfig() *TestConfig {
-	if originalArgs == nil {
-		originalCommandLine = flag.CommandLine
-		originalArgs = os.Args
-	}
-	RestoreFlagValues()
+	SetupNewFlags()
 
 	if timeNow.IsZero() {
 		timeNow = time.Now()
@@ -246,14 +256,8 @@ func TestEnvironmentVariables(t *testing.T) {
 }
 
 func TestCommandLineFlags(t *testing.T) {
-	if originalArgs == nil {
-		originalCommandLine = flag.CommandLine
-		originalArgs = os.Args
-	}
-	RestoreFlagValues()
-
-	// Create a fresh FlagSet to avoid "flag redefined" or "parse called multiple times" issues
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	SetupNewFlags()
+	defer RestoreFlagValues()
 
 	// Simulate command-line args so "string_field" will be picked up as "flag_value"
 	os.Args = []string{"cmd", "--string_field=flag_value"}
@@ -318,11 +322,8 @@ func TestCommandLineFlags(t *testing.T) {
 }
 
 func TestCommandLineFlags1(t *testing.T) {
-	if originalArgs == nil {
-		originalCommandLine = flag.CommandLine
-		originalArgs = os.Args
-	}
-	RestoreFlagValues()
+	SetupNewFlags()
+	defer RestoreFlagValues()
 
 	// Simulate "-string_field=flag_value" on the command line
 	os.Args = []string{"cmd", "-string_field=flag_value"}
@@ -345,11 +346,8 @@ func TestCommandLineFlags1(t *testing.T) {
 }
 
 func TestCommandLineFlags2(t *testing.T) {
-	if originalArgs == nil {
-		originalCommandLine = flag.CommandLine
-		originalArgs = os.Args
-	}
-	RestoreFlagValues()
+	SetupNewFlags()
+	defer RestoreFlagValues()
 
 	// Simulate "--string_field=flag_value" on the command line
 	os.Args = []string{"cmd", "--string_field=flag_value"}
@@ -372,11 +370,8 @@ func TestCommandLineFlags2(t *testing.T) {
 }
 
 func TestValuePrecedence(t *testing.T) {
-	if originalArgs == nil {
-		originalCommandLine = flag.CommandLine
-		originalArgs = os.Args
-	}
-	RestoreFlagValues()
+	SetupNewFlags()
+	defer RestoreFlagValues()
 
 	// We'll create a small struct to test the precedence of values.
 	type PrecedenceConfig struct {

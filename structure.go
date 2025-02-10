@@ -32,6 +32,9 @@ type Structure struct {
 	defaultsAlreadySet bool                   // Are the defaults already set
 	parent             interface{}            // This is a pointer to the parent struct
 	configData         map[string]interface{} // Where the configuration data is stored
+
+	// New field to store a dedicated FlagSet instead of using flag.CommandLine
+	FlagSet *flag.FlagSet
 }
 
 // DefaultValue returns a function that returns the type of the input parameter X
@@ -42,6 +45,10 @@ func DefaultValue[T any](x T) func() T {
 }
 
 func (c *Structure) Init(parent interface{}, options ...Option) {
+
+	if c.FlagSet == nil {
+		c.FlagSet = flag.NewFlagSet("cfggo", flag.ExitOnError)
+	}
 
 	// Ensure parent is a pointer
 	v := reflect.ValueOf(parent)

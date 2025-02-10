@@ -12,6 +12,7 @@ var timeNow = time.Now()
 
 type TestConfig struct {
 	Structure
+	Debug             func() bool                   `json:"debug" help:"Test field"`
 	StringEmptyField  func() string                 `json:"string_empty_field" help:"Test field"`
 	StringField       func() string                 `json:"string_field" help:"Test field"`
 	StringField2      func() string                 `json:"string_field2" help:"Test field" default:"default_string2"`
@@ -58,10 +59,11 @@ func SetupNewFlags() {
 	args := os.Args
 	for i, arg := range args {
 		if arg == "--" {
-			args = args[i+1:] // Skip everything before and including "--"
+			args = args[i:] // Skip everything before and including "--"
 			break
 		}
 	}
+	os.Args = args
 }
 
 func RestoreFlagValues() {
@@ -215,7 +217,7 @@ func TestInit(t *testing.T) {
 func TestSaveAndLoadConfig(t *testing.T) {
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("test.json"))
+	config.Init(config, WithFileConfig("tests/test.json"))
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")
@@ -248,7 +250,7 @@ func TestEnvironmentVariables(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("test.json"))
+	config.Init(config, WithFileConfig("tests/test.json"))
 
 	if config.StringField() != "env_value" {
 		t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -259,17 +261,9 @@ func TestCommandLineFlags(t *testing.T) {
 	SetupNewFlags()
 	defer RestoreFlagValues()
 
-	// Simulate command-line args so "string_field" will be picked up as "flag_value"
-	os.Args = []string{"cmd", "--string_field=flag_value"}
-
-	flag.String("string_field", "flag_value", "string field")
-	flag.Parse()
-
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("test.json"))
-	// Reset flags for other tests
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	config.Init(config, WithFileConfig("tests/test.json"))
 
 	// Modify the TestEnvironmentVariables test
 	t.Run("TestEnvironmentVariables", func(t *testing.T) {
@@ -278,7 +272,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 		config := NewTestConfig()
 		defer RestoreFlagValues()
-		config.Init(config, WithFileConfig("test.json"))
+		config.Init(config, WithFileConfig("tests/test.json"))
 
 		if config.StringField() != "env_value" {
 			t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -328,17 +322,10 @@ func TestCommandLineFlags1(t *testing.T) {
 	// Simulate "-string_field=flag_value" on the command line
 	os.Args = []string{"cmd", "-string_field=flag_value"}
 
-	// Create a fresh FlagSet to avoid "flag redefined" or "parse called multiple times" issues
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	// Define the flag so that it exists on this fresh FlagSet
-	// flag.String("string_field", "", "Test string_field")
-
-	// Parse the flags (if your config.Init doesn't do it itself)
-	// flag.Parse()
-
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("test.json"))
+	config.Init(config, WithFileConfig("tests/test.json"))
+	os.Args = []string{"cmd"}
 
 	if config.StringField() != "flag_value" {
 		t.Errorf("Expected 'flag_value', but got %v", config.StringField())
@@ -352,17 +339,10 @@ func TestCommandLineFlags2(t *testing.T) {
 	// Simulate "--string_field=flag_value" on the command line
 	os.Args = []string{"cmd", "--string_field=flag_value"}
 
-	// Create a fresh FlagSet to avoid "flag redefined" or "parse called multiple times" issues
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	// Define the flag so that it exists on this fresh FlagSet
-	// flag.String("string_field", "", "Test string_field")
-
-	// Parse the flags (if your config.Init doesn't do it itself)
-	// flag.Parse()
-
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("test.json"))
+	config.Init(config, WithFileConfig("tests/test.json"))
+	os.Args = []string{"cmd"}
 
 	if config.StringField() != "flag_value" {
 		t.Errorf("Expected 'flag_value', but got %v", config.StringField())
@@ -381,7 +361,7 @@ func TestValuePrecedence(t *testing.T) {
 	}
 
 	// We'll create a temporary JSON file to simulate the "config file" layer.
-	tempFileName := "precedence_test.json"
+	tempFileName := "tests/precedence_test.json"
 	jsonData := []byte(`{"field":"file_value"}`)
 	if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
 		t.Fatalf("failed to write temp config file: %v", err)
@@ -398,12 +378,12 @@ func TestValuePrecedence(t *testing.T) {
 
 	// 1) Only struct tag -> should be "tag_value"
 	t.Run("tag_only", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		os.Args = []string{"cmd"} // no flags
 		os.Unsetenv(envKey)
 
 		config := &PrecedenceConfig{}
 		config.Init(config)
+		os.Args = []string{"cmd"}
 		if got := config.Field(); got != "tag_value" {
 			t.Errorf("expected 'tag_value' from default tag, got %q", got)
 		}
@@ -411,7 +391,6 @@ func TestValuePrecedence(t *testing.T) {
 
 	// 2) Struct tag + function assignment -> function should override tag
 	t.Run("function_overrides_tag", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		os.Args = []string{"cmd"}
 		os.Unsetenv(envKey)
 
@@ -419,6 +398,7 @@ func TestValuePrecedence(t *testing.T) {
 			Field: DefaultValue("function_value"),
 		}
 		config.Init(config)
+		os.Args = []string{"cmd"}
 		if got := config.Field(); got != "function_value" {
 			t.Errorf("expected 'function_value' to override 'tag_value', got %q", got)
 		}
@@ -426,7 +406,6 @@ func TestValuePrecedence(t *testing.T) {
 
 	// 3) File vs. function -> file should override function
 	t.Run("file_overrides_function", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		os.Args = []string{"cmd"}
 		os.Unsetenv(envKey)
 
@@ -434,6 +413,7 @@ func TestValuePrecedence(t *testing.T) {
 			Field: DefaultValue("function_value"),
 		}
 		config.Init(config, WithFileConfig(tempFileName))
+		os.Args = []string{"cmd"}
 		if got := config.Field(); got != "file_value" {
 			t.Errorf("expected 'file_value' to override 'function_value', got %q", got)
 		}
@@ -441,7 +421,6 @@ func TestValuePrecedence(t *testing.T) {
 
 	// 4) Environment vs. file -> environment should override file
 	t.Run("env_overrides_file", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		os.Args = []string{"cmd"}
 		if err := os.Setenv(envKey, envVal); err != nil {
 			t.Fatalf("failed to set env var: %v", err)
@@ -452,6 +431,7 @@ func TestValuePrecedence(t *testing.T) {
 			Field: DefaultValue("function_value"),
 		}
 		config.Init(config, WithFileConfig(tempFileName))
+		os.Args = []string{"cmd"}
 		if got := config.Field(); got != envVal {
 			t.Errorf("expected %q to override 'file_value', got %q", envVal, got)
 		}
@@ -459,20 +439,18 @@ func TestValuePrecedence(t *testing.T) {
 
 	// 5) Command line flag vs. environment -> flag should override environment
 	t.Run("flag_overrides_env", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		os.Args = []string{"cmd", "--field=flag_value"}
+
 		if err := os.Setenv(envKey, envVal); err != nil {
 			t.Fatalf("failed to set env var: %v", err)
 		}
 		defer os.Unsetenv(envKey)
 
-		// Simulate command line: ./cmd --field=flag_value
-		os.Args = []string{"cmd", "--field=" + flagVal}
-
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
 		config.Init(config, WithFileConfig(tempFileName))
-		flag.Parse()
+		os.Args = []string{"cmd"}
 
 		// Reset the flags so other tests are not affected.
 		defer func() {
@@ -487,7 +465,6 @@ func TestValuePrecedence(t *testing.T) {
 
 	// 6) All layers at once -> the highest precedence is command line
 	t.Run("all_layers", func(t *testing.T) {
-		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		// tag_value -> function_value -> file_value -> env_value -> flag_value
 		if err := os.Setenv(envKey, envVal); err != nil {
 			t.Fatalf("failed to set env var: %v", err)
@@ -495,16 +472,13 @@ func TestValuePrecedence(t *testing.T) {
 		defer os.Unsetenv(envKey)
 
 		os.Args = []string{"cmd", "--field=" + flagVal}
-		defer func() {
-			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-			os.Args = []string{"cmd"}
-		}()
 
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
 		config.Init(config, WithFileConfig(tempFileName))
-		flag.Parse()
+		os.Args = []string{"cmd"}
+
 		got := config.Field()
 		if got != flagVal {
 			t.Errorf(

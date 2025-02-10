@@ -1,7 +1,7 @@
 package cfggo
 
 import (
-	"fmt"
+	"flag"
 	"os"
 	"reflect"
 	"sync"
@@ -24,20 +24,26 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	if c.configData[configVarName] == nil {
 		Logger.Warn("configData[" + configVarName + "] is not set, using default value for type")
 		c.FlagSet.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(defaultValue)}, configVarName, configDescription)
+		if flag.Lookup(configVarName) == nil {
+			flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(defaultValue)}, configVarName, configDescription)
+		}
 	} else {
 		c.FlagSet.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
+		if flag.Lookup(configVarName) == nil {
+			flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
+		}
 	}
 }
 
 func (c *Structure) parseFlags() {
-	fmt.Println("parseFlags")
-	fmt.Println(os.Args[1:])
+	// fmt.Println("parseFlags")
+	// fmt.Println(os.Args[1:])
 	// Auto-parse flags once if not already parsed
-	autoParseOnce.Do(func() {
-		if !c.FlagSet.Parsed() {
-			if err := c.FlagSet.Parse(os.Args[1:]); err != nil {
-				Logger.Error("error parsing flags: %v", err)
-			}
+	// autoParseOnce.Do(func() {
+	if !c.FlagSet.Parsed() {
+		if err := c.FlagSet.Parse(os.Args[1:]); err != nil {
+			Logger.Error("error parsing flags: %v", err)
 		}
-	})
+	}
+	// })
 }

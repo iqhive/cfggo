@@ -15,20 +15,20 @@ func TestWithFileConfigParamName(t *testing.T) {
 	}{
 		{
 			name:     "equals format",
-			args:     []string{"prog", "--config=test.json"},
-			argName:  "--config",
-			expected: "test.json",
+			args:     []string{"prog", "--config=tests/test.json"},
+			argName:  "config",
+			expected: "tests/test.json",
 		},
 		{
 			name:     "space format",
-			args:     []string{"prog", "--config", "test.json"},
-			argName:  "--config",
-			expected: "test.json",
+			args:     []string{"prog", "--config", "tests/test.json"},
+			argName:  "config",
+			expected: "tests/test.json",
 		},
 		{
 			name:     "no match",
-			args:     []string{"prog", "--other=test.json"},
-			argName:  "--config",
+			args:     []string{"prog", "--other=tests/test.json"},
+			argName:  "config",
 			expected: "",
 		},
 	}
@@ -81,10 +81,10 @@ func TestWithFileConfig(t *testing.T) {
 	}{
 		{
 			name:           "existing file",
-			filename:       "test.json",
+			filename:       "tests/test.json",
 			createFile:     true,
 			expectNoop:     false,
-			expectFilename: "test.json",
+			expectFilename: "tests/test.json",
 		},
 		{
 			name:       "non-existent file",
@@ -146,10 +146,10 @@ func TestWithDefaultFileConfig(t *testing.T) {
 	}{
 		{
 			name:           "existing file",
-			filename:       "test.json",
+			filename:       "tests/test.json",
 			createFile:     true,
 			expectNoop:     false,
-			expectFilename: "test.json",
+			expectFilename: "tests/test.json",
 		},
 		{
 			name:       "non-existent file",

@@ -35,11 +35,31 @@ func (d *dynamicVar) Set(s string) error {
 	case reflect.String:
 		value.SetString(s)
 	case reflect.TypeOf(time.Time{}).Kind():
-		parsedTime, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return err
+		unmarshaler, ok := value.Addr().Interface().(encoding.TextUnmarshaler)
+		if ok {
+			if err := unmarshaler.UnmarshalText([]byte(s)); err != nil {
+				return err
+			}
+			return d.config.Set(d.name, value.Interface())
 		}
-		value.Set(reflect.ValueOf(parsedTime))
+		jsonUnmarshaler, ok := value.Addr().Interface().(json.Unmarshaler)
+		if ok {
+			// if err := jsonUnmarshaler.UnmarshalJSON([]byte(strconv.Quote(s))); err != nil {
+			// 	return err
+			// }
+			if err := jsonUnmarshaler.UnmarshalJSON([]byte(s)); err != nil {
+				return err
+			}
+			return d.config.Set(d.name, value.Interface())
+		}
+		if value.Type().String() == "time.Time" {
+			parsedTime, err := time.Parse(time.RFC3339, s)
+			if err != nil {
+				return err
+			}
+			value.Set(reflect.ValueOf(parsedTime))
+		}
+		return fmt.Errorf("Structs must support encoding.TextUnmarshaler or json.Unmarshaler")
 	case reflect.Int64, reflect.TypeOf(time.Duration(0)).Kind():
 		if d.want == reflect.TypeOf(int64(0)) {
 			parsedInt, err := strconv.ParseInt(s, 10, 64)
@@ -89,25 +109,11 @@ func (d *dynamicVar) Set(s string) error {
 			value.SetMapIndex(key, val)
 		}
 	default:
-		unmarshaler, ok := value.Addr().Interface().(encoding.TextUnmarshaler)
-		if ok {
-			if err := unmarshaler.UnmarshalText([]byte(s)); err != nil {
-				return err
-			}
-			return d.config.Set(d.name, value.Interface())
-		}
-		jsonUnmarshaler, ok := value.Addr().Interface().(json.Unmarshaler)
-		if ok {
-			if err := jsonUnmarshaler.UnmarshalJSON([]byte(strconv.Quote(s))); err != nil {
-				return err
-			}
-		}
 		return fmt.Errorf("unsupported type %s", d.want)
 	}
 	if err := d.config.Set(d.name, value.Interface()); err != nil {
 		return err
 	}
-	// fmt.Println("Set", d.name, "to", value.Interface())
 	return nil
 }
 

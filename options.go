@@ -78,7 +78,7 @@ func WithFileConfigParamName(argName string) Option {
 		}
 	}
 	if filename == "" {
-		// Logger.Warn("no filename found for argument %s", argName)
+		Logger.Warn("no filename found for argument (" + argName + ")")
 		return withNoop()
 	}
 	return WithFileConfig(filename)

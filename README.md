@@ -35,18 +35,18 @@ import (
 
 type MyConfig struct {
 	cfggo.Structure
-	StringField       func() string                 `json:"string_field" help:"My string config item"`
-	IntField          func() int                    `json:"int_pos_field" help:"My int config item"`
-	BoolField         func() bool                   `json:"bool_true_field" help:"My bool config item"`
-	StringSlice       func() []string               `json:"string_slice" help:"My string slice config item"`
-	IntSlice          func() []int                  `json:"int_slice" help:"My int slice config item"`
-	BoolSlice         func() []bool                 `json:"bool_slice" help:"My bool slice config item"`
-	Float64Slice      func() []float64              `json:"float64_slice" help:"My float64 slice config item"`
-	Float32Slice      func() []float32              `json:"float32_slice" help:"My float32 slice config item"`
-	StringMap         func() map[string]string      `json:"string_map" help:"My string map config item"`
-	InterfaceMap      func() map[string]interface{} `json:"interface_map" help:"My interface map config item"`
-	DurationField     func() time.Duration          `json:"duration_field" help:"My duration config item"`
-	TimeField         func() time.Time              `json:"time_field" help:"My time config item"`
+	StringField       func() string                 `cfg:"string_field" help:"My string config item"`
+	IntField          func() int                    `cfg:"int_pos_field" help:"My int config item"`
+	BoolField         func() bool                   `cfg:"bool_true_field" help:"My bool config item"`
+	StringSlice       func() []string               `cfg:"string_slice" help:"My string slice config item"`
+	IntSlice          func() []int                  `cfg:"int_slice" help:"My int slice config item"`
+	BoolSlice         func() []bool                 `cfg:"bool_slice" help:"My bool slice config item"`
+	Float64Slice      func() []float64              `cfg:"float64_slice" help:"My float64 slice config item"`
+	Float32Slice      func() []float32              `cfg:"float32_slice" help:"My float32 slice config item"`
+	StringMap         func() map[string]string      `cfg:"string_map" help:"My string map config item"`
+	InterfaceMap      func() map[string]interface{} `cfg:"interface_map" help:"My interface map config item"`
+	DurationField     func() time.Duration          `cfg:"duration_field" help:"My duration config item"`
+	TimeField         func() time.Time              `cfg:"time_field" help:"My time config item"`
 }
 
 func main() {
@@ -99,18 +99,18 @@ import (
 )
 
 type MyConfig struct {
-	StringField       func() string                 `json:"string_field" help:"My string config item"`
-	IntField          func() int                    `json:"int_pos_field" help:"My int config item"`
-	BoolField         func() bool                   `json:"bool_true_field" help:"My bool config item"`
-	StringSlice       func() []string               `json:"string_slice" help:"My string slice config item"`
-	IntSlice          func() []int                  `json:"int_slice" help:"My int slice config item"`
-	BoolSlice         func() []bool                 `json:"bool_slice" help:"My bool slice config item"`
-	Float64Slice      func() []float64              `json:"float64_slice" help:"My float64 slice config item"`
-	Float32Slice      func() []float32              `json:"float32_slice" help:"My float32 slice config item"`
-	StringMap         func() map[string]string      `json:"string_map" help:"My string map config item"`
-	InterfaceMap      func() map[string]interface{} `json:"interface_map" help:"My interface map config item"`
-	DurationField     func() time.Duration          `json:"duration_field" help:"My duration config item"`
-	TimeField         func() time.Time              `json:"time_field" help:"My time config item"`
+	StringField       func() string                 `cfg:"string_field" help:"My string config item"`
+	IntField          func() int                    `cfg:"int_pos_field" help:"My int config item"`
+	BoolField         func() bool                   `cfg:"bool_true_field" help:"My bool config item"`
+	StringSlice       func() []string               `cfg:"string_slice" help:"My string slice config item"`
+	IntSlice          func() []int                  `cfg:"int_slice" help:"My int slice config item"`
+	BoolSlice         func() []bool                 `cfg:"bool_slice" help:"My bool slice config item"`
+	Float64Slice      func() []float64              `cfg:"float64_slice" help:"My float64 slice config item"`
+	Float32Slice      func() []float32              `cfg:"float32_slice" help:"My float32 slice config item"`
+	StringMap         func() map[string]string      `cfg:"string_map" help:"My string map config item"`
+	InterfaceMap      func() map[string]interface{} `cfg:"interface_map" help:"My interface map config item"`
+	DurationField     func() time.Duration          `cfg:"duration_field" help:"My duration config item"`
+	TimeField         func() time.Time              `cfg:"time_field" help:"My time config item"`
 }
 
 func main() {
@@ -149,8 +149,8 @@ import (
 )
 
 type MyConfig struct {
-	StringField       func() string                 `json:"string_field" help:"My string config item"`
-	IntField          func() int                    `json:"int_pos_field" help:"My int config item"`
+	StringField       func() string                 `cfg:"string_field" help:"My string config item"`
+	IntField          func() int                    `cfg:"int_pos_field" help:"My int config item"`
 }
 
 func main() {

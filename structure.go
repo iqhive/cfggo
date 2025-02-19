@@ -184,12 +184,12 @@ func (c *Structure) Get(key string) (interface{}, bool) {
 
 func (c *Structure) createFlags() {
 	for key, value := range c.configData {
-		configDescription := "" // You can set a default description or fetch it from somewhere if needed
+		// Fetch the description from the struct tag
+		configDescription := c.GetHelpTag(key)
 		c.NewFlag(key, value, configDescription)
 	}
 }
 
-// var once sync.Once
 func (c *Structure) replaceConfigFuncs() {
 	v := reflect.ValueOf(c.parent)
 
@@ -223,7 +223,6 @@ func (c *Structure) replaceConfigFuncs() {
 			}
 
 			if configVarName != "" && configVarName != "-" {
-				// Logger.Debugf("making Func %s of type %s", configVarName, fieldValue.Type())
 				fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
 					return []reflect.Value{reflect.ValueOf(c.configData[configVarName])}
 				}))
@@ -264,10 +263,13 @@ func (c *Structure) createStruct() interface{} {
 }
 
 func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
-	if name, ok := field.Tag.Lookup("config"); ok {
+	if name, ok := field.Tag.Lookup("cfg"); ok {
 		return name
 	}
-	if name, ok := field.Tag.Lookup("json"); ok {
+	if name, ok := field.Tag.Lookup("config"); ok { // for backwards compatibility
+		return name
+	}
+	if name, ok := field.Tag.Lookup("json"); ok { // for backwards compatibility
 		name, _, _ := strings.Cut(name, ",")
 		return name
 	}

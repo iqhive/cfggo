@@ -6,6 +6,9 @@
 
 - Type safety for configuration keys
 - Load configuration from JSON files, environment variables, and HTTP endpoints.
+--- NB: The cfg tags (if present)on the config structure fields is used when loading and saving the JSON data.
+        i.e. If a cfg tag is present, it will be used as the JSON key name when saving/loading the JSON data.
+		If a cfg tag is not present, the field name will be used as the JSON key name
 - Support for default values and dynamic configuration updates.
 - Command-line flag integration.
 - Thread-safe configuration access and updates.

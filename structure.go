@@ -107,6 +107,11 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	c.parseFlags()
 
+	// Validate configuration after loading from all sources
+	if err := c.Validate(); err != nil {
+		Logger.Warn("Configuration validation failed: %v", err)
+	}
+
 	// Logger.Info("Done Init")
 }
 
@@ -177,17 +182,17 @@ func (c *Structure) Set(key string, value interface{}) error {
 func (c *Structure) set(key string, value interface{}) error {
 	if existing, exists := c.configData[key]; exists {
 		existingType := reflect.TypeOf(existing)
-		
+
 		// Use the helper function for type conversion
 		convertedValue, err := ConvertValue(value, existingType)
 		if err != nil {
 			return err
 		}
-		
+
 		c.configData[key] = convertedValue
 		return nil
 	}
-	
+
 	c.configData[key] = value
 	return nil
 }
@@ -223,7 +228,7 @@ func (c *Structure) createFlags() {
 func (c *Structure) replaceConfigFuncs() {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
-	
+
 	v := reflect.ValueOf(c.parent)
 
 	// Keep dereferencing until we get to a non-pointer value
@@ -353,14 +358,14 @@ func getFieldKey(field reflect.StructField) string {
 
 func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
 	fieldKey := getFieldKey(field)
-	
+
 	configNameCacheMutex.RLock()
 	if name, exists := configNameCache[fieldKey]; exists {
 		configNameCacheMutex.RUnlock()
 		return name
 	}
 	configNameCacheMutex.RUnlock()
-	
+
 	// First check for "cfg" tag
 	configVarName := field.Tag.Get("cfg")
 	if configVarName == "" {
@@ -377,7 +382,7 @@ func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
 	if idx := strings.Index(configVarName, ","); idx != -1 {
 		configVarName = configVarName[:idx]
 	}
-	
+
 	configNameCacheMutex.Lock()
 	configNameCache[fieldKey] = configVarName
 	configNameCacheMutex.Unlock()
@@ -439,4 +444,9 @@ func (c *Structure) setDefaultsFromTags() {
 			}
 		}
 	}
+}
+
+// ReloadConfig reloads the configuration from sources
+func (c *Structure) ReloadConfig() error {
+	return c.Reload()
 }

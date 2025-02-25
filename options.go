@@ -132,3 +132,11 @@ func WithFlagSet(fs *flag.FlagSet) Option {
 		return nil
 	}
 }
+
+// WithValidation adds a validator for a configuration key
+func WithValidation(key string, validator Validator) Option {
+	return func(c *Structure) error {
+		c.RegisterValidator(key, validator)
+		return nil
+	}
+}

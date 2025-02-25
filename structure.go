@@ -34,6 +34,7 @@ type Structure struct {
 	defaultsAlreadySet bool                   // Are the defaults already set
 	parent             interface{}            // This is a pointer to the parent struct
 	configData         map[string]interface{} // Where the configuration data is stored
+	autoSave           bool                   // Whether to automatically save on exit
 
 	// New field to store a dedicated FlagSet instead of using flag.CommandLine
 	FlagSet *flag.FlagSet
@@ -130,27 +131,40 @@ func (c *Structure) setupConfigData() {
 
 	t := v.Type()
 
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
-			continue
-		}
-		fieldValue := v.Field(i)
+	var processStruct func(reflect.Value, reflect.Type, string)
+	processStruct = func(v reflect.Value, t reflect.Type, prefix string) {
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
+				continue
+			}
+			fieldValue := v.Field(i)
 
-		configVarName := c.getConfigNameFromField(field)
-		if configVarName == "" || configVarName == "-" {
-			// Skip fields marked with "-" or empty tag
-			continue
-		}
+			configVarName := c.getConfigNameFromField(field)
+			if configVarName == "" || configVarName == "-" {
+				// Skip fields marked with "-" or empty tag
+				continue
+			}
 
-		if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
-			// Set the default value in the map, to the reflect.Zero of the type returned from the config function
-			c.set(configVarName, reflect.Zero(fieldValue.Type().Out(0)).Interface())
-		} else if fieldValue.Kind() == reflect.Func {
-			// Set the default value in the map, to the value (and type) returned from the config function
-			c.set(configVarName, fieldValue.Call(nil)[0].Interface())
+			fullKey := configVarName
+			if prefix != "" {
+				fullKey = prefix + "." + configVarName
+			}
+
+			if fieldValue.Kind() == reflect.Struct {
+				// Process nested structs recursively
+				processStruct(fieldValue, field.Type, fullKey)
+			} else if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
+				// Set the default value in the map, to the reflect.Zero of the type returned from the config function
+				c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface())
+			} else if fieldValue.Kind() == reflect.Func {
+				// Set the default value in the map, to the value (and type) returned from the config function
+				c.set(fullKey, fieldValue.Call(nil)[0].Interface())
+			}
 		}
 	}
+
+	processStruct(v, t, "")
 }
 
 // Set sets a configuration value and then updates the config struct as well

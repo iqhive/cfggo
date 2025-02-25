@@ -56,7 +56,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 				if err := processMap(v, fullKey); err != nil {
 					return err
 				}
-				
+
 				// Special handling for nested time.Duration fields
 				// Check if any nested fields need special handling
 				for nestedKey, nestedValue := range v {
@@ -82,7 +82,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 						c.configData[fullKey] = nil
 						continue
 					}
-					
+
 					// Handle time.Time conversion
 					if _, isTime := existingVal.(time.Time); isTime {
 						if strVal, ok := v.(string); ok {
@@ -92,7 +92,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 							}
 						}
 					}
-					
+
 					// Handle time.Duration conversion
 					if _, isDuration := existingVal.(time.Duration); isDuration {
 						if strVal, ok := v.(string); ok {
@@ -106,7 +106,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 							continue
 						}
 					}
-					
+
 					// Handle slice conversions
 					if reflect.TypeOf(existingVal) != nil && reflect.TypeOf(existingVal).Kind() == reflect.Slice {
 						// Handle empty slices
@@ -161,7 +161,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 							}
 						}
 					}
-					
+
 					// Handle map conversions
 					if reflect.TypeOf(existingVal) != nil && reflect.TypeOf(existingVal).Kind() == reflect.Map {
 						if mapVal, ok := v.(map[string]interface{}); ok {
@@ -182,7 +182,12 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 						}
 					}
 				}
-				
+
+				// Check if this field should be ignored (has hyphen tag)
+				if c.shouldIgnoreField(fullKey) {
+					continue
+				}
+
 				// Try to set the value with proper type conversion
 				if err := c.set(fullKey, v); err != nil {
 					Logger.Warn("Error setting config key %s: %v", fullKey, err)
@@ -271,6 +276,57 @@ func (c *Structure) GetHelpTag(key string) string {
 		}
 	}
 	return ""
+}
+
+// shouldIgnoreField checks if a field should be ignored based on its tag
+func (c *Structure) shouldIgnoreField(key string) bool {
+	v := reflect.ValueOf(c.parent)
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+
+	t := v.Type()
+
+	// Check all fields in the struct
+	var checkStruct func(reflect.Type, string) bool
+	checkStruct = func(t reflect.Type, prefix string) bool {
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+
+			// Get the config name for this field
+			configVarName := c.getConfigNameFromField(field)
+
+			// If this field has a hyphen tag, it should be ignored
+			if configVarName == "-" {
+				fieldName := field.Name
+				if prefix != "" {
+					fieldName = prefix + "." + fieldName
+				}
+
+				// Check if the key matches this field name
+				if key == fieldName {
+					return true
+				}
+			}
+
+			// Check nested structs
+			if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(Structure{}) {
+				nestedPrefix := field.Name
+				if prefix != "" {
+					nestedPrefix = prefix + "." + nestedPrefix
+				}
+				if checkStruct(field.Type, nestedPrefix) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	return checkStruct(t, "")
 }
 
 func (c *Structure) saveConfig() error {

@@ -115,3 +115,11 @@ func WithSkipEnvironment() Option {
 		return nil
 	}
 }
+
+// WithAutoSave enables automatic saving of configuration on program exit
+func WithAutoSave() Option {
+	return func(c *Structure) error {
+		c.autoSave = true
+		return nil
+	}
+}

@@ -208,3 +208,32 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 		// }
 	})
 }
+
+func TestAutoSaveDisabledByDefault(t *testing.T) {
+	type SimpleConfig struct {
+		Structure
+		Field func() string `cfg:"field"`
+	}
+
+	config := &SimpleConfig{
+		Field: DefaultValue("default_value"),
+	}
+	config.Init(config)
+
+	// Verify autoSave is false by default
+	if config.autoSave {
+		t.Error("autoSave should be false by default")
+	}
+
+	// Verify configsToSave doesn't contain our config
+	found := false
+	for _, c := range configsToSave {
+		if c == &config.Structure {
+			found = true
+			break
+		}
+	}
+	if found {
+		t.Error("config should not be in configsToSave when autoSave is disabled")
+	}
+}

@@ -217,11 +217,12 @@ func TestInit(t *testing.T) {
 func TestSaveAndLoadConfig(t *testing.T) {
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("tests/test.json"))
+	
+	// Use WithAutoSave to enable automatic saving for this test
+	config.Init(config, WithFileConfig("tests/test.json"), WithAutoSave())
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")
-	config.configData["string_field"] = "test_value"
 
 	// Save the configuration
 	err := config.saveConfig()
@@ -229,18 +230,17 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		t.Errorf("Expected no error during save, but got %v", err)
 	}
 
-	// Load the configuration
-	err = config.loadConfig()
-	if err != nil {
-		t.Errorf("Expected no error during load, but got %v", err)
-	}
+	// Create a new config instance to load the saved data
+	newConfig := NewTestConfig()
+	defer RestoreFlagValues()
+	newConfig.Init(newConfig, WithFileConfig("tests/test.json"))
 
 	// Verify the loaded value
-	if config.StringField() != "test_value" {
-		t.Errorf("Expected 'test_value', but got %v", config.StringField())
+	if newConfig.StringField() != "test_value" {
+		t.Errorf("Expected 'test_value', but got %v", newConfig.StringField())
 	}
-	if config.StringField2() != "default_string2" {
-		t.Errorf("Expected 'default_string2', but got %v", config.StringField2())
+	if newConfig.StringField2() != "default_string2" {
+		t.Errorf("Expected 'default_string2', but got %v", newConfig.StringField2())
 	}
 }
 

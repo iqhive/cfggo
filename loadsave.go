@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var configsToSave []*Structure
@@ -55,7 +56,133 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 				if err := processMap(v, fullKey); err != nil {
 					return err
 				}
+				
+				// Special handling for nested time.Duration fields
+				// Check if any nested fields need special handling
+				for nestedKey, nestedValue := range v {
+					nestedFullKey := fullKey + "." + nestedKey
+					if existingVal, exists := c.configData[nestedFullKey]; exists {
+						// Handle time.Duration in nested structures
+						if _, isDuration := existingVal.(time.Duration); isDuration {
+							if strVal, ok := nestedValue.(string); ok {
+								if duration, err := time.ParseDuration(strVal); err == nil {
+									c.configData[nestedFullKey] = duration
+								}
+							} else if floatVal, ok := nestedValue.(float64); ok {
+								c.configData[nestedFullKey] = time.Duration(int64(floatVal))
+							}
+						}
+					}
+				}
 			default:
+				// Special handling for known types
+				if existingVal, exists := c.configData[fullKey]; exists {
+					// Handle nil values
+					if v == nil {
+						c.configData[fullKey] = nil
+						continue
+					}
+					
+					// Handle time.Time conversion
+					if _, isTime := existingVal.(time.Time); isTime {
+						if strVal, ok := v.(string); ok {
+							if t, err := time.Parse(time.RFC3339, strVal); err == nil {
+								c.configData[fullKey] = t
+								continue
+							}
+						}
+					}
+					
+					// Handle time.Duration conversion
+					if _, isDuration := existingVal.(time.Duration); isDuration {
+						if strVal, ok := v.(string); ok {
+							if duration, err := time.ParseDuration(strVal); err == nil {
+								c.configData[fullKey] = duration
+								continue
+							}
+						} else if floatVal, ok := v.(float64); ok {
+							// Handle numeric duration (assuming nanoseconds)
+							c.configData[fullKey] = time.Duration(int64(floatVal))
+							continue
+						}
+					}
+					
+					// Handle slice conversions
+					if reflect.TypeOf(existingVal) != nil && reflect.TypeOf(existingVal).Kind() == reflect.Slice {
+						// Handle empty slices
+						if sliceVal, ok := v.([]interface{}); ok {
+							// Convert slice based on the existing type
+							switch existingVal.(type) {
+							case []string:
+								strSlice := make([]string, len(sliceVal))
+								for i, item := range sliceVal {
+									if item != nil {
+										strSlice[i] = fmt.Sprintf("%v", item)
+									}
+								}
+								c.configData[fullKey] = strSlice
+								continue
+							case []int:
+								intSlice := make([]int, len(sliceVal))
+								for i, item := range sliceVal {
+									if intVal, ok := item.(float64); ok {
+										intSlice[i] = int(intVal)
+									}
+								}
+								c.configData[fullKey] = intSlice
+								continue
+							case []bool:
+								boolSlice := make([]bool, len(sliceVal))
+								for i, item := range sliceVal {
+									if boolVal, ok := item.(bool); ok {
+										boolSlice[i] = boolVal
+									}
+								}
+								c.configData[fullKey] = boolSlice
+								continue
+							case []float32:
+								floatSlice := make([]float32, len(sliceVal))
+								for i, item := range sliceVal {
+									if floatVal, ok := item.(float64); ok {
+										floatSlice[i] = float32(floatVal)
+									}
+								}
+								c.configData[fullKey] = floatSlice
+								continue
+							case []float64:
+								floatSlice := make([]float64, len(sliceVal))
+								for i, item := range sliceVal {
+									if floatVal, ok := item.(float64); ok {
+										floatSlice[i] = floatVal
+									}
+								}
+								c.configData[fullKey] = floatSlice
+								continue
+							}
+						}
+					}
+					
+					// Handle map conversions
+					if reflect.TypeOf(existingVal) != nil && reflect.TypeOf(existingVal).Kind() == reflect.Map {
+						if mapVal, ok := v.(map[string]interface{}); ok {
+							switch existingVal.(type) {
+							case map[string]string:
+								strMap := make(map[string]string)
+								for k, item := range mapVal {
+									if item != nil {
+										strMap[k] = fmt.Sprintf("%v", item)
+									}
+								}
+								c.configData[fullKey] = strMap
+								continue
+							case map[string]interface{}:
+								c.configData[fullKey] = mapVal
+								continue
+							}
+						}
+					}
+				}
+				
 				// Try to set the value with proper type conversion
 				if err := c.set(fullKey, v); err != nil {
 					Logger.Warn("Error setting config key %s: %v", fullKey, err)
@@ -69,24 +196,27 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 }
 
 func (c *Structure) setupConfigSaver() {
-	configsToSave = append(configsToSave, c)
+	// Only set up config saver if explicitly enabled
+	if c.autoSave {
+		configsToSave = append(configsToSave, c)
 
-	once.Do(func() {
-		sigchan := make(chan os.Signal, 1)
-		signal.Notify(sigchan, os.Interrupt, syscall.SIGTERM)
-		go func() {
-			<-sigchan
-			for _, config := range configsToSave {
-				if config.changed {
-					Logger.Info("Saving config before exit...")
-					if err := config.saveConfig(); err != nil {
-						Logger.Error("Error saving configuration: %v", err)
+		once.Do(func() {
+			sigchan := make(chan os.Signal, 1)
+			signal.Notify(sigchan, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-sigchan
+				for _, config := range configsToSave {
+					if config.changed {
+						Logger.Info("Saving config before exit...")
+						if err := config.saveConfig(); err != nil {
+							Logger.Error("Error saving configuration: %v", err)
+						}
 					}
 				}
-			}
-			os.Exit(0)
-		}()
-	})
+				os.Exit(0)
+			}()
+		})
+	}
 }
 
 func (c *Structure) GetJSONBytes() []byte {

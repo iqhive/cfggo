@@ -1,0 +1,9 @@
+{
+    "cfg_key": "cfg_value",
+    "json_only_key": "json_value",
+    "cfg_preferred": 42,
+    "NoTags": 3.14,
+    "nested": {
+        "inner_cfg_key": "1h30m"
+    }
+}

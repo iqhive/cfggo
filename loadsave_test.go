@@ -1,13 +1,33 @@
 package cfggo
 
 import (
+	"flag"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
 
 func TestJSONLoadingTagHierarchy(t *testing.T) {
+	// Save original command line arguments and restore them after the test
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	
+	// Use a clean set of arguments for this test
+	os.Args = []string{"test"}
+	
+	// Create a new FlagSet for this test to avoid conflicts
+	originalFlagSet := flag.CommandLine
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	defer func() { flag.CommandLine = originalFlagSet }()
+	
+	// Create a temporary directory for test files
+	testDir := "tests"
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatalf("failed to create test directory: %v", err)
+	}
+	
 	type TagTestStruct struct {
 		Structure
 		CfgTag   func() string `cfg:"cfg_key" json:"json_key"`
@@ -20,7 +40,7 @@ func TestJSONLoadingTagHierarchy(t *testing.T) {
 	}
 
 	// Create temporary test file
-	tempFileName := "tag_hierarchy_test.json"
+	tempFileName := filepath.Join(testDir, "tag_hierarchy_test.json")
 	jsonData := []byte(`{
         "cfg_key": "cfg_value",
         "json_only_key": "json_value",
@@ -35,14 +55,17 @@ func TestJSONLoadingTagHierarchy(t *testing.T) {
 	}
 	defer os.Remove(tempFileName)
 
-	// Initialize config
+	// Initialize config with a custom FlagSet to avoid global flag conflicts
 	config := &TagTestStruct{
 		CfgTag:   DefaultValue("default_cfg"),
 		JsonTag:  DefaultValue("default_json"),
 		BothTags: DefaultValue(0),
 		NoTags:   DefaultValue(0.0),
 	}
-	config.Init(config, WithFileConfig(tempFileName))
+	
+	// Use WithFlagSet option to provide a dedicated FlagSet for this test
+	testFlagSet := flag.NewFlagSet("test_hierarchy", flag.ContinueOnError)
+	config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 	// Verify values
 	expected := map[string]interface{}{
@@ -64,12 +87,30 @@ func TestJSONLoadingTagHierarchy(t *testing.T) {
 
 func TestJSONLoadingEdgeCases(t *testing.T) {
 	t.Run("hyphen_ignore", func(t *testing.T) {
+		// Save original command line arguments and restore them after the test
+		oldArgs := os.Args
+		defer func() { os.Args = oldArgs }()
+		
+		// Use a clean set of arguments for this test
+		os.Args = []string{"test"}
+		
+		// Create a new FlagSet for this test to avoid conflicts
+		originalFlagSet := flag.CommandLine
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		defer func() { flag.CommandLine = originalFlagSet }()
+		
+		// Create a temporary directory for test files
+		testDir := "tests"
+		if err := os.MkdirAll(testDir, 0755); err != nil {
+			t.Fatalf("failed to create test directory: %v", err)
+		}
+		
 		type HyphenStruct struct {
 			Structure
 			IgnoredField func() string `cfg:"-"`
 		}
 
-		tempFileName := "hyphen_test.json"
+		tempFileName := filepath.Join(testDir, "hyphen_test.json")
 		jsonData := []byte(`{"IgnoredField": "should_be_ignored"}`)
 		if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
 			t.Fatalf("failed to write temp config file: %v", err)
@@ -79,7 +120,10 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 		config := &HyphenStruct{
 			IgnoredField: DefaultValue("default"),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		
+		// Use WithFlagSet option to provide a dedicated FlagSet for this test
+		testFlagSet := flag.NewFlagSet("test_hyphen", flag.ContinueOnError)
+		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		if _, exists := config.configData["IgnoredField"]; exists {
 			t.Error("IgnoredField should not be present in configData")
@@ -87,6 +131,24 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 	})
 
 	t.Run("complex_nesting", func(t *testing.T) {
+		// Save original command line arguments and restore them after the test
+		oldArgs := os.Args
+		defer func() { os.Args = oldArgs }()
+		
+		// Use a clean set of arguments for this test
+		os.Args = []string{"test"}
+		
+		// Create a new FlagSet for this test to avoid conflicts
+		originalFlagSet := flag.CommandLine
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		defer func() { flag.CommandLine = originalFlagSet }()
+		
+		// Create a temporary directory for test files
+		testDir := "tests"
+		if err := os.MkdirAll(testDir, 0755); err != nil {
+			t.Fatalf("failed to create test directory: %v", err)
+		}
+		
 		type ComplexStruct struct {
 			Structure
 			Database struct {
@@ -95,7 +157,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 			} `cfg:"database"`
 		}
 
-		tempFileName := "complex_nesting_test.json"
+		tempFileName := filepath.Join(testDir, "complex_nesting_test.json")
 		jsonData := []byte(`{
             "database": {
                 "db_host": "localhost",
@@ -116,7 +178,10 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 				Port: DefaultValue(0),
 			},
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		
+		// Use WithFlagSet option to provide a dedicated FlagSet for this test
+		testFlagSet := flag.NewFlagSet("test_complex", flag.ContinueOnError)
+		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		expected := map[string]interface{}{
 			"database.db_host": "localhost",
@@ -132,13 +197,31 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 	})
 
 	t.Run("type_conversions", func(t *testing.T) {
+		// Save original command line arguments and restore them after the test
+		oldArgs := os.Args
+		defer func() { os.Args = oldArgs }()
+		
+		// Use a clean set of arguments for this test
+		os.Args = []string{"test"}
+		
+		// Create a new FlagSet for this test to avoid conflicts
+		originalFlagSet := flag.CommandLine
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		defer func() { flag.CommandLine = originalFlagSet }()
+		
+		// Create a temporary directory for test files
+		testDir := "tests"
+		if err := os.MkdirAll(testDir, 0755); err != nil {
+			t.Fatalf("failed to create test directory: %v", err)
+		}
+		
 		type TypeTestStruct struct {
 			Structure
 			IntToFloat   func() float64 `cfg:"int_field"`
 			StringToBool func() bool    `cfg:"bool_field"`
 		}
 
-		tempFileName := "type_conversion_test.json"
+		tempFileName := filepath.Join(testDir, "type_conversion_test.json")
 		jsonData := []byte(`{
             "int_field": 42,
             "bool_field": "true"
@@ -152,7 +235,10 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 			IntToFloat:   DefaultValue(0.0),
 			StringToBool: DefaultValue(false),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		
+		// Use WithFlagSet option to provide a dedicated FlagSet for this test
+		testFlagSet := flag.NewFlagSet("test_types", flag.ContinueOnError)
+		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		if got, want := config.configData["int_field"], 42.0; got != want {
 			t.Errorf("IntToFloat = %v (%T), want %v (%T)", got, got, want, want)
@@ -165,12 +251,30 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 func TestJSONLoadingErrorHandling(t *testing.T) {
 	t.Run("invalid_json", func(t *testing.T) {
+		// Save original command line arguments and restore them after the test
+		oldArgs := os.Args
+		defer func() { os.Args = oldArgs }()
+		
+		// Use a clean set of arguments for this test
+		os.Args = []string{"test"}
+		
+		// Create a new FlagSet for this test to avoid conflicts
+		originalFlagSet := flag.CommandLine
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		defer func() { flag.CommandLine = originalFlagSet }()
+		
+		// Create a temporary directory for test files
+		testDir := "tests"
+		if err := os.MkdirAll(testDir, 0755); err != nil {
+			t.Fatalf("failed to create test directory: %v", err)
+		}
+		
 		type InvalidJSONStruct struct {
 			Structure
 			Field func() string `cfg:"test_field"`
 		}
 
-		tempFileName := "invalid_json_test.json"
+		tempFileName := filepath.Join(testDir, "invalid_json_test.json")
 		jsonData := []byte(`{ "test_field": "value" `) // Missing closing brace
 		if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
 			t.Fatalf("failed to write temp config file: %v", err)
@@ -180,19 +284,40 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 		config := &InvalidJSONStruct{
 			Field: DefaultValue("default"),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		
+		// Use WithFlagSet option to provide a dedicated FlagSet for this test
+		testFlagSet := flag.NewFlagSet("test_invalid_json", flag.ContinueOnError)
+		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 		// if err == nil {
 		// 	t.Error("Expected error for invalid JSON, got nil")
 		// }
 	})
 
 	t.Run("unexpected_type", func(t *testing.T) {
+		// Save original command line arguments and restore them after the test
+		oldArgs := os.Args
+		defer func() { os.Args = oldArgs }()
+		
+		// Use a clean set of arguments for this test
+		os.Args = []string{"test"}
+		
+		// Create a new FlagSet for this test to avoid conflicts
+		originalFlagSet := flag.CommandLine
+		flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+		defer func() { flag.CommandLine = originalFlagSet }()
+		
+		// Create a temporary directory for test files
+		testDir := "tests"
+		if err := os.MkdirAll(testDir, 0755); err != nil {
+			t.Fatalf("failed to create test directory: %v", err)
+		}
+		
 		type TypeMismatchStruct struct {
 			Structure
 			Number func() int `cfg:"number_field"`
 		}
 
-		tempFileName := "type_mismatch_test.json"
+		tempFileName := filepath.Join(testDir, "type_mismatch_test.json")
 		jsonData := []byte(`{ "number_field": "not_an_int" }`)
 		if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
 			t.Fatalf("failed to write temp config file: %v", err)
@@ -202,7 +327,10 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 		config := &TypeMismatchStruct{
 			Number: DefaultValue(0),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		
+		// Use WithFlagSet option to provide a dedicated FlagSet for this test
+		testFlagSet := flag.NewFlagSet("test_type_mismatch", flag.ContinueOnError)
+		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 		// if err == nil {
 		// 	t.Error("Expected error for type mismatch, got nil")
 		// }
@@ -210,6 +338,18 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 }
 
 func TestAutoSaveDisabledByDefault(t *testing.T) {
+	// Save original command line arguments and restore them after the test
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	
+	// Use a clean set of arguments for this test
+	os.Args = []string{"test"}
+	
+	// Create a new FlagSet for this test to avoid conflicts
+	originalFlagSet := flag.CommandLine
+	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
+	defer func() { flag.CommandLine = originalFlagSet }()
+	
 	type SimpleConfig struct {
 		Structure
 		Field func() string `cfg:"field"`
@@ -218,7 +358,10 @@ func TestAutoSaveDisabledByDefault(t *testing.T) {
 	config := &SimpleConfig{
 		Field: DefaultValue("default_value"),
 	}
-	config.Init(config)
+	
+	// Use WithFlagSet option to provide a dedicated FlagSet for this test
+	testFlagSet := flag.NewFlagSet("test_auto_save", flag.ContinueOnError)
+	config.Init(config, WithFlagSet(testFlagSet))
 
 	// Verify autoSave is false by default
 	if config.autoSave {

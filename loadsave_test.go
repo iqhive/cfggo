@@ -126,7 +126,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 		for key, want := range expected {
 			got := config.configData[key]
 			if !reflect.DeepEqual(got, want) {
-				t.Errorf("configData[%q] = %v, want %v", key, got, want)
+				t.Errorf("configData[%q] = %v (%T), want %v (%T)", key, got, got, want, want)
 			}
 		}
 	})

@@ -15,24 +15,18 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	if c.configData == nil {
 		c.configData = make(map[string]interface{})
 	}
-	//c.configData[configVarName] = defaultValue
-	// Logger.Info("NewFlag " + configVarName + " " + fmt.Sprintf("%v", defaultValue))
 
 	if c.FlagSet.Lookup(configVarName) != nil {
-		Logger.Error("Flag (" + configVarName + ") is already set, skipping...\n")
+		Logger.Error("Flag (%s) is already set, skipping...\n", configVarName)
 		return
 	}
+	
+	// Only register with the dedicated FlagSet, not the global one
 	if c.configData[configVarName] == nil {
-		Logger.Warn("configData[" + configVarName + "] is not set, using default value for type")
+		Logger.Warn("configData[%s] is not set, using default value for type", configVarName)
 		c.FlagSet.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(defaultValue)}, configVarName, configDescription)
-		if flag.Lookup(configVarName) == nil {
-			flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(defaultValue)}, configVarName, configDescription)
-		}
 	} else {
 		c.FlagSet.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
-		if flag.Lookup(configVarName) == nil {
-			flag.Var(&dynamicVar{config: c, name: configVarName, want: reflect.TypeOf(c.configData[configVarName])}, configVarName, configDescription)
-		}
 	}
 }
 
@@ -44,6 +38,12 @@ func (c *Structure) parseFlags() {
 			Logger.Error("error parsing flags: %v", err)
 		}
 	}
+}
+
+// GetFlagSet returns the FlagSet used by this configuration
+// This allows applications to register the FlagSet with their own flag parsing system
+func (c *Structure) GetFlagSet() *flag.FlagSet {
+	return c.FlagSet
 }
 
 // filterTestFlags removes Go test flags (starting with -test.) from arguments

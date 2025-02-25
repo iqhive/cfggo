@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"flag"
 	"net/http"
 	"os"
 	"strings"
@@ -120,6 +121,14 @@ func WithSkipEnvironment() Option {
 func WithAutoSave() Option {
 	return func(c *Structure) error {
 		c.autoSave = true
+		return nil
+	}
+}
+
+// WithFlagSet sets a custom FlagSet for the configuration
+func WithFlagSet(fs *flag.FlagSet) Option {
+	return func(c *Structure) error {
+		c.FlagSet = fs
 		return nil
 	}
 }

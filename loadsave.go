@@ -36,11 +36,13 @@ func (c *Structure) loadConfig() error {
 func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
-		return ErrorWrapper(err, 0, "")
+		return ErrorWrapper(err, 0, "Failed to unmarshal JSON data")
 	}
 
 	configMutex.Lock()
 	defer configMutex.Unlock()
+
+	var errors []error
 
 	var processMap func(map[string]interface{}, string) error
 	processMap = func(m map[string]interface{}, prefix string) error {
@@ -67,6 +69,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 							if strVal, ok := nestedValue.(string); ok {
 								if duration, err := time.ParseDuration(strVal); err == nil {
 									c.configData[nestedFullKey] = duration
+								} else {
+									errors = append(errors, ErrorWrapper(err, 0, "Failed to parse duration for %s", nestedFullKey))
 								}
 							} else if floatVal, ok := nestedValue.(float64); ok {
 								c.configData[nestedFullKey] = time.Duration(int64(floatVal))
@@ -89,6 +93,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 							if t, err := time.Parse(time.RFC3339, strVal); err == nil {
 								c.configData[fullKey] = t
 								continue
+							} else {
+								errors = append(errors, ErrorWrapper(err, 0, "Failed to parse time for %s", fullKey))
 							}
 						}
 					}
@@ -99,6 +105,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 							if duration, err := time.ParseDuration(strVal); err == nil {
 								c.configData[fullKey] = duration
 								continue
+							} else {
+								errors = append(errors, ErrorWrapper(err, 0, "Failed to parse duration for %s", fullKey))
 							}
 						} else if floatVal, ok := v.(float64); ok {
 							// Handle numeric duration (assuming nanoseconds)
@@ -127,6 +135,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 								for i, item := range sliceVal {
 									if intVal, ok := item.(float64); ok {
 										intSlice[i] = int(intVal)
+									} else {
+										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to int for %s[%d]", item, fullKey, i))
 									}
 								}
 								c.configData[fullKey] = intSlice
@@ -136,6 +146,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 								for i, item := range sliceVal {
 									if boolVal, ok := item.(bool); ok {
 										boolSlice[i] = boolVal
+									} else {
+										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to bool for %s[%d]", item, fullKey, i))
 									}
 								}
 								c.configData[fullKey] = boolSlice
@@ -145,6 +157,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 								for i, item := range sliceVal {
 									if floatVal, ok := item.(float64); ok {
 										floatSlice[i] = float32(floatVal)
+									} else {
+										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to float32 for %s[%d]", item, fullKey, i))
 									}
 								}
 								c.configData[fullKey] = floatSlice
@@ -154,6 +168,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 								for i, item := range sliceVal {
 									if floatVal, ok := item.(float64); ok {
 										floatSlice[i] = floatVal
+									} else {
+										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to float64 for %s[%d]", item, fullKey, i))
 									}
 								}
 								c.configData[fullKey] = floatSlice
@@ -190,14 +206,28 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
 
 				// Try to set the value with proper type conversion
 				if err := c.set(fullKey, v); err != nil {
-					Logger.Warn("Error setting config key %s: %v", fullKey, err)
+					errors = append(errors, ErrorWrapper(err, 0, "Error setting config key %s", fullKey))
 				}
 			}
 		}
 		return nil
 	}
 
-	return processMap(rawConfig, "")
+	err := processMap(rawConfig, "")
+	if err != nil {
+		return err
+	}
+
+	// If we collected any errors, return a combined error
+	if len(errors) > 0 {
+		var errMsg string
+		for _, err := range errors {
+			errMsg += err.Error() + "\n"
+		}
+		return ErrorWrapper(nil, 400, "Multiple errors occurred while loading config:\n%s", errMsg)
+	}
+
+	return nil
 }
 
 func (c *Structure) setupConfigSaver() {

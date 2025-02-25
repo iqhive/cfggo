@@ -142,7 +142,7 @@ func (d *dynamicVar) Set(s string) error {
 }
 
 func (d *dynamicVar) String() string {
-	if d.config == nil {
+	if d == nil || d.config == nil {
 		return ""
 	}
 	val, ok := d.config.Get(d.name)

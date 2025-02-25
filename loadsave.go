@@ -33,29 +33,39 @@ func (c *Structure) loadConfig() error {
 }
 
 func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
-	tempConfigData := c.createStruct()
-	if err := json.Unmarshal(data, tempConfigData); err != nil {
+	var rawConfig map[string]interface{}
+	if err := json.Unmarshal(data, &rawConfig); err != nil {
 		return ErrorWrapper(err, 0, "")
 	}
 
-	rvalue := reflect.ValueOf(tempConfigData).Elem()
-	rtype := rvalue.Type()
-
 	configMutex.Lock()
 	defer configMutex.Unlock()
-	for i := 0; i < rvalue.NumField(); i++ {
-		field := rtype.Field(i)
-		configKey := c.getConfigNameFromField(field)
-		if configKey == "" || configKey == "-" {
-			continue
+
+	var processMap func(map[string]interface{}, string) error
+	processMap = func(m map[string]interface{}, prefix string) error {
+		for key, value := range m {
+			fullKey := key
+			if prefix != "" {
+				fullKey = prefix + "." + key
+			}
+
+			switch v := value.(type) {
+			case map[string]interface{}:
+				// Process nested maps
+				if err := processMap(v, fullKey); err != nil {
+					return err
+				}
+			default:
+				// Try to set the value with proper type conversion
+				if err := c.set(fullKey, v); err != nil {
+					Logger.Warn("Error setting config key %s: %v", fullKey, err)
+				}
+			}
 		}
-		err := c.set(configKey, rvalue.Field(i).Interface())
-		if err != nil {
-			Logger.Warn("loadConfig error setting %s to (%v): %v", configKey, rvalue.Field(i).Interface(), err)
-		}
+		return nil
 	}
 
-	return nil
+	return processMap(rawConfig, "")
 }
 
 func (c *Structure) setupConfigSaver() {

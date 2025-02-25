@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -36,14 +37,22 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 }
 
 func (c *Structure) parseFlags() {
-	// fmt.Println("parseFlags")
-	// fmt.Println(os.Args[1:])
-	// Auto-parse flags once if not already parsed
-	// autoParseOnce.Do(func() {
 	if !c.FlagSet.Parsed() {
-		if err := c.FlagSet.Parse(os.Args[1:]); err != nil {
+		// Filter out Go test flags
+		args := filterTestFlags(os.Args[1:])
+		if err := c.FlagSet.Parse(args); err != nil {
 			Logger.Error("error parsing flags: %v", err)
 		}
 	}
-	// })
+}
+
+// filterTestFlags removes Go test flags (starting with -test.) from arguments
+func filterTestFlags(args []string) []string {
+	filtered := make([]string, 0, len(args))
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-test.") {
+			filtered = append(filtered, arg)
+		}
+	}
+	return filtered
 }

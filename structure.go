@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
+	"time"
 
 	"sync"
 )
@@ -118,7 +120,6 @@ func (c *Structure) setupConfigData() {
 
 	// Ensure we're working with the struct value, not a pointer
 	for v.Kind() == reflect.Ptr {
-		// Logger.Debug("SetupConfigData: dereferencing pointer")
 		v = v.Elem()
 	}
 
@@ -138,7 +139,7 @@ func (c *Structure) setupConfigData() {
 
 		configVarName := c.getConfigNameFromField(field)
 		if configVarName == "" || configVarName == "-" {
-			// Logger.Warn("No config or json tag found for field %s", field.Name)
+			// Skip fields marked with "-" or empty tag
 			continue
 		}
 
@@ -163,15 +164,126 @@ func (c *Structure) Set(key string, value interface{}) error {
 // set is a private function that sets a configuration value without locking
 func (c *Structure) set(key string, value interface{}) error {
 	if existing, exists := c.configData[key]; exists {
-		if reflect.TypeOf(value) != reflect.TypeOf(existing) && reflect.TypeOf(value).ConvertibleTo(reflect.TypeOf(existing)) {
-			value = reflect.ValueOf(value).Convert(reflect.TypeOf(existing)).Interface()
-		}
-		if reflect.TypeOf(value) != reflect.TypeOf(existing) {
-			return ErrorWrapper(nil, 400, "Type mismatch for key %s: %T != %T", key, value, existing)
+		existingType := reflect.TypeOf(existing)
+		valueType := reflect.TypeOf(value)
+
+		// If types don't match but are convertible
+		if valueType != existingType {
+			valueValue := reflect.ValueOf(value)
+
+			// Special handling for time.Duration
+			if existingType == reflect.TypeOf(time.Duration(0)) {
+				switch valueType.Kind() {
+				case reflect.String:
+					duration, err := time.ParseDuration(valueValue.String())
+					if err == nil {
+						c.configData[key] = duration
+						return nil
+					}
+				case reflect.Int, reflect.Int64:
+					// Only convert to Duration if we're sure this is meant to be a Duration
+					// and not a regular int64
+					c.configData[key] = time.Duration(valueValue.Int())
+					return nil
+				case reflect.Float64:
+					c.configData[key] = time.Duration(int64(valueValue.Float()))
+					return nil
+				}
+			} else if existingType == reflect.TypeOf(int64(0)) {
+				// Ensure int64 values don't get mistakenly converted to Duration
+				switch valueType.Kind() {
+				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+					c.configData[key] = valueValue.Int()
+					return nil
+				case reflect.Float64:
+					c.configData[key] = int64(valueValue.Float())
+					return nil
+				case reflect.String:
+					intVal, err := strconv.ParseInt(valueValue.String(), 10, 64)
+					if err == nil {
+						c.configData[key] = intVal
+						return nil
+					}
+				}
+			}
+
+			// Handle numeric type conversions
+			if isNumericType(existingType) && isNumericType(valueType) {
+				switch existingType.Kind() {
+				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+					var intVal int64
+					switch valueType.Kind() {
+					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+						intVal = valueValue.Int()
+					case reflect.Float32, reflect.Float64:
+						intVal = int64(valueValue.Float())
+					case reflect.String:
+						var err error
+						intVal, err = strconv.ParseInt(valueValue.String(), 10, 64)
+						if err != nil {
+							return ErrorWrapper(err, 400, "Cannot convert string to int: %v", err)
+						}
+					}
+					newValue := reflect.New(existingType).Elem()
+					newValue.SetInt(intVal)
+					c.configData[key] = newValue.Interface()
+					return nil
+
+				case reflect.Float32, reflect.Float64:
+					var floatVal float64
+					switch valueType.Kind() {
+					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+						floatVal = float64(valueValue.Int())
+					case reflect.Float32, reflect.Float64:
+						floatVal = valueValue.Float()
+					case reflect.String:
+						var err error
+						floatVal, err = strconv.ParseFloat(valueValue.String(), 64)
+						if err != nil {
+							return ErrorWrapper(err, 400, "Cannot convert string to float: %v", err)
+						}
+					}
+					newValue := reflect.New(existingType).Elem()
+					newValue.SetFloat(floatVal)
+					c.configData[key] = newValue.Interface()
+					return nil
+				}
+			}
+
+			// Handle boolean conversions
+			if existingType.Kind() == reflect.Bool && valueType.Kind() == reflect.String {
+				strVal := strings.ToLower(valueValue.String())
+				if strVal == "true" || strVal == "t" || strVal == "yes" || strVal == "y" || strVal == "1" {
+					c.configData[key] = true
+					return nil
+				} else if strVal == "false" || strVal == "f" || strVal == "no" || strVal == "n" || strVal == "0" {
+					c.configData[key] = false
+					return nil
+				}
+			}
+
+			// Try standard conversion if types are convertible
+			if valueType.ConvertibleTo(existingType) {
+				value = valueValue.Convert(existingType).Interface()
+			} else {
+				return ErrorWrapper(nil, 400, "Type mismatch for key %s: %T != %T", key, value, existing)
+			}
 		}
 	}
 	c.configData[key] = value
 	return nil
+}
+
+// Helper function to check if a type is numeric
+func isNumericType(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }
 
 // Get gets a configuration value and whether it exists from the configData
@@ -217,12 +329,17 @@ func (c *Structure) replaceConfigFuncs() {
 		if fieldValue.Kind() == reflect.Func {
 			configVarName := c.getConfigNameFromField(field)
 
-			if _, exists := c.configData[configVarName]; !exists {
-				Logger.Error("Missing configData value for key %s", configVarName)
+			// Skip fields marked with "-"
+			if configVarName == "-" {
 				continue
 			}
 
 			if configVarName != "" && configVarName != "-" {
+				if _, exists := c.configData[configVarName]; !exists {
+					Logger.Error("Missing configData value for key %s", configVarName)
+					continue
+				}
+
 				fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
 					return []reflect.Value{reflect.ValueOf(c.configData[configVarName])}
 				}))
@@ -234,17 +351,33 @@ func (c *Structure) replaceConfigFuncs() {
 // create struct create a new struct based on the config data
 func (c *Structure) createStruct() interface{} {
 	ptype := reflect.TypeOf(c.parent).Elem() // always a pointer.
-	fields := make([]reflect.StructField, 0)
-	for i := range ptype.NumField() {
+	fields := make([]reflect.StructField, 0, ptype.NumField())
+
+	for i := 0; i < ptype.NumField(); i++ {
 		field := ptype.Field(i)
 		if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
 			continue
 		}
-		if field.Type.Kind() == reflect.Func && field.Type.NumIn() == 0 && field.Type.NumOut() == 1 {
-			field.Type = field.Type.Out(0) // transform 'func() T' to 'T'
+
+		configKey := c.getConfigNameFromField(field)
+		newField := reflect.StructField{
+			Name: field.Name,
+			Type: field.Type,
+			Tag:  reflect.StructTag(`json:"` + configKey + `"`),
 		}
-		fields = append(fields, field)
+
+		// Handle nested structs by creating new types with adjusted fields
+		if newField.Type.Kind() == reflect.Struct {
+			newField.Type = c.createNestedStructType(newField.Type)
+		}
+
+		if newField.Type.Kind() == reflect.Func && newField.Type.NumIn() == 0 && newField.Type.NumOut() == 1 {
+			newField.Type = newField.Type.Out(0)
+		}
+
+		fields = append(fields, newField)
 	}
+
 	resp := reflect.New(reflect.StructOf(fields)).Interface()
 
 	// Add values to the struct
@@ -262,18 +395,46 @@ func (c *Structure) createStruct() interface{} {
 	return resp
 }
 
+func (c *Structure) createNestedStructType(t reflect.Type) reflect.Type {
+	fields := make([]reflect.StructField, 0, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		configKey := c.getConfigNameFromField(field)
+		newField := reflect.StructField{
+			Name: field.Name,
+			Type: field.Type,
+			Tag:  reflect.StructTag(`json:"` + configKey + `"`),
+		}
+
+		// Recursively process nested structs
+		if newField.Type.Kind() == reflect.Struct {
+			newField.Type = c.createNestedStructType(newField.Type)
+		}
+
+		fields = append(fields, newField)
+	}
+	return reflect.StructOf(fields)
+}
+
 func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
-	if name, ok := field.Tag.Lookup("cfg"); ok {
-		return name
+	// First check for "cfg" tag
+	configVarName := field.Tag.Get("cfg")
+	if configVarName == "" {
+		// Then check for "json" tag
+		configVarName = field.Tag.Get("json")
+		if configVarName == "" {
+			// Finally use the field name
+			configVarName = field.Name
+		}
 	}
-	if name, ok := field.Tag.Lookup("config"); ok { // for backwards compatibility
-		return name
+
+	// If the tag contains a comma, take only the part before the comma
+	// (to handle json tags like `json:"name,omitempty"`)
+	if idx := strings.Index(configVarName, ","); idx != -1 {
+		configVarName = configVarName[:idx]
 	}
-	if name, ok := field.Tag.Lookup("json"); ok { // for backwards compatibility
-		name, _, _ := strings.Cut(name, ",")
-		return name
-	}
-	return field.Name
+
+	return configVarName
 }
 
 func (c *Structure) getAllKeys() []string {

@@ -107,6 +107,11 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	c.parseFlags()
 
+	// Validate configuration after loading from all sources
+	if err := c.Validate(); err != nil {
+		Logger.Warn("Configuration validation failed: %v", err)
+	}
+
 	// Logger.Info("Done Init")
 }
 
@@ -439,4 +444,9 @@ func (c *Structure) setDefaultsFromTags() {
 			}
 		}
 	}
+}
+
+// ReloadConfig reloads the configuration from all sources
+func (c *Structure) ReloadConfig() error {
+	return c.Reload()
 }

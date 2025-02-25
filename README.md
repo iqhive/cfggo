@@ -191,6 +191,53 @@ Contributions are welcome! If you find any issues or have suggestions for new fe
 
 `cfggo` is licensed under the [MIT License](LICENSE).
 
+## Configuration Validation
+
+The cfggo package supports validation of configuration values. You can register validators for specific configuration keys and validate the configuration after loading.
+
+```go
+// Register a validator for the "age" configuration key
+config.RegisterValidator("age", func(value interface{}) error {
+    age, ok := value.(int)
+    if !ok {
+        return errors.New("age must be an integer")
+    }
+    if age < 0 || age > 120 {
+        return errors.New("age must be between 0 and 120")
+    }
+    return nil
+})
+
+// Validate the entire configuration
+if err := config.Validate(); err != nil {
+    log.Fatalf("Configuration validation failed: %v", err)
+}
+
+// Validate a specific configuration key
+if err := config.ValidateKey("age"); err != nil {
+    log.Fatalf("Validation of key 'age' failed: %v", err)
+}
+```
+
+You can also use the `WithValidation` option to register validators during initialization:
+
+```go
+config.Init(config, WithValidation("age", ageValidator))
+```
+
+## Configuration Reloading
+
+The cfggo package supports reloading of configuration from all sources. This is useful when you want to update the configuration without restarting the application.
+
+```go
+// Reload configuration from all sources
+if err := config.ReloadConfig(); err != nil {
+    log.Fatalf("Configuration reload failed: %v", err)
+}
+```
+
+This will reload the configuration from the file, environment variables, and command-line flags, in that order.
+
 ## Acknowledgments
 
 `cfggo` is inspired by the [viper](https://github.com/spf13/viper) configuration package. It aims to provide a more lightweight and flexible alternative with additional features like type safety and custom configuration handlers.

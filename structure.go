@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"unsafe"
 
 	"sync"
 )
@@ -115,6 +116,39 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	// Logger.Info("Done Init")
 }
 
+func (c *Structure) InitSelf(options ...Option) {
+	c.Init(c, options...)
+}
+
+// InitMyParent automatically determines the parent struct that contains this Structure
+// and calls Init() with that parent.
+func (c *Structure) InitMyParent(options ...Option) {
+	// Get the address of this Structure instance
+	structAddr := reflect.ValueOf(c).Pointer()
+
+	// Find the parent struct by checking memory alignment
+	parentValue := reflect.ValueOf(c).Elem().Field(0)
+	parentType := parentValue.Type().Elem()
+
+	// Iterate through all fields of the parent type to find the Structure field
+	for i := 0; i < parentType.NumField(); i++ {
+		field := parentType.Field(i)
+		if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
+			// Found the Structure field, calculate offset to get parent pointer
+			parentAddr := structAddr - uintptr(field.Offset)
+			// Convert the address to a pointer to the parent type
+			parent := reflect.NewAt(parentType, unsafe.Pointer(parentAddr)).Interface()
+			// Call the original Init method with the discovered parent
+			c.Init(parent, options...)
+			return
+		}
+	}
+
+	// If we reach here, we couldn't find the parent
+	Logger.Error("InitNew(): Could not determine parent struct automatically")
+	os.Exit(1)
+}
+
 func (c *Structure) setupConfigData() {
 	if c.configData == nil {
 		c.configData = make(map[string]interface{})
@@ -172,6 +206,10 @@ func (c *Structure) setupConfigData() {
 
 // Set sets a configuration value and then updates the config struct as well
 func (c *Structure) Set(key string, value interface{}) error {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	configMutex.Lock()
 	defer configMutex.Unlock()
 	c.changed = true
@@ -211,6 +249,10 @@ func isNumericType(t reflect.Type) bool {
 
 // Get gets a configuration value and whether it exists from the configData
 func (c *Structure) Get(key string) (interface{}, bool) {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	configMutex.RLock()
 	defer configMutex.RUnlock()
 	value, exists := c.configData[key]
@@ -448,5 +490,9 @@ func (c *Structure) setDefaultsFromTags() {
 
 // ReloadConfig reloads the configuration from sources
 func (c *Structure) ReloadConfig() error {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	return c.Reload()
 }

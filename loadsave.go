@@ -255,11 +255,19 @@ func (c *Structure) setupConfigSaver() {
 }
 
 func (c *Structure) GetJSONBytes() []byte {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	data, _ := json.Marshal(c.configData)
 	return data
 }
 
 func (c *Structure) String() string {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	var sb strings.Builder
 	sb.WriteString(c.name + ":\n")
 	maxKeyLen := 0
@@ -290,6 +298,10 @@ func (c *Structure) String() string {
 }
 
 func (c *Structure) GetHelpTag(key string) string {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	v := reflect.ValueOf(c.parent)
 	for v.Kind() == reflect.Ptr {
 		v = v.Elem()

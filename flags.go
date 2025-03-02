@@ -12,6 +12,10 @@ var autoParseOnce sync.Once
 
 // NewFlag creates a new configuration item, using the type of the defaultValue
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	if c.configData == nil {
 		c.configData = make(map[string]interface{})
 	}
@@ -20,7 +24,7 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 		Logger.Error("Flag (%s) is already set, skipping...\n", configVarName)
 		return
 	}
-	
+
 	// Only register with the dedicated FlagSet, not the global one
 	if c.configData[configVarName] == nil {
 		Logger.Warn("configData[%s] is not set, using default value for type", configVarName)
@@ -43,6 +47,10 @@ func (c *Structure) parseFlags() {
 // GetFlagSet returns the FlagSet used by this configuration
 // This allows applications to register the FlagSet with their own flag parsing system
 func (c *Structure) GetFlagSet() *flag.FlagSet {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	return c.FlagSet
 }
 

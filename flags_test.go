@@ -124,3 +124,57 @@ func TestAutoParse_ManualAfter(t *testing.T) {
 	}
 	// This test simply ensures that re-parsing doesn't crash or cause undesired behavior.
 }
+
+// TestBoolFlagWithValue tests that the --debug flag enables debug mode
+func TestBoolFlagWithValue(t *testing.T) {
+	// Save original debug state to restore after test
+	// Set up command line args with --debug flag
+	os.Args = []string{"cmd", "--boolfield", "true"}
+
+	type TestConfig struct {
+		Structure
+		BoolField func() bool `json:"boolfield"`
+	}
+
+	cfg := &TestConfig{
+		BoolField: func() bool { return false },
+	}
+
+	// Initialize config which should parse flags
+	cfg.Init(cfg)
+
+	// Verify debug mode was enabled
+	if cfg.BoolField() != true {
+		t.Error("Expected --boolfield flag to enable bool")
+	}
+
+	// Reset args
+	os.Args = []string{"cmd"}
+}
+
+// TestBoolFlagStandalone tests that the --debug flag enables debug mode
+func TestBoolFlagStandalone(t *testing.T) {
+	// Save original debug state to restore after test
+	// Set up command line args with --debug flag
+	os.Args = []string{"cmd", "--boolfield"}
+
+	type TestConfig struct {
+		Structure
+		BoolField func() bool `json:"boolfield"`
+	}
+
+	cfg := &TestConfig{
+		BoolField: func() bool { return false },
+	}
+
+	// Initialize config which should parse flags
+	cfg.Init(cfg)
+
+	// Verify debug mode was enabled
+	if cfg.BoolField() != true {
+		t.Error("Expected --boolfield flag to enable bool")
+	}
+
+	// Reset args
+	os.Args = []string{"cmd"}
+}

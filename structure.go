@@ -37,6 +37,9 @@ type Structure struct {
 
 	// New field to store a dedicated FlagSet instead of using flag.CommandLine
 	FlagSet *flag.FlagSet
+
+	// Map to store callbacks for boolean flags
+	boolCallbacks map[string]func(bool)
 }
 
 // DefaultValue returns a function that returns the type of the input parameter X
@@ -77,7 +80,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	for _, option := range options {
 		err := option(c)
 		if err != nil {
-			Logger.Error("Structure: Init() option returned error: %v", err)
+			Logger.Errorf("Structure: Init() option returned error: %v", err)
 			os.Exit(1)
 		}
 	}
@@ -86,37 +89,40 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 		c.name = reflect.TypeOf(c.parent).Elem().Name() // Set c.name as the name of the parent struct
 	}
 
-	// Logger.Info("SetupConfigData %s", name)
+	// Logger.Infof("SetupConfigData %s", c.name)
 	c.setupConfigData()
 
-	// // Logger.Info("setDefaultsFromTags %s", name)
+	// Logger.Infof("setDefaultsFromTags %s", c.name)
 	c.setDefaultsFromTags()
 
-	// Logger.Info("ReplaceConfigFuncs %s", name)
+	// Logger.Infof("ReplaceConfigFuncs %s", c.name)
 	c.replaceConfigFuncs()
 
 	// LoadConfig
 	if c.configHandler != nil {
-		c.loadConfig()
+		c.loadConfig(false)
 	}
 
-	// Logger.Info("loadFromEnv %s", name)
+	// Logger.Infof("loadFromEnv %s", c.name)
 	c.loadFromEnv()
 
-	// Logger.Info("CreateFlags %s", name)
+	// Logger.Infof("CreateFlags %s", c.name)
 	c.createFlags()
 
+	// Logger.Infof("parseFlags %s", c.name)
 	c.parseFlags()
 
+	// Logger.Infof("Validate %s", c.name)
 	// Validate configuration after loading from all sources
 	if err := c.Validate(); err != nil {
-		Logger.Warn("Configuration validation failed: %v", err)
+		Logger.Warnf("Configuration validation failed: %v", err)
 	}
 
 	// Logger.Info("Done Init")
 }
 
 func (c *Structure) InitSelf(options ...Option) {
+	// Logger.Infof("InitSelf %s", c.name)
 	c.Init(c, options...)
 }
 
@@ -162,7 +168,7 @@ func (c *Structure) setupConfigData() {
 	}
 
 	if v.Kind() != reflect.Struct {
-		Logger.Warn("SetupConfigData: expected struct, got %v", v.Kind())
+		Logger.Warnf("SetupConfigData: expected struct, got %v", v.Kind())
 		return
 	}
 
@@ -284,7 +290,7 @@ func (c *Structure) replaceConfigFuncs() {
 
 	// Ensure we're working with a struct
 	if v.Kind() != reflect.Struct {
-		Logger.Warn("ReplaceConfigFuncs: expected struct or pointer to struct, got %v", v.Kind())
+		Logger.Warnf("ReplaceConfigFuncs: expected struct or pointer to struct, got %v", v.Kind())
 		return
 	}
 
@@ -304,7 +310,7 @@ func (c *Structure) replaceConfigFuncs() {
 
 			if configVarName != "" && configVarName != "-" {
 				if _, exists := c.configData[configVarName]; !exists {
-					Logger.Error("Missing configData value for key %s", configVarName)
+					Logger.Errorf("Missing configData value for key %s", configVarName)
 					continue
 				}
 
@@ -319,74 +325,6 @@ func (c *Structure) replaceConfigFuncs() {
 			}
 		}
 	}
-}
-
-// create struct create a new struct based on the config data
-func (c *Structure) createStruct() interface{} {
-	ptype := reflect.TypeOf(c.parent).Elem() // always a pointer.
-	fields := make([]reflect.StructField, 0, ptype.NumField())
-
-	for i := 0; i < ptype.NumField(); i++ {
-		field := ptype.Field(i)
-		if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
-			continue
-		}
-
-		configKey := c.getConfigNameFromField(field)
-		newField := reflect.StructField{
-			Name: field.Name,
-			Type: field.Type,
-			Tag:  reflect.StructTag(`json:"` + configKey + `"`),
-		}
-
-		// Handle nested structs by creating new types with adjusted fields
-		if newField.Type.Kind() == reflect.Struct {
-			newField.Type = c.createNestedStructType(newField.Type)
-		}
-
-		if newField.Type.Kind() == reflect.Func && newField.Type.NumIn() == 0 && newField.Type.NumOut() == 1 {
-			newField.Type = newField.Type.Out(0)
-		}
-
-		fields = append(fields, newField)
-	}
-
-	resp := reflect.New(reflect.StructOf(fields)).Interface()
-
-	// Add values to the struct
-	rvalue := reflect.ValueOf(resp).Elem()
-	rtype := rvalue.Type()
-	for i := range rvalue.NumField() {
-		field := rtype.Field(i)
-		configKey := c.getConfigNameFromField(field)
-		if configKey == "" || configKey == "-" {
-			continue
-		}
-		// fmt.Printf("setting default struct field value %s to %v\n", configKey, c.configData[configKey])
-		rvalue.Field(i).Set(reflect.ValueOf(c.configData[configKey]))
-	}
-	return resp
-}
-
-func (c *Structure) createNestedStructType(t reflect.Type) reflect.Type {
-	fields := make([]reflect.StructField, 0, t.NumField())
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		configKey := c.getConfigNameFromField(field)
-		newField := reflect.StructField{
-			Name: field.Name,
-			Type: field.Type,
-			Tag:  reflect.StructTag(`json:"` + configKey + `"`),
-		}
-
-		// Recursively process nested structs
-		if newField.Type.Kind() == reflect.Struct {
-			newField.Type = c.createNestedStructType(newField.Type)
-		}
-
-		fields = append(fields, newField)
-	}
-	return reflect.StructOf(fields)
 }
 
 // configNameCache caches the results of getConfigNameFromField
@@ -453,7 +391,7 @@ func (c *Structure) setDefaultsFromTags() {
 	}
 
 	if v.Kind() != reflect.Struct {
-		Logger.Warn("SetDefaults: expected struct, got %v", v.Kind())
+		Logger.Warnf("SetDefaults: expected struct, got %v", v.Kind())
 		return
 	}
 
@@ -482,7 +420,7 @@ func (c *Structure) setDefaultsFromTags() {
 			}
 			// If parsing fails, log a warning but continue
 			if err := dv.Set(defaultStr); err != nil {
-				Logger.Warn("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
+				Logger.Warnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
 			}
 		}
 	}
@@ -493,6 +431,7 @@ func (c *Structure) ReloadConfig() error {
 	if c.parent == nil {
 		c.InitSelf()
 	}
+	Logger.Infof("ReloadConfig %s", c.name)
 
 	return c.Reload()
 }

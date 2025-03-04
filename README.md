@@ -2,17 +2,17 @@
 
 `cfggo` is a Go package designed to simplify configuration management in Go applications. It provides a flexible and powerful way to handle configuration through various sources such as files, environment variables, and HTTP endpoints. The package supports default values, dynamic configuration updates, and command-line flags.
 
-## Features
+## Key Features
 
-- Type safety for configuration keys
-- Load configuration from JSON files, environment variables, and HTTP endpoints.
---- NB: The cfg tags (if present)on the config structure fields is used when loading and saving the JSON data.
-        i.e. If a cfg tag is present, it will be used as the JSON key name when saving/loading the JSON data.
-		If a cfg tag is not present, the field name will be used as the JSON key name
-- Support for default values and dynamic configuration updates.
-- Command-line flag integration.
-- Thread-safe configuration access and updates.
-- Customizable configuration handlers.
+- **Type-safe configuration**: All configuration values are accessed through strongly-typed functions
+- **Hot reloadable**: Configuration can be reloaded at runtime without restarting your application
+- **Function-based approach**: Configuration values are accessed through functions, not direct field access
+- **Multiple configuration sources**: Load from JSON files, environment variables, and HTTP endpoints
+- **Command-line flag integration**: Seamless integration with Go's flag package
+- **Thread-safe**: All operations are protected by mutexes for concurrent access
+- **Validation support**: Register validators for configuration values
+- **Default values**: Specify default values for configuration items
+- **Automatic type conversion**: Values are automatically converted to the correct type
 
 ## Installation
 
@@ -22,126 +22,18 @@ To install the package, run:
 go get github.com/iqhive/cfggo
 ```
 
-## Usage
+## How It Works
 
-### Basic Example
+`cfggo` uses a unique approach to configuration management:
 
-Here's a basic example of how to use `cfggo`:
+1. **Function-based access**: Instead of accessing configuration values directly, you define functions that return the values
+2. **Embedded Structure**: Your configuration struct embeds the `cfggo.Structure` type
+3. **Type safety**: The return type of each function defines the type of the configuration value
+4. **Hot reloading**: Configuration can be reloaded at runtime, and all functions will return the updated values
 
-```go
-package main
+## Basic Example
 
-import (
-    "fmt"
-    "github.com/iqhive/cfggo"
-)
-
-type MyConfig struct {
-	cfggo.Structure
-	StringField       func() string                 `cfg:"string_field" help:"My string config item"`
-	IntField          func() int                    `cfg:"int_pos_field" help:"My int config item"`
-	BoolField         func() bool                   `cfg:"bool_true_field" help:"My bool config item"`
-	StringSlice       func() []string               `cfg:"string_slice" help:"My string slice config item"`
-	IntSlice          func() []int                  `cfg:"int_slice" help:"My int slice config item"`
-	BoolSlice         func() []bool                 `cfg:"bool_slice" help:"My bool slice config item"`
-	Float64Slice      func() []float64              `cfg:"float64_slice" help:"My float64 slice config item"`
-	Float32Slice      func() []float32              `cfg:"float32_slice" help:"My float32 slice config item"`
-	StringMap         func() map[string]string      `cfg:"string_map" help:"My string map config item"`
-	InterfaceMap      func() map[string]interface{} `cfg:"interface_map" help:"My interface map config item"`
-	DurationField     func() time.Duration          `cfg:"duration_field" help:"My duration config item"`
-	TimeField         func() time.Time              `cfg:"time_field" help:"My time config item"`
-}
-
-func main() {
-    mycfg := &MyConfig{}
-    cfggo.Init(mycfg, cfggo.WithDefaultFileConfig("myconfig.json"), cfggo.WithFileConfigParamName("config"))
-
-    fmt.Println("StringField:", mycfg.StringField())
-    fmt.Println("IntField:", mycfg.IntField())
-    fmt.Println("BoolField:", mycfg.BoolField())
-    fmt.Println("StringSlice:", mycfg.StringSlice())
-    fmt.Println("IntSlice:", mycfg.IntSlice())
-    fmt.Println("BoolSlice:", mycfg.BoolSlice())
-    fmt.Println("Float64Slice:", mycfg.Float64Slice())
-    fmt.Println("Float32Slice:", mycfg.Float32Slice())
-    fmt.Println("StringMap:", mycfg.StringMap())
-    fmt.Println("InterfaceMap:", mycfg.InterfaceMap())
-    fmt.Println("DurationField:", mycfg.DurationField())
-    fmt.Println("TimeField:", mycfg.TimeField())
-}
-```
-
-### Supported Options
-
-`cfggo` supports the following options:
-
-- `WithFileConfig(filename string) Option`: Sets the config source/dest to a filename (requires the file to exist).
-- `WithDefaultFileConfig(filename string) Option`: Sets the config source/dest to a filename.
-- `WithFileConfigParamName(argName string) Option`: Sets the config source/dest to a filename defined in the command line arguments
-- `WithHTTPConfig(httpLoader *http.Request, httpSaver *http.Request) Option`: Sets the config source/dest to HTTP requests.
-- `WithSkipEnvironment() Option`: Skips loading from environment variables.
-- `WithName(name string) Option`: Sets the name of the configuration.
-
-
-### Command-Line Flag Integration
-
-`cfggo` supports command-line flag integration using the `flag` package. 
-
-
-### Default Values
-
-`cfggo` supports default values for configuration keys. Here's an example of how to use it:
-```go
-package main
-
-import (
-	"flag"
-	"fmt"
-	"os"
-	"time"
-)
-
-type MyConfig struct {
-	StringField       func() string                 `cfg:"string_field" help:"My string config item"`
-	IntField          func() int                    `cfg:"int_pos_field" help:"My int config item"`
-	BoolField         func() bool                   `cfg:"bool_true_field" help:"My bool config item"`
-	StringSlice       func() []string               `cfg:"string_slice" help:"My string slice config item"`
-	IntSlice          func() []int                  `cfg:"int_slice" help:"My int slice config item"`
-	BoolSlice         func() []bool                 `cfg:"bool_slice" help:"My bool slice config item"`
-	Float64Slice      func() []float64              `cfg:"float64_slice" help:"My float64 slice config item"`
-	Float32Slice      func() []float32              `cfg:"float32_slice" help:"My float32 slice config item"`
-	StringMap         func() map[string]string      `cfg:"string_map" help:"My string map config item"`
-	InterfaceMap      func() map[string]interface{} `cfg:"interface_map" help:"My interface map config item"`
-	DurationField     func() time.Duration          `cfg:"duration_field" help:"My duration config item"`
-	TimeField         func() time.Time              `cfg:"time_field" help:"My time config item"`
-}
-
-func main() {
-	mycfg := &MyConfig{
-        StringField: cfggo.DefaultValue("default_value1"),
-        IntField:    cfggo.DefaultValue(123),
-        BoolField:  cfggo.DefaultValue(true),
-    }
-	cfggo.Init(mycfg, cfggo.WithFileConfig("myconfig.json"))
-
-	fmt.Println("StringField:", mycfg.StringField())
-	fmt.Println("IntField:", mycfg.IntField())
-	fmt.Println("BoolField:", mycfg.BoolField())
-	fmt.Println("StringSlice:", mycfg.StringSlice())
-	fmt.Println("IntSlice:", mycfg.IntSlice())
-	fmt.Println("BoolSlice:", mycfg.BoolSlice())
-	fmt.Println("Float64Slice:", mycfg.Float64Slice())
-	fmt.Println("Float32Slice:", mycfg.Float32Slice())
-	fmt.Println("StringMap:", mycfg.StringMap())
-	fmt.Println("InterfaceMap:", mycfg.InterfaceMap())
-	fmt.Println("DurationField:", mycfg.DurationField())
-	fmt.Println("TimeField:", mycfg.TimeField())
-}
-```
-
-### Thread-Safety
-
-`cfggo` is thread-safe, meaning you can access and update the configuration from multiple goroutines concurrently without worrying about data races.
+Here's a simple example of how to use `cfggo`:
 
 ```go
 package main
@@ -151,60 +43,111 @@ import (
     "github.com/iqhive/cfggo"
 )
 
+// Define your configuration struct
 type MyConfig struct {
-	StringField       func() string                 `cfg:"string_field" help:"My string config item"`
-	IntField          func() int                    `cfg:"int_pos_field" help:"My int config item"`
+    cfggo.Structure // Embed the Structure type
+    
+    // Define configuration items as functions that return the desired type
+    ServerPort    func() int           `cfg:"server_port" default:"8080" help:"Port for the server to listen on"`
+    DatabaseURL   func() string        `cfg:"db_url" default:"postgres://localhost:5432/mydb" help:"Database connection URL"`
+    FeatureFlags  func() map[string]bool `cfg:"features" default:"{\"new_ui\": false, \"analytics\": true}" help:"Feature flags"`
+    LogLevel      func() string        `cfg:"log_level" default:"info" help:"Logging level"`
 }
 
 func main() {
-    mycfg := &MyConfig{
-        StringField: cfggo.DefaultValue("default_value1"),
-        IntField:    cfggo.DefaultValue(123),
+    // Create a new configuration instance
+    config := &MyConfig{
+        // Set default values using the DefaultValue helper
+        ServerPort:   cfggo.DefaultValue(8080),
+        DatabaseURL:  cfggo.DefaultValue("postgres://localhost:5432/mydb"),
+        FeatureFlags: cfggo.DefaultValue(map[string]bool{"new_ui": false, "analytics": true}),
+        LogLevel:     cfggo.DefaultValue("info"),
     }
-    cfggo.Init(mycfg, cfggo.WithFileConfig("myconfig.json"))
-
-    // Start multiple goroutines to access and update the configuration
-    for i := 0; i < 10; i++ {
-        go func(i int) {
-            // Access and update the configuration
-            value := mycfg.StringField()
-            fmt.Println("Value:", value)
-
-            err := mycfg.Set("string_field", fmt.Sprintf("new_value_%d", i))
-            if err != nil {
-                fmt.Println(err)
-                return
-            }
-        }(i)
+    
+    // Initialize the configuration
+    // This will load values from a JSON file, environment variables, and command-line flags
+    cfggo.Init(config, cfggo.WithDefaultFileConfig("config.json"))
+    
+    // Access configuration values through the functions
+    fmt.Printf("Server will listen on port %d\n", config.ServerPort())
+    fmt.Printf("Database URL: %s\n", config.DatabaseURL())
+    fmt.Printf("Log level: %s\n", config.LogLevel())
+    
+    // Feature flags are accessed as a map
+    if config.FeatureFlags()["new_ui"] {
+        fmt.Println("New UI is enabled")
     }
-
-    // Wait for goroutines to finish (for demonstration purposes)
-    time.Sleep(2 * time.Second)
 }
 ```
 
-## Contributing
+## Configuration Sources and Precedence
 
-Contributions are welcome! If you find any issues or have suggestions for new features, please open an issue or submit a pull request on the [GitHub repository](https://github.com/iqhive/cfggo).
+`cfggo` loads configuration from multiple sources in the following order (later sources override earlier ones):
 
-## License
+1. **Default values**: Set in code using `cfggo.DefaultValue()` or via struct tags
+2. **Configuration files**: JSON files loaded via options
+3. **Environment variables**: Automatically mapped from config keys (e.g., `server_port` → `SERVER_PORT`)
+4. **Command-line flags**: Automatically registered based on your struct fields
 
-`cfggo` is licensed under the [MIT License](LICENSE).
+## Environment Variables
 
+Environment variables are automatically mapped from your configuration keys. The mapping follows these rules:
 
-## Configuration Validation
+- Keys are converted to uppercase
+- Dots (`.`) are replaced with underscores (`_`)
 
-The cfggo package supports validation of configuration values. You can register validators for specific configuration keys and validate the configuration after loading.
+For example:
+
+- `server_port` → `SERVER_PORT`
+- `db.url` → `DB_URL`
+
+## Command-Line Flags
+
+Command-line flags are automatically registered based on your struct fields. The flag name is the same as the configuration key.
+
+For example:
+
+```
+--server_port=8080
+--db_url="postgres://localhost:5432/mydb"
+--log_level=debug
+```
+
+Boolean flags can be used with or without a value:
+
+```
+--feature_enabled        # Sets to true
+--feature_enabled=true   # Sets to true
+--feature_enabled=false  # Sets to false
+```
+
+## Hot Reloading
+
+One of the key features of `cfggo` is the ability to reload configuration at runtime. This is useful for applications that need to change configuration without restarting.
 
 ```go
-// Register a validator for the "age" configuration key
-config.RegisterValidator("age", func(value interface{}) error {
-    age, ok := value.(int)
+// Reload configuration from all sources
+if err := config.ReloadConfig(); err != nil {
+    log.Fatalf("Failed to reload configuration: %v", err)
+}
+
+// After reloading, all function calls will return the updated values
+fmt.Printf("Updated server port: %d\n", config.ServerPort())
+```
+
+## Validation
+
+You can register validators for configuration values to ensure they meet your requirements:
+
+```go
+// Register a validator for the "server_port" configuration key
+config.RegisterValidator("server_port", func(value interface{}) error {
+    port, ok := value.(int)
     if !ok {
-        return errors.New("age must be an integer")
+        return errors.New("server_port must be an integer")
     }
-    if age < 0 || age > 120 {
-        return errors.New("age must be between 0 and 120")
+    if port < 1024 || port > 65535 {
+        return errors.New("server_port must be between 1024 and 65535")
     }
     return nil
 })
@@ -215,30 +158,143 @@ if err := config.Validate(); err != nil {
 }
 
 // Validate a specific configuration key
-if err := config.ValidateKey("age"); err != nil {
-    log.Fatalf("Validation of key 'age' failed: %v", err)
+if err := config.ValidateKey("server_port"); err != nil {
+    log.Fatalf("Validation of server_port failed: %v", err)
 }
 ```
 
-You can also use the `WithValidation` option to register validators during initialization:
+## Advanced Features
+
+### Custom Configuration Sources
+
+You can implement custom configuration sources by implementing the `configHandler` interface:
 
 ```go
-config.Init(config, WithValidation("age", ageValidator))
-```
-
-## Configuration Reloading
-
-The cfggo package supports reloading of configuration from all sources. This is useful when you want to update the configuration without restarting the application.
-
-```go
-// Reload configuration from all sources
-if err := config.ReloadConfig(); err != nil {
-    log.Fatalf("Configuration reload failed: %v", err)
+type configHandler interface {
+    LoadConfig() ([]byte, error)
+    SaveConfig([]byte) error
 }
 ```
 
-This will reload the configuration from the file, environment variables, and command-line flags, in that order.
+### Nested Configuration
 
+You can use nested structures for more complex configuration:
+
+```go
+type DatabaseConfig struct {
+    Host     func() string `cfg:"host" default:"localhost" help:"Database host"`
+    Port     func() int    `cfg:"port" default:"5432" help:"Database port"`
+    Username func() string `cfg:"username" default:"user" help:"Database username"`
+    Password func() string `cfg:"password" default:"pass" help:"Database password"`
+}
+
+type MyConfig struct {
+    cfggo.Structure
+    ServerPort func() int           `cfg:"server_port" help:"Server port"`
+    Database   DatabaseConfig       `cfg:"database" help:"Database configuration"`
+}
+```
+
+### Enhanced Validation
+
+The package provides a rich set of built-in validators for common validation scenarios:
+
+```go
+// Add validators to your configuration
+config.AddValidator("server_port", cfggo.Range(1024, 65535))
+config.AddValidator("email", cfggo.Email())
+config.AddValidator("username", cfggo.All(
+    cfggo.Required(),
+    cfggo.MinLength(3),
+    cfggo.MaxLength(20),
+))
+config.AddValidator("api_key", cfggo.Regex(`^[A-Za-z0-9]{32}$`))
+config.AddValidator("log_level", cfggo.OneOf("debug", "info", "warn", "error"))
+config.AddValidator("website", cfggo.URL())
+
+// Validate the entire configuration
+if err := config.Validate(); err != nil {
+    // ValidationErrors provides detailed information about all validation failures
+    log.Fatalf("Configuration validation failed: %v", err)
+}
+```
+
+Available validators include:
+- `Required()` - Ensures a value is not nil or empty
+- `MinLength(min)` - Checks if a string, slice, or map has at least `min` elements
+- `MaxLength(max)` - Checks if a string, slice, or map has at most `max` elements
+- `Range(min, max)` - Ensures a numeric value is within the specified range
+- `OneOf(options...)` - Checks if a value is one of the provided options
+- `Regex(pattern)` - Validates a string against a regular expression
+- `Email()` - Validates that a string is a valid email address
+- `URL()` - Validates that a string is a valid URL
+- `Custom(func)` - Creates a validator from a custom function
+- `All(validators...)` - Ensures all validators pass
+- `Any(validators...)` - Ensures at least one validator passes
+
+### Logging
+
+The package includes a configurable logging system that can be adjusted based on your application's needs:
+
+```go
+// Set the log level
+cfggo.SetLogLevel(cfggo.LogLevelDebug)
+
+// Parse log level from string
+level, _ := cfggo.ParseLogLevel("info")
+cfggo.SetLogLevel(level)
+
+// Redirect logs to a file
+file, _ := os.OpenFile("config.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+cfggo.SetLogOutput(file)
+```
+
+Available log levels:
+- `LogLevelDebug` - Detailed debugging information
+- `LogLevelInfo` - General information about normal operation
+- `LogLevelWarn` - Warnings that don't affect normal operation
+- `LogLevelError` - Errors that affect operation but don't cause termination
+- `LogLevelFatal` - Errors that cause termination
+- `LogLevelNone` - Disables all logging
+
+### Configuration Options
+
+`cfggo` provides several options for initializing configuration:
+
+```go
+// Load configuration from a file
+cfggo.Init(config, cfggo.WithFileConfig("config.json"))
+
+// Load configuration from a file specified by a command-line flag
+cfggo.Init(config, cfggo.WithFileConfigParamName("config"))
+
+// Load configuration from HTTP endpoints
+cfggo.Init(config, cfggo.WithHTTPConfig(httpLoader, httpSaver))
+
+// Skip loading from environment variables
+cfggo.Init(config, cfggo.WithSkipEnvironment())
+
+// Enable automatic saving of configuration on program exit
+cfggo.Init(config, cfggo.WithAutoSave())
+
+// Use a custom FlagSet
+cfggo.Init(config, cfggo.WithFlagSet(myFlagSet))
+
+// Add a validator during initialization
+cfggo.Init(config, cfggo.WithValidation("server_port", portValidator))
+```
+
+## Thread Safety
+
+All operations in `cfggo` are protected by mutexes, making it safe to use in concurrent applications. You can access and update configuration values from multiple goroutines without worrying about race conditions.
+
+## Contributing
+
+Contributions are welcome! If you find any issues or have suggestions for new features, please open an issue or submit a pull request on the [GitHub repository](https://github.com/iqhive/cfggo).
+
+## License
+
+`cfggo` is licensed under the [MIT License](LICENSE).
 
 ## Acknowledgments
 

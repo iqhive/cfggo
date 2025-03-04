@@ -15,7 +15,7 @@ import (
 var configsToSave []*Structure
 var once sync.Once
 
-func (c *Structure) loadConfig() error {
+func (c *Structure) loadConfig(alreadyLocked bool) error {
 	if c.configHandler == nil {
 		return ErrorWrapper(nil, 400, "configSource is nil")
 	}
@@ -30,17 +30,19 @@ func (c *Structure) loadConfig() error {
 	// }
 	c.setupConfigSaver()
 
-	return c.loadJSONConfigFromBytes(data)
+	return c.loadJSONConfigFromBytes(data, alreadyLocked)
 }
 
-func (c *Structure) loadJSONConfigFromBytes(data []byte) error {
+func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) error {
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
 		return ErrorWrapper(err, 0, "Failed to unmarshal JSON data")
 	}
 
-	configMutex.Lock()
-	defer configMutex.Unlock()
+	if !alreadyLocked {
+		configMutex.Lock()
+		defer configMutex.Unlock()
+	}
 
 	var errors []error
 
@@ -244,7 +246,7 @@ func (c *Structure) setupConfigSaver() {
 					if config.changed {
 						Logger.Info("Saving config before exit...")
 						if err := config.saveConfig(); err != nil {
-							Logger.Error("Error saving configuration: %v", err)
+							Logger.Errorf("Error saving configuration: %v", err)
 						}
 					}
 				}
@@ -299,6 +301,7 @@ func (c *Structure) String() string {
 
 func (c *Structure) GetHelpTag(key string) string {
 	if c.parent == nil {
+		// Logger.Infof("GetHelpTag InitSelf %s", c.name)
 		c.InitSelf()
 	}
 

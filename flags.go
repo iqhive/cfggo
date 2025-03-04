@@ -69,7 +69,7 @@ func (c *Structure) waitForFlagParsed() {
 	for {
 		select {
 		case <-ticker.C:
-			if c.FlagSet.Parsed() {
+			if c.FlagSet != nil && c.FlagSet.Parsed() {
 				return
 			}
 		case <-timeout:

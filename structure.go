@@ -13,17 +13,6 @@ import (
 
 var configMutex sync.RWMutex
 
-func init() {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
-		flag.PrintDefaults()
-		// fmt.Println("Configuration parameters:")
-		// for name := range flag.CommandLine.NFlag() {
-		// 	fmt.Printf("  %s\n", name)
-		// }
-	}
-}
-
 type Structure struct {
 	name               string                 // Name given to this configuration (useful when loading multiple configs)
 	configHandler      configHandler          // Configuration handler (optional)
@@ -35,7 +24,7 @@ type Structure struct {
 	configData         map[string]interface{} // Where the configuration data is stored
 	autoSave           bool                   // Whether to automatically save on exit
 
-	// New field to store a dedicated FlagSet instead of using flag.CommandLine
+	// Field to store a dedicated FlagSet instead of using flag.CommandLine
 	FlagSet *flag.FlagSet
 
 	// Map to store callbacks for boolean flags
@@ -52,7 +41,11 @@ func DefaultValue[T any](x T) func() T {
 func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	if c.FlagSet == nil {
-		c.FlagSet = flag.NewFlagSet("cfggo", flag.ExitOnError)
+		c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		c.FlagSet.Usage = func() {
+			fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
+			c.FlagSet.PrintDefaults()
+		}
 	}
 
 	// Ensure parent is a pointer

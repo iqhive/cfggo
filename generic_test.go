@@ -1,7 +1,6 @@
 package cfggo
 
 import (
-	"flag"
 	"os"
 	"reflect"
 	"testing"
@@ -48,11 +47,10 @@ type TestConfig struct {
 	TimeField         func() time.Time              `json:"time_field" help:"Test field"`
 }
 
-var originalCommandLine *flag.FlagSet
 var originalArgs []string
 
 func SetupNewFlags() {
-	originalCommandLine = flag.CommandLine
+	// Only save and restore args, don't manipulate flag.CommandLine anymore
 	originalArgs = os.Args
 
 	// Find the index of "--" in os.Args
@@ -67,7 +65,7 @@ func SetupNewFlags() {
 }
 
 func RestoreFlagValues() {
-	flag.CommandLine = originalCommandLine
+	// Only restore args
 	os.Args = originalArgs
 }
 
@@ -217,7 +215,7 @@ func TestInit(t *testing.T) {
 func TestSaveAndLoadConfig(t *testing.T) {
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	
+
 	// Use WithAutoSave to enable automatic saving for this test
 	config.Init(config, WithFileConfig("tests/test.json"), WithAutoSave())
 
@@ -450,13 +448,13 @@ func TestValuePrecedence(t *testing.T) {
 			Field: DefaultValue("function_value"),
 		}
 		config.Init(config, WithFileConfig(tempFileName))
-		os.Args = []string{"cmd"}
 
-		// Reset the flags so other tests are not affected.
+		// Store original args and restore them after test
+		originalArgs := os.Args
 		defer func() {
-			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-			os.Args = []string{"cmd"}
+			os.Args = originalArgs
 		}()
+		os.Args = []string{"cmd"}
 
 		if got := config.Field(); got != flagVal {
 			t.Errorf("expected %q from flag to override %q from env, got %q", flagVal, envVal, got)

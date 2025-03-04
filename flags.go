@@ -7,11 +7,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
-
-var autoParseOnce sync.Once
 
 // NewFlag creates a new configuration item, using the type of the defaultValue
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {

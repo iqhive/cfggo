@@ -534,3 +534,195 @@ func TestStringSliceCommandLineFormats(t *testing.T) {
 		})
 	}
 }
+
+// Start of Selection
+
+func TestIntSliceCommandLineFormats(t *testing.T) {
+	// Test cases for different int slice formats
+	testCases := []struct {
+		name     string
+		args     []string
+		expected []int
+	}{
+		{
+			name:     "Single value",
+			args:     []string{"cmd", "--int_slice", "42"},
+			expected: []int{42},
+		},
+		{
+			name:     "Comma-separated values",
+			args:     []string{"cmd", "--int_slice", "42,99,-5"},
+			expected: []int{42, 99, -5},
+		},
+		{
+			name:     "JSON array format",
+			args:     []string{"cmd", "--int_slice", "[42,99,-5]"},
+			expected: []int{42, 99, -5},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original args
+			originalArgs := os.Args
+			// Set test command line args
+			os.Args = tc.args
+
+			// Create a config with a int slice field
+			config := NewTestConfig()
+			config.Init(config)
+
+			// Verify the result
+			result := config.IntSlice()
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+
+			// Restore original args
+			os.Args = originalArgs
+		})
+	}
+}
+
+func TestBoolSliceCommandLineFormats(t *testing.T) {
+	// Test cases for different bool slice formats
+	testCases := []struct {
+		name     string
+		args     []string
+		expected []bool
+	}{
+		{
+			name:     "Single value",
+			args:     []string{"cmd", "--bool_slice", "true"},
+			expected: []bool{true},
+		},
+		{
+			name:     "Comma-separated values",
+			args:     []string{"cmd", "--bool_slice", "true,false,true"},
+			expected: []bool{true, false, true},
+		},
+		{
+			name:     "JSON array format",
+			args:     []string{"cmd", "--bool_slice", "[true,false,true]"},
+			expected: []bool{true, false, true},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original args
+			originalArgs := os.Args
+			// Set test command line args
+			os.Args = tc.args
+
+			// Create a config with a bool slice field
+			config := NewTestConfig()
+			config.Init(config)
+
+			// Verify the result
+			result := config.BoolSlice()
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+
+			// Restore original args
+			os.Args = originalArgs
+		})
+	}
+}
+
+// Tests for float32 slice
+func TestFloat32SliceCommandLineFormats(t *testing.T) {
+	// Test cases for different float32 slice formats
+	testCases := []struct {
+		name     string
+		args     []string
+		expected []float32
+	}{
+		{
+			name:     "Single value",
+			args:     []string{"cmd", "--float32_slice", "3.14"},
+			expected: []float32{3.14},
+		},
+		{
+			name:     "Comma-separated values",
+			args:     []string{"cmd", "--float32_slice", "3.14,2.71"},
+			expected: []float32{3.14, 2.71},
+		},
+		{
+			name:     "JSON array format",
+			args:     []string{"cmd", "--float32_slice", "[3.14,2.71]"},
+			expected: []float32{3.14, 2.71},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original args
+			originalArgs := os.Args
+			// Set test command line args
+			os.Args = tc.args
+
+			// Create a config with a float32 slice field
+			config := NewTestConfig()
+			config.Init(config)
+
+			// Verify the result
+			result := config.Float32Slice()
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+
+			// Restore original args
+			os.Args = originalArgs
+		})
+	}
+}
+
+// Tests for float64 slice
+func TestFloat64SliceCommandLineFormats(t *testing.T) {
+	// Test cases for different float64 slice formats
+	testCases := []struct {
+		name     string
+		args     []string
+		expected []float64
+	}{
+		{
+			name:     "Single value",
+			args:     []string{"cmd", "--float64_slice", "3.14"},
+			expected: []float64{3.14},
+		},
+		{
+			name:     "Comma-separated values",
+			args:     []string{"cmd", "--float64_slice", "3.14,2.71"},
+			expected: []float64{3.14, 2.71},
+		},
+		{
+			name:     "JSON array format",
+			args:     []string{"cmd", "--float64_slice", "[3.14,2.71]"},
+			expected: []float64{3.14, 2.71},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original args
+			originalArgs := os.Args
+			// Set test command line args
+			os.Args = tc.args
+
+			// Create a config with a float64 slice field
+			config := NewTestConfig()
+			config.Init(config)
+
+			// Verify the result
+			result := config.Float64Slice()
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+
+			// Restore original args
+			os.Args = originalArgs
+		})
+	}
+}

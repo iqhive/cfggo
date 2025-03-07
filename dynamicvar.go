@@ -175,13 +175,36 @@ func (d *dynamicVar) Set(s string) error {
 
 		// Check if the input looks like a JSON array
 		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-			// Try to parse as JSON for string slices
-			if d.want.Elem().Kind() == reflect.String {
+			// Try to parse as JSON
+			elemKind := d.want.Elem().Kind()
+			if elemKind == reflect.String {
 				var stringSlice []string
 				if err := json.Unmarshal([]byte(s), &stringSlice); err == nil {
 					value.Set(reflect.MakeSlice(d.want, len(stringSlice), len(stringSlice)))
 					for i, v := range stringSlice {
 						value.Index(i).SetString(v)
+					}
+					return d.config.Set(d.name, value.Interface())
+				}
+				// If JSON parsing fails, fall back to comma-separated format
+			} else if elemKind == reflect.Int || elemKind == reflect.Int8 ||
+				elemKind == reflect.Int16 || elemKind == reflect.Int32 ||
+				elemKind == reflect.Int64 {
+				var intSlice []int
+				if err := json.Unmarshal([]byte(s), &intSlice); err == nil {
+					value.Set(reflect.MakeSlice(d.want, len(intSlice), len(intSlice)))
+					for i, v := range intSlice {
+						value.Index(i).SetInt(int64(v))
+					}
+					return d.config.Set(d.name, value.Interface())
+				}
+				// If JSON parsing fails, fall back to comma-separated format
+			} else if elemKind == reflect.Bool {
+				var boolSlice []bool
+				if err := json.Unmarshal([]byte(s), &boolSlice); err == nil {
+					value.Set(reflect.MakeSlice(d.want, len(boolSlice), len(boolSlice)))
+					for i, v := range boolSlice {
+						value.Index(i).SetBool(v)
 					}
 					return d.config.Set(d.name, value.Interface())
 				}

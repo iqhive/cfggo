@@ -65,6 +65,8 @@ var dynamicVartestCases = []dynamicVartestCase{
 	{"Time", "2023-10-01T15:04:05Z", reflect.TypeOf(time.Time{}), time.Date(2023, 10, 1, 15, 4, 5, 0, time.UTC), false},
 	{"Time", "abc", reflect.TypeOf(time.Time{}), time.Date(2023, 10, 1, 15, 4, 5, 0, time.UTC), true},
 	{"Duration", "1h30m", reflect.TypeOf(time.Duration(0)), time.Hour + 30*time.Minute, false},
+	{"Duration", "2s", reflect.TypeOf(time.Duration(0)), 2 * time.Second, false},
+	{"Duration", "10ms", reflect.TypeOf(time.Duration(0)), 10 * time.Millisecond, false},
 	{"Duration", "abc", reflect.TypeOf(time.Duration(0)), time.Second, true},
 	{"String", "hello world", reflect.TypeOf(""), "hello world", false},
 	{"String", "", reflect.TypeOf(""), "", false},

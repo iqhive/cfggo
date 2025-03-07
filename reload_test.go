@@ -23,8 +23,8 @@ func TestReload(t *testing.T) {
 
 	type ReloadConfig struct {
 		Structure
-		Name    func() string `cfg:"name"`
-		Version func() int    `cfg:"version"`
+		Name    func() string `cfggo:"name"`
+		Version func() int    `cfggo:"version"`
 	}
 
 	// Create initial config file

@@ -25,13 +25,13 @@ func TestJSONLoadingTagHierarchy(t *testing.T) {
 
 	type TagTestStruct struct {
 		Structure
-		CfgTag   func() string `cfg:"cfg_key" json:"json_key"`
+		CfgTag   func() string `cfggo:"cfg_key" json:"json_key"`
 		JsonTag  func() string `json:"json_only_key"`
-		BothTags func() int    `cfg:"cfg_preferred" json:"json_secondary"`
+		BothTags func() int    `cfggo:"cfg_preferred" json:"json_secondary"`
 		NoTags   func() float64
 		Nested   struct {
-			InnerField func() time.Duration `cfg:"inner_cfg_key"`
-		} `cfg:"nested"`
+			InnerField func() time.Duration `cfggo:"inner_cfg_key"`
+		} `cfggo:"nested"`
 	}
 
 	// Create temporary test file
@@ -97,7 +97,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 		type HyphenStruct struct {
 			Structure
-			IgnoredField func() string `cfg:"-"`
+			IgnoredField func() string `cfggo:"-"`
 		}
 
 		// Create temporary test file
@@ -140,9 +140,9 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 		type ComplexStruct struct {
 			Structure
 			Database struct {
-				Host func() string `cfg:"db_host"`
+				Host func() string `cfggo:"db_host"`
 				Port func() int    `json:"db_port"`
-			} `cfg:"database"`
+			} `cfggo:"database"`
 		}
 
 		// Create temporary test file
@@ -161,7 +161,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 		// Initialize config
 		config := &ComplexStruct{
 			Database: struct {
-				Host func() string `cfg:"db_host"`
+				Host func() string `cfggo:"db_host"`
 				Port func() int    `json:"db_port"`
 			}{
 				Host: DefaultValue("default_host"),
@@ -203,8 +203,8 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 		type TypeTestStruct struct {
 			Structure
-			IntToFloat   func() float64 `cfg:"int_field"`
-			StringToBool func() bool    `cfg:"bool_field"`
+			IntToFloat   func() float64 `cfggo:"int_field"`
+			StringToBool func() bool    `cfggo:"bool_field"`
 		}
 
 		// Create temporary test file
@@ -236,6 +236,95 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 			t.Errorf("StringToBool = %v (%T), want %v (%T)", got, got, want, want)
 		}
 	})
+
+	t.Run("duration_formats", func(t *testing.T) {
+		// Save original command line arguments and restore them after the test
+		oldArgs := os.Args
+		defer func() { os.Args = oldArgs }()
+
+		// Use a clean set of arguments for this test
+		os.Args = []string{"test"}
+
+		// Create a temporary directory for test files
+		testDir := "tests"
+		if err := os.MkdirAll(testDir, 0755); err != nil {
+			t.Fatalf("failed to create test directory: %v", err)
+		}
+
+		type DurationTestStruct struct {
+			Structure
+			Seconds      func() time.Duration `cfggo:"seconds"`      // Test "1s" format
+			Milliseconds func() time.Duration `cfggo:"milliseconds"` // Test "10ms" format
+			Minutes      func() time.Duration `cfggo:"minutes"`      // Test "2m" format
+			Complex      func() time.Duration `cfggo:"complex"`      // Test "1h2m3s" format
+			Numerical    func() time.Duration `cfggo:"numerical"`    // Test numeric value (nanoseconds)
+		}
+
+		// Create temporary test file
+		tempFileName := filepath.Join(testDir, "duration_test.json")
+		jsonData := []byte(`{
+            "seconds": "1s",
+            "milliseconds": "10ms",
+            "minutes": "2m",
+            "complex": "1h2m3s",
+            "numerical": 5000000000
+        }`)
+		if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
+			t.Fatalf("failed to write temp config file: %v", err)
+		}
+		defer os.Remove(tempFileName)
+
+		// Initialize config with zero duration defaults
+		config := &DurationTestStruct{
+			Seconds:      DefaultValue(time.Duration(0)),
+			Milliseconds: DefaultValue(time.Duration(0)),
+			Minutes:      DefaultValue(time.Duration(0)),
+			Complex:      DefaultValue(time.Duration(0)),
+			Numerical:    DefaultValue(time.Duration(0)),
+		}
+
+		// Use WithFlagSet option to provide a dedicated FlagSet for this test
+		testFlagSet := flag.NewFlagSet("test_durations", flag.ContinueOnError)
+		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+
+		// Expected durations
+		expected := map[string]time.Duration{
+			"seconds":      1 * time.Second,
+			"milliseconds": 10 * time.Millisecond,
+			"minutes":      2 * time.Minute,
+			"complex":      1*time.Hour + 2*time.Minute + 3*time.Second,
+			"numerical":    5 * time.Second, // 5 billion nanoseconds = 5 seconds
+		}
+
+		// Verify duration parsing
+		for key, want := range expected {
+			got, ok := config.configData[key].(time.Duration)
+			if !ok {
+				t.Errorf("configData[%q] is not a time.Duration, got %T", key, config.configData[key])
+				continue
+			}
+			if got != want {
+				t.Errorf("configData[%q] = %v, want %v", key, got, want)
+			}
+		}
+
+		// Also verify that the functions return the correct values
+		if got := config.Seconds(); got != expected["seconds"] {
+			t.Errorf("Seconds() = %v, want %v", got, expected["seconds"])
+		}
+		if got := config.Milliseconds(); got != expected["milliseconds"] {
+			t.Errorf("Milliseconds() = %v, want %v", got, expected["milliseconds"])
+		}
+		if got := config.Minutes(); got != expected["minutes"] {
+			t.Errorf("Minutes() = %v, want %v", got, expected["minutes"])
+		}
+		if got := config.Complex(); got != expected["complex"] {
+			t.Errorf("Complex() = %v, want %v", got, expected["complex"])
+		}
+		if got := config.Numerical(); got != expected["numerical"] {
+			t.Errorf("Numerical() = %v, want %v", got, expected["numerical"])
+		}
+	})
 }
 
 func TestJSONLoadingErrorHandling(t *testing.T) {
@@ -255,7 +344,7 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 
 		type InvalidJSONStruct struct {
 			Structure
-			Field func() string `cfg:"test_field"`
+			Field func() string `cfggo:"test_field"`
 		}
 
 		// Create temporary test file with invalid JSON
@@ -299,7 +388,7 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 
 		type TypeMismatchStruct struct {
 			Structure
-			Number func() int `cfg:"number_field"`
+			Number func() int `cfggo:"number_field"`
 		}
 
 		// Create temporary test file with type mismatch
@@ -338,7 +427,7 @@ func TestAutoSaveDisabledByDefault(t *testing.T) {
 
 	type SimpleConfig struct {
 		Structure
-		Field func() string `cfg:"field"`
+		Field func() string `cfggo:"field"`
 	}
 
 	// Initialize config

@@ -14,9 +14,9 @@ func TestValidation(t *testing.T) {
 
 	type ValidationConfig struct {
 		Structure
-		Age    func() int    `cfg:"age"`
-		Email  func() string `cfg:"email"`
-		Active func() bool   `cfg:"active"`
+		Age    func() int    `cfggo:"age"`
+		Email  func() string `cfggo:"email"`
+		Active func() bool   `cfggo:"active"`
 	}
 
 	t.Run("valid_configuration", func(t *testing.T) {

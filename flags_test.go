@@ -12,8 +12,8 @@ func TestNewFlagSpace(t *testing.T) {
 
 	type TestConfig struct {
 		Structure
-		Debug       func() bool   `json:"debug" config:"debug" description:"debug field"`
-		StringField func() string `json:"string_field" config:"string_field" description:"string field"`
+		Debug       func() bool   `json:"debug" cfggo:"debug" description:"debug field"`
+		StringField func() string `json:"string_field" cfggo:"string_field" description:"string field"`
 	}
 	config := &TestConfig{
 		StringField: func() string { return "default_struct_value" },
@@ -35,8 +35,8 @@ func TestNewFlagEquals(t *testing.T) {
 
 	type TestConfig struct {
 		Structure
-		Debug       func() bool   `json:"debug" config:"debug" description:"debug field"`
-		StringField func() string `json:"string_field" config:"string_field" description:"string field"`
+		Debug       func() bool   `json:"debug" cfggo:"debug" description:"debug field"`
+		StringField func() string `json:"string_field" cfggo:"string_field" description:"string field"`
 	}
 	config := &TestConfig{
 		StringField: func() string { return "default_struct_value" },
@@ -57,7 +57,7 @@ func TestAutoParse_NoManual(t *testing.T) {
 
 	type TestConfig struct {
 		Structure
-		StringField func() string `json:"string_field" config:"string_field"`
+		StringField func() string `json:"string_field" cfggo:"string_field"`
 	}
 
 	cfg := &TestConfig{
@@ -78,7 +78,7 @@ func TestAutoParse_ManualBefore(t *testing.T) {
 
 	type TestConfig struct {
 		Structure
-		StringField func() string `json:"string_field" config:"string_field"`
+		StringField func() string `json:"string_field" cfggo:"string_field"`
 	}
 
 	cfg := &TestConfig{
@@ -99,7 +99,7 @@ func TestAutoParse_ManualAfter(t *testing.T) {
 
 	type TestConfig struct {
 		Structure
-		StringField func() string `json:"string_field" config:"string_field"`
+		StringField func() string `json:"string_field" cfggo:"string_field"`
 	}
 
 	cfg := &TestConfig{

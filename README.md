@@ -48,10 +48,10 @@ type MyConfig struct {
     cfggo.Structure // Embed the Structure type
     
     // Define configuration items as functions that return the desired type
-    ServerPort    func() int           `cfg:"server_port" default:"8080" help:"Port for the server to listen on"`
-    DatabaseURL   func() string        `cfg:"db_url" default:"postgres://localhost:5432/mydb" help:"Database connection URL"`
-    FeatureFlags  func() map[string]bool `cfg:"features" default:"{\"new_ui\": false, \"analytics\": true}" help:"Feature flags"`
-    LogLevel      func() string        `cfg:"log_level" default:"info" help:"Logging level"`
+    ServerPort    func() int           `cfggo:"server_port" default:"8080" help:"Port for the server to listen on"`
+    DatabaseURL   func() string        `cfggo:"db_url" default:"postgres://localhost:5432/mydb" help:"Database connection URL"`
+    FeatureFlags  func() map[string]bool `cfggo:"features" default:"{\"new_ui\": false, \"analytics\": true}" help:"Feature flags"`
+    LogLevel      func() string        `cfggo:"log_level" default:"info" help:"Logging level"`
 }
 
 func main() {
@@ -182,16 +182,16 @@ You can use nested structures for more complex configuration:
 
 ```go
 type DatabaseConfig struct {
-    Host     func() string `cfg:"host" default:"localhost" help:"Database host"`
-    Port     func() int    `cfg:"port" default:"5432" help:"Database port"`
-    Username func() string `cfg:"username" default:"user" help:"Database username"`
-    Password func() string `cfg:"password" default:"pass" help:"Database password"`
+    Host     func() string `cfggo:"host" default:"localhost" help:"Database host"`
+    Port     func() int    `cfggo:"port" default:"5432" help:"Database port"`
+    Username func() string `cfggo:"username" default:"user" help:"Database username"`
+    Password func() string `cfggo:"password" default:"pass" help:"Database password"`
 }
 
 type MyConfig struct {
     cfggo.Structure
-    ServerPort func() int           `cfg:"server_port" help:"Server port"`
-    Database   DatabaseConfig       `cfg:"database" help:"Database configuration"`
+    ServerPort func() int           `cfggo:"server_port" help:"Server port"`
+    Database   DatabaseConfig       `cfggo:"database" help:"Database configuration"`
 }
 ```
 

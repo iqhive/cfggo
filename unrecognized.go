@@ -57,7 +57,16 @@ func (c *Structure) walkStructFieldsWithKeys(v reflect.Value, prefix string, rec
 		field := t.Field(i)
 		fieldValue := v.Field(i)
 
-		tag := field.Tag.Get("config")
+		tag := field.Tag.Get("cfggo")
+		if tag == "" {
+			tag = field.Tag.Get("cfg")
+		}
+		if tag == "" {
+			tag = field.Tag.Get("config")
+		}
+		if tag == "" {
+			tag = field.Tag.Get("json")
+		}
 		if tag == "" {
 			tag = field.Name
 		}

@@ -339,15 +339,19 @@ func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
 	}
 	configNameCacheMutex.RUnlock()
 
-	// First check for "cfg" tag
-	configVarName := field.Tag.Get("cfg")
+	// First check for "cfggo" tag (default)
+	configVarName := field.Tag.Get("cfggo")
 	if configVarName == "" {
-		// Then check for "json" tag
-		configVarName = field.Tag.Get("json")
-		if configVarName == "" {
-			// Finally use the field name
-			configVarName = field.Name
-		}
+		configVarName = field.Tag.Get("cfg") // (backwards compatibility)
+	}
+	if configVarName == "" {
+		configVarName = field.Tag.Get("config") // (backwards compatibility)
+	}
+	if configVarName == "" {
+		configVarName = field.Tag.Get("json") // (fallback)
+	}
+	if configVarName == "" {
+		configVarName = field.Name // (fallback)
 	}
 
 	// If the tag contains a comma, take only the part before the comma

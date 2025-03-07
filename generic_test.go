@@ -11,40 +11,40 @@ var timeNow = time.Now()
 
 type TestConfig struct {
 	Structure
-	Debug             func() bool                   `json:"debug" help:"Test field"`
-	StringEmptyField  func() string                 `json:"string_empty_field" help:"Test field"`
-	StringField       func() string                 `json:"string_field" help:"Test field"`
-	StringField2      func() string                 `json:"string_field2" help:"Test field" default:"default_string2"`
-	StringField3      func() string                 `json:"string_field3" help:"Test field"`
-	StringField4      func() string                 `json:"string_field4" help:"Test field" default:"default_string4"`
-	IntZeroField      func() int                    `json:"int_zero_field" help:"Test field"`
-	IntNegField       func() int                    `json:"int_neg_field" help:"Test field"`
-	IntPosField       func() int                    `json:"int_pos_field" help:"Test field"`
-	BoolFalseField    func() bool                   `json:"bool_false_field" help:"Test field"`
-	BoolTrueField     func() bool                   `json:"bool_true_field" help:"Test field"`
-	StringSlice       func() []string               `json:"string_slice" help:"Test field"`
-	EmptyStringSlice  func() []string               `json:"empty_string_slice" help:"Test field"`
-	NilStringSlice    func() []string               `json:"nil_string_slice" help:"Test field"`
-	IntSlice          func() []int                  `json:"int_slice" help:"Test field"`
-	EmptyIntSlice     func() []int                  `json:"empty_int_slice" help:"Test field"`
-	NilIntSlice       func() []int                  `json:"nil_int_slice" help:"Test field"`
-	BoolSlice         func() []bool                 `json:"bool_slice" help:"Test field"`
-	EmptyBoolSlice    func() []bool                 `json:"empty_bool_slice" help:"Test field"`
-	NilBoolSlice      func() []bool                 `json:"nil_bool_slice" help:"Test field"`
-	Float64Slice      func() []float64              `json:"float64_slice" help:"Test field"`
-	EmptyFloat64Slice func() []float64              `json:"empty_float64_slice" help:"Test field"`
-	NilFloat64Slice   func() []float64              `json:"nil_float64_slice" help:"Test field"`
-	Float32Slice      func() []float32              `json:"float32_slice" help:"Test field"`
-	EmptyFloat32Slice func() []float32              `json:"empty_float32_slice" help:"Test field"`
-	NilFloat32Slice   func() []float32              `json:"nil_float32_slice" help:"Test field"`
-	StringMap         func() map[string]string      `json:"string_map" help:"Test field"`
-	EmptyStringMap    func() map[string]string      `json:"empty_string_map" help:"Test field"`
-	NilStringMap      func() map[string]string      `json:"nil_string_map" help:"Test field"`
-	InterfaceMap      func() map[string]interface{} `json:"interface_map" help:"Test field"`
-	EmptyInterfaceMap func() map[string]interface{} `json:"empty_interface_map" help:"Test field"`
-	NilInterfaceMap   func() map[string]interface{} `json:"nil_interface_map" help:"Test field"`
-	DurationField     func() time.Duration          `json:"duration_field" help:"Test field"`
-	TimeField         func() time.Time              `json:"time_field" help:"Test field"`
+	Debug             func() bool                   `cfggo:"debug" help:"Test field"`
+	StringEmptyField  func() string                 `cfggo:"string_empty_field" help:"Test field"`
+	StringField       func() string                 `cfggo:"string_field" help:"Test field"`
+	StringField2      func() string                 `cfggo:"string_field2" help:"Test field" default:"default_string2"`
+	StringField3      func() string                 `cfggo:"string_field3" help:"Test field"`
+	StringField4      func() string                 `cfggo:"string_field4" help:"Test field" default:"default_string4"`
+	IntZeroField      func() int                    `cfggo:"int_zero_field" help:"Test field"`
+	IntNegField       func() int                    `cfggo:"int_neg_field" help:"Test field"`
+	IntPosField       func() int                    `cfggo:"int_pos_field" help:"Test field"`
+	BoolFalseField    func() bool                   `cfggo:"bool_false_field" help:"Test field"`
+	BoolTrueField     func() bool                   `cfggo:"bool_true_field" help:"Test field"`
+	StringSlice       func() []string               `cfggo:"string_slice" help:"Test field"`
+	EmptyStringSlice  func() []string               `cfggo:"empty_string_slice" help:"Test field"`
+	NilStringSlice    func() []string               `cfggo:"nil_string_slice" help:"Test field"`
+	IntSlice          func() []int                  `cfggo:"int_slice" help:"Test field"`
+	EmptyIntSlice     func() []int                  `cfggo:"empty_int_slice" help:"Test field"`
+	NilIntSlice       func() []int                  `cfggo:"nil_int_slice" help:"Test field"`
+	BoolSlice         func() []bool                 `cfggo:"bool_slice" help:"Test field"`
+	EmptyBoolSlice    func() []bool                 `cfggo:"empty_bool_slice" help:"Test field"`
+	NilBoolSlice      func() []bool                 `cfggo:"nil_bool_slice" help:"Test field"`
+	Float64Slice      func() []float64              `cfggo:"float64_slice" help:"Test field"`
+	EmptyFloat64Slice func() []float64              `cfggo:"empty_float64_slice" help:"Test field"`
+	NilFloat64Slice   func() []float64              `cfggo:"nil_float64_slice" help:"Test field"`
+	Float32Slice      func() []float32              `cfggo:"float32_slice" help:"Test field"`
+	EmptyFloat32Slice func() []float32              `cfggo:"empty_float32_slice" help:"Test field"`
+	NilFloat32Slice   func() []float32              `cfggo:"nil_float32_slice" help:"Test field"`
+	StringMap         func() map[string]string      `cfggo:"string_map" help:"Test field"`
+	EmptyStringMap    func() map[string]string      `cfggo:"empty_string_map" help:"Test field"`
+	NilStringMap      func() map[string]string      `cfggo:"nil_string_map" help:"Test field"`
+	InterfaceMap      func() map[string]interface{} `cfggo:"interface_map" help:"Test field"`
+	EmptyInterfaceMap func() map[string]interface{} `cfggo:"empty_interface_map" help:"Test field"`
+	NilInterfaceMap   func() map[string]interface{} `cfggo:"nil_interface_map" help:"Test field"`
+	DurationField     func() time.Duration          `cfggo:"duration_field" help:"Test field"`
+	TimeField         func() time.Time              `cfggo:"time_field" help:"Test field"`
 }
 
 var originalArgs []string
@@ -355,7 +355,7 @@ func TestValuePrecedence(t *testing.T) {
 	type PrecedenceConfig struct {
 		Structure
 		// Default tag is the lowest precedence
-		Field func() string `json:"field" default:"tag_value"`
+		Field func() string `cfggo:"field" default:"tag_value"`
 	}
 
 	// We'll create a temporary JSON file to simulate the "config file" layer.

@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -177,6 +178,69 @@ func (d *safeVar) Set(s string) error {
 		} else {
 			return fmt.Errorf("invalid float value: %s", s)
 		}
+	case reflect.Slice:
+		// Handle empty string case for slices
+		if s == "" {
+			value.Set(reflect.MakeSlice(d.want, 0, 0))
+			return d.setter(value.Interface())
+		}
+
+		// Check if the input looks like a JSON array
+		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+			// Try to parse as JSON for string slices
+			if d.want.Elem().Kind() == reflect.String {
+				var stringSlice []string
+				if err := json.Unmarshal([]byte(s), &stringSlice); err == nil {
+					value.Set(reflect.MakeSlice(d.want, len(stringSlice), len(stringSlice)))
+					for i, v := range stringSlice {
+						value.Index(i).SetString(v)
+					}
+					return d.setter(value.Interface())
+				}
+				// If JSON parsing fails, fall back to comma-separated format
+			}
+		}
+
+		split := strings.Split(s, ",")
+		value.Set(reflect.MakeSlice(d.want, len(split), len(split)))
+
+		for i, v := range split {
+			v = strings.TrimSpace(v)
+			elemValue := value.Index(i)
+
+			// Handle different element types
+			switch elemValue.Kind() {
+			case reflect.String:
+				elemValue.SetString(v)
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				intVal, err := strconv.ParseInt(v, 10, 64)
+				if err != nil {
+					return fmt.Errorf("invalid int in slice at position %d: %s", i, v)
+				}
+				elemValue.SetInt(intVal)
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				uintVal, err := strconv.ParseUint(v, 10, 64)
+				if err != nil {
+					return fmt.Errorf("invalid uint in slice at position %d: %s", i, v)
+				}
+				elemValue.SetUint(uintVal)
+			case reflect.Float32, reflect.Float64:
+				floatVal, err := strconv.ParseFloat(v, 64)
+				if err != nil {
+					return fmt.Errorf("invalid float in slice at position %d: %s", i, v)
+				}
+				elemValue.SetFloat(floatVal)
+			case reflect.Bool:
+				boolVal, err := strconv.ParseBool(v)
+				if err != nil {
+					return fmt.Errorf("invalid bool in slice at position %d: %s", i, v)
+				}
+				elemValue.SetBool(boolVal)
+			default:
+				return fmt.Errorf("unsupported slice element type: %s", elemValue.Kind())
+			}
+		}
+		return d.setter(value.Interface())
 	default:
 		// For more complex types, we'll just pass the string
 		return d.setter(s)

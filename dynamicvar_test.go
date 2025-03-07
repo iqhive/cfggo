@@ -77,6 +77,8 @@ var dynamicVartestCases = []dynamicVartestCase{
 	{"IntSlice", "1,2,3", reflect.TypeOf([]int{}), []int{1, 2, 3}, false},
 	{"IntSlice", "1,abc,3", reflect.TypeOf([]int{}), []int{}, true},
 	{"StringSlice", "a,b,c", reflect.TypeOf([]string{}), []string{"a", "b", "c"}, false},
+	{"StringSlice", "[\"x\",\"y\",\"z\"]", reflect.TypeOf([]string{}), []string{"x", "y", "z"}, false},
+	{"StringSlice", "[\"value_one\",\"value_two\"]", reflect.TypeOf([]string{}), []string{"value_one", "value_two"}, false},
 	{"IntMap", "1:10,2:20,3:30", reflect.TypeOf(map[int]int{}), map[int]int{1: 10, 2: 20, 3: 30}, false},
 	{"IntMap", "1:10,invalid", reflect.TypeOf(map[int]int{}), map[int]int{}, true},
 	{"IntMap", "1:abc", reflect.TypeOf(map[int]int{}), map[int]int{}, true},

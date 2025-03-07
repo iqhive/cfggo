@@ -487,3 +487,50 @@ func TestValuePrecedence(t *testing.T) {
 		}
 	})
 }
+
+func TestStringSliceCommandLineFormats(t *testing.T) {
+	// Test cases for different string slice formats
+	testCases := []struct {
+		name     string
+		args     []string
+		expected []string
+	}{
+		{
+			name:     "Single value",
+			args:     []string{"cmd", "--string_slice", "value_one"},
+			expected: []string{"value_one"},
+		},
+		{
+			name:     "Comma-separated values",
+			args:     []string{"cmd", "--string_slice", "value_one,value_two"},
+			expected: []string{"value_one", "value_two"},
+		},
+		{
+			name:     "JSON array format",
+			args:     []string{"cmd", "--string_slice", "[\"value_one\",\"value_two\"]"},
+			expected: []string{"value_one", "value_two"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original args
+			originalArgs := os.Args
+			// Set test command line args
+			os.Args = tc.args
+
+			// Create a config with a string slice field
+			config := NewTestConfig()
+			config.Init(config)
+
+			// Verify the result
+			result := config.StringSlice()
+			if !reflect.DeepEqual(result, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
+			}
+
+			// Restore original args
+			os.Args = originalArgs
+		})
+	}
+}

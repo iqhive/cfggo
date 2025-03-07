@@ -173,6 +173,22 @@ func (d *dynamicVar) Set(s string) error {
 			return d.config.Set(d.name, value.Interface())
 		}
 
+		// Check if the input looks like a JSON array
+		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+			// Try to parse as JSON for string slices
+			if d.want.Elem().Kind() == reflect.String {
+				var stringSlice []string
+				if err := json.Unmarshal([]byte(s), &stringSlice); err == nil {
+					value.Set(reflect.MakeSlice(d.want, len(stringSlice), len(stringSlice)))
+					for i, v := range stringSlice {
+						value.Index(i).SetString(v)
+					}
+					return d.config.Set(d.name, value.Interface())
+				}
+				// If JSON parsing fails, fall back to comma-separated format
+			}
+		}
+
 		split := strings.Split(s, ",")
 		value.Set(reflect.MakeSlice(d.want, len(split), len(split)))
 

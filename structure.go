@@ -93,7 +93,12 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	// LoadConfig
 	if c.configHandler != nil {
-		c.loadConfig(false)
+		if err := c.loadConfig(false); err != nil {
+			Logger.Errorf("LoadConfig: %v", err)
+			if c.configHandler != nil && !c.configHandler.IsDefault() {
+				os.Exit(1)
+			}
+		}
 	}
 
 	// Logger.Infof("loadFromEnv %s", c.name)

@@ -2,15 +2,20 @@ package cfggo
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 )
 
-type configHandler interface {
+type ConfigHandler interface {
+	// IsDefault should return true if the application may continue to start up if an error
+	// is returned from [ConfigHandler.LoadConfig].
 	IsDefault() bool
-	LoadConfig() ([]byte, error)
-	SaveConfig(data []byte) error
+	// LoadConfig should load the JSON representation of the config.
+	LoadConfig() (json.RawMessage, error)
+	// SaveConfig should save the JSON representation of the config.
+	SaveConfig(json.RawMessage) error
 }
 
 type handlerFile struct {
@@ -18,11 +23,9 @@ type handlerFile struct {
 	defaultConfig bool
 }
 
-func (h *handlerFile) IsDefault() bool {
-	return h.defaultConfig
-}
+func (h *handlerFile) IsDefault() bool { return h.defaultConfig }
 
-func (h *handlerFile) LoadConfig() ([]byte, error) {
+func (h *handlerFile) LoadConfig() (json.RawMessage, error) {
 	if h.filename == "" {
 		return nil, nil
 	}
@@ -33,7 +36,7 @@ func (h *handlerFile) LoadConfig() ([]byte, error) {
 	return data, nil
 }
 
-func (h *handlerFile) SaveConfig(data []byte) error {
+func (h *handlerFile) SaveConfig(data json.RawMessage) error {
 	if h.filename == "" {
 		return ErrorWrapper(nil, 400, "filename is empty")
 	}
@@ -50,11 +53,9 @@ type handlerHTTP struct {
 	defaultConfig bool
 }
 
-func (h *handlerHTTP) IsDefault() bool {
-	return h.defaultConfig
-}
+func (h *handlerHTTP) IsDefault() bool { return h.defaultConfig }
 
-func (h *handlerHTTP) LoadConfig() ([]byte, error) {
+func (h *handlerHTTP) LoadConfig() (json.RawMessage, error) {
 	if h.source.URL.String() == "" {
 		return nil, ErrorWrapper(nil, 400, "source URL is empty")
 	}
@@ -82,7 +83,7 @@ func (h *handlerHTTP) LoadConfig() ([]byte, error) {
 	return data, nil
 }
 
-func (h *handlerHTTP) SaveConfig(data []byte) error {
+func (h *handlerHTTP) SaveConfig(data json.RawMessage) error {
 	if h.dest.URL.String() == "" {
 		return ErrorWrapper(nil, 400, "destination URL is empty")
 	}

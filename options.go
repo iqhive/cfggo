@@ -140,3 +140,11 @@ func WithValidation(key string, validator Validator) Option {
 		return nil
 	}
 }
+
+// WithConfigHandler uses the given ConfigHandler to save and load configuration.
+func WithConfigHandler(handler ConfigHandler) Option {
+	return func(c *Structure) error {
+		c.configHandler = handler
+		return nil
+	}
+}

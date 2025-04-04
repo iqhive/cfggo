@@ -27,6 +27,9 @@ var (
 )
 
 func defaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
+	if msg == "" {
+		return err
+	}
 	return fmt.Errorf(msg, args...)
 }
 

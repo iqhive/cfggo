@@ -127,8 +127,8 @@ func (c *Structure) InitSelf(options ...Option) {
 // InitMyParent automatically determines the parent struct that contains this Structure
 // and calls Init() with that parent.
 func (c *Structure) InitMyParent(options ...Option) {
-	// Get the address of this Structure instance
-	structAddr := reflect.ValueOf(c).Pointer()
+	// Get a pointer to this Structure instance
+	structPtr := unsafe.Pointer(reflect.ValueOf(c).Pointer())
 
 	// Find the parent struct by checking memory alignment
 	parentValue := reflect.ValueOf(c).Elem().Field(0)
@@ -139,9 +139,10 @@ func (c *Structure) InitMyParent(options ...Option) {
 		field := parentType.Field(i)
 		if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
 			// Found the Structure field, calculate offset to get parent pointer
-			parentAddr := structAddr - uintptr(field.Offset)
-			// Convert the address to a pointer to the parent type
-			parent := reflect.NewAt(parentType, unsafe.Pointer(parentAddr)).Interface()
+			// Keep original pointer alive during arithmetic (go vet requirement)
+			offset := field.Offset
+			parentPtr := unsafe.Pointer(uintptr(structPtr) - offset)
+			parent := reflect.NewAt(parentType, parentPtr).Interface()
 			// Call the original Init method with the discovered parent
 			c.Init(parent, options...)
 			return
@@ -312,14 +313,16 @@ func (c *Structure) replaceConfigFuncs() {
 					continue
 				}
 
-				// Create a local copy of configVarName to avoid closure issues
-				localConfigVarName := configVarName
-				fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
-					// Get a fresh read lock for each function call to ensure thread safety
-					configMutex.RLock()
-					defer configMutex.RUnlock()
-					return []reflect.Value{reflect.ValueOf(c.configData[localConfigVarName])}
-				}))
+				// Create a closure that captures the config variable name correctly
+				// This is critical to avoid all functions returning the same value
+				func(capturedConfigVarName string) {
+					fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
+						// Get a fresh read lock for each function call to ensure thread safety
+						configMutex.RLock()
+						defer configMutex.RUnlock()
+						return []reflect.Value{reflect.ValueOf(c.configData[capturedConfigVarName])}
+					}))
+				}(configVarName)
 			}
 		}
 	}
@@ -328,6 +331,11 @@ func (c *Structure) replaceConfigFuncs() {
 // configNameCache caches the results of getConfigNameFromField
 var configNameCache = make(map[string]string)
 var configNameCacheMutex sync.RWMutex
+
+// Initialize the cache safely
+func init() {
+	configNameCache = make(map[string]string)
+}
 
 // getFieldKey creates a unique string key for a StructField
 func getFieldKey(field reflect.StructField) string {

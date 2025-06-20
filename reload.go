@@ -5,31 +5,30 @@ func (c *Structure) Reload() error {
 	// First, make a copy of the current configuration for potential rollback
 	var oldConfig map[string]interface{}
 
-	// Get a snapshot of the current configuration without holding the lock during processing
+	// Get a snapshot of the current configuration
 	configMutex.Lock()
 	oldConfig = make(map[string]interface{})
 	for k, v := range c.configData {
 		oldConfig[k] = v
 	}
-
 	// Reset the changed flag
 	c.changed = false
+	configMutex.Unlock()
 
 	var err error
 
-	// Attempt to reload configuration from file
+	// Attempt to reload configuration from file (loadConfig handles its own locking)
 	if c.configHandler != nil {
-		if err = c.loadConfig(true); err != nil {
+		if err = c.loadConfig(false); err != nil {
 			Logger.Errorf("Failed to reload configuration from file: %v", err)
 
 			// Rollback to old configuration on error
+			configMutex.Lock()
 			c.configData = oldConfig
-
 			configMutex.Unlock()
 			return err
 		}
 	}
-	configMutex.Unlock()
 
 	// Reload from environment variables
 	c.loadFromEnv()

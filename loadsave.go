@@ -14,6 +14,8 @@ import (
 
 var configsToSave []*Structure
 var once sync.Once
+var signalChannel chan os.Signal
+var signalCleanupOnce sync.Once
 
 func (c *Structure) loadConfig(alreadyLocked bool) error {
 	if c.configHandler == nil {
@@ -34,9 +36,17 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 }
 
 func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) error {
+	if data == nil || len(data) == 0 {
+		Logger.Debug("loadJSONConfigFromBytes: empty or nil data provided")
+		return nil
+	}
+
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
-		return ErrorWrapper(err, 0, "Failed to unmarshal JSON data")
+		// Log the error but don't fail the entire configuration process
+		// This allows the system to continue with defaults when JSON is invalid
+		Logger.Errorf("Failed to unmarshal JSON data: %v", err)
+		return nil
 	}
 
 	if !alreadyLocked {
@@ -44,10 +54,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 		defer configMutex.Unlock()
 	}
 
-	var errors []error
-
-	var processMap func(map[string]interface{}, string) error
-	processMap = func(m map[string]interface{}, prefix string) error {
+	var processMap func(map[string]interface{}, string)
+	processMap = func(m map[string]interface{}, prefix string) {
 		for key, value := range m {
 			fullKey := key
 			if prefix != "" {
@@ -57,9 +65,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 			switch v := value.(type) {
 			case map[string]interface{}:
 				// Process nested maps
-				if err := processMap(v, fullKey); err != nil {
-					return err
-				}
+				processMap(v, fullKey)
 
 				// Special handling for nested time.Duration fields
 				// Check if any nested fields need special handling
@@ -72,7 +78,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 								if duration, err := time.ParseDuration(strVal); err == nil {
 									c.configData[nestedFullKey] = duration
 								} else {
-									errors = append(errors, ErrorWrapper(err, 0, "Failed to parse duration for %s", nestedFullKey))
+									Logger.Warnf("Failed to parse duration for %s: %v", nestedFullKey, err)
 								}
 							} else if floatVal, ok := nestedValue.(float64); ok {
 								c.configData[nestedFullKey] = time.Duration(int64(floatVal))
@@ -96,7 +102,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 								c.configData[fullKey] = t
 								continue
 							} else {
-								errors = append(errors, ErrorWrapper(err, 0, "Failed to parse time for %s", fullKey))
+								Logger.Warnf("Failed to parse time for %s: %v", fullKey, err)
 							}
 						}
 					}
@@ -108,7 +114,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 								c.configData[fullKey] = duration
 								continue
 							} else {
-								errors = append(errors, ErrorWrapper(err, 0, "Failed to parse duration for %s", fullKey))
+								Logger.Warnf("Failed to parse duration for %s: %v", fullKey, err)
 							}
 						} else if floatVal, ok := v.(float64); ok {
 							// Handle numeric duration (assuming nanoseconds)
@@ -138,7 +144,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 									if intVal, ok := item.(float64); ok {
 										intSlice[i] = int(intVal)
 									} else {
-										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to int for %s[%d]", item, fullKey, i))
+										Logger.Warnf("Failed to convert %v to int for %s[%d]", item, fullKey, i)
 									}
 								}
 								c.configData[fullKey] = intSlice
@@ -149,7 +155,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 									if boolVal, ok := item.(bool); ok {
 										boolSlice[i] = boolVal
 									} else {
-										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to bool for %s[%d]", item, fullKey, i))
+										Logger.Warnf("Failed to convert %v to bool for %s[%d]", item, fullKey, i)
 									}
 								}
 								c.configData[fullKey] = boolSlice
@@ -160,7 +166,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 									if floatVal, ok := item.(float64); ok {
 										floatSlice[i] = float32(floatVal)
 									} else {
-										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to float32 for %s[%d]", item, fullKey, i))
+										Logger.Warnf("Failed to convert %v to float32 for %s[%d]", item, fullKey, i)
 									}
 								}
 								c.configData[fullKey] = floatSlice
@@ -171,7 +177,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 									if floatVal, ok := item.(float64); ok {
 										floatSlice[i] = floatVal
 									} else {
-										errors = append(errors, ErrorWrapper(nil, 0, "Failed to convert %v to float64 for %s[%d]", item, fullKey, i))
+										Logger.Warnf("Failed to convert %v to float64 for %s[%d]", item, fullKey, i)
 									}
 								}
 								c.configData[fullKey] = floatSlice
@@ -208,27 +214,14 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 
 				// Try to set the value with proper type conversion
 				if err := c.set(fullKey, v); err != nil {
-					errors = append(errors, ErrorWrapper(err, 0, "Error setting config key %s", fullKey))
+					// Log type conversion errors but don't fail the entire config load
+					Logger.Warnf("Error setting config key %s: %v", fullKey, err)
 				}
 			}
 		}
-		return nil
 	}
 
-	err := processMap(rawConfig, "")
-	if err != nil {
-		return err
-	}
-
-	// If we collected any errors, return a combined error
-	if len(errors) > 0 {
-		var errMsg string
-		for _, err := range errors {
-			errMsg += err.Error() + "\n"
-		}
-		return ErrorWrapper(nil, 400, "Multiple errors occurred while loading config:\n%s", errMsg)
-	}
-
+	processMap(rawConfig, "")
 	return nil
 }
 
@@ -238,10 +231,16 @@ func (c *Structure) setupConfigSaver() {
 		configsToSave = append(configsToSave, c)
 
 		once.Do(func() {
-			sigchan := make(chan os.Signal, 1)
-			signal.Notify(sigchan, os.Interrupt, syscall.SIGTERM)
+			signalChannel = make(chan os.Signal, 1)
+			signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
 			go func() {
-				<-sigchan
+				defer func() {
+					// Clean up signal channel on exit
+					signal.Stop(signalChannel)
+					close(signalChannel)
+				}()
+
+				<-signalChannel
 				for _, config := range configsToSave {
 					if config.changed {
 						Logger.Info("Saving config before exit...")
@@ -254,6 +253,18 @@ func (c *Structure) setupConfigSaver() {
 			}()
 		})
 	}
+}
+
+// CleanupSignalHandler allows for graceful cleanup of the signal handler
+// This should be called in tests or when the application wants to clean up
+func CleanupSignalHandler() {
+	signalCleanupOnce.Do(func() {
+		if signalChannel != nil {
+			signal.Stop(signalChannel)
+			close(signalChannel)
+			signalChannel = nil
+		}
+	})
 }
 
 func (c *Structure) GetJSONBytes() []byte {

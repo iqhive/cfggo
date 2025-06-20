@@ -63,25 +63,28 @@ func (d *dynamicVar) Set(s string) error {
 	case reflect.Struct:
 		// Handle time.Time and other struct types that implement TextUnmarshaler or JSONUnmarshaler
 		if d.want == reflect.TypeOf(time.Time{}) {
-			parsedTime, err := time.Parse(time.RFC3339, s)
-			if err != nil {
-				// Try other common time formats
-				for _, format := range []string{
-					time.RFC3339Nano,
-					time.RFC3339,
-					"2006-01-02T15:04:05",
-					"2006-01-02 15:04:05",
-					"2006-01-02",
-				} {
-					if parsedTime, err = time.Parse(format, s); err == nil {
-						break
-					}
-				}
+			var parsedTime time.Time
+			var parseErr error
 
-				if err != nil {
-					return fmt.Errorf("invalid time format: %s (expected RFC3339 format like '2006-01-02T15:04:05Z')", s)
+			// Try common time formats in order of preference
+			formats := []string{
+				time.RFC3339,
+				time.RFC3339Nano,
+				"2006-01-02T15:04:05",
+				"2006-01-02 15:04:05",
+				"2006-01-02",
+			}
+
+			for _, format := range formats {
+				if parsedTime, parseErr = time.Parse(format, s); parseErr == nil {
+					break
 				}
 			}
+
+			if parseErr != nil {
+				return fmt.Errorf("invalid time format: %s (expected RFC3339 format like '2006-01-02T15:04:05Z')", s)
+			}
+
 			value.Set(reflect.ValueOf(parsedTime))
 		} else {
 			// Try TextUnmarshaler first

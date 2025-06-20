@@ -11,14 +11,14 @@ import (
 // This function extracts common type conversion logic from set() and dynamicVar.Set()
 func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, error) {
 	valueType := reflect.TypeOf(value)
-	
+
 	// If types already match, no conversion needed
 	if valueType == targetType {
 		return value, nil
 	}
-	
+
 	valueValue := reflect.ValueOf(value)
-	
+
 	// Special handling for time.Duration
 	if targetType == reflect.TypeOf(time.Duration(0)) {
 		switch valueType.Kind() {
@@ -28,12 +28,14 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 				return duration, nil
 			}
 			return nil, ErrorWrapper(err, 400, "Cannot convert string to duration: %v", err)
-		case reflect.Int, reflect.Int64:
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			return time.Duration(valueValue.Int()), nil
-		case reflect.Float64:
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			return time.Duration(valueValue.Uint()), nil
+		case reflect.Float32, reflect.Float64:
 			return time.Duration(int64(valueValue.Float())), nil
 		}
-	} else if targetType == reflect.TypeOf(int64(0)) {
+	} else if targetType == reflect.TypeOf(int64(0)) && valueType != reflect.TypeOf(time.Duration(0)) {
 		// Ensure int64 values don't get mistakenly converted to Duration
 		switch valueType.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -57,7 +59,7 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 			return nil, ErrorWrapper(err, 400, "Cannot convert string to time.Time: %v", err)
 		}
 	}
-	
+
 	// Handle numeric type conversions
 	if isNumericType(targetType) && isNumericType(valueType) {
 		switch targetType.Kind() {
@@ -78,7 +80,7 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 			newValue := reflect.New(targetType).Elem()
 			newValue.SetInt(intVal)
 			return newValue.Interface(), nil
-			
+
 		case reflect.Float32, reflect.Float64:
 			var floatVal float64
 			switch valueType.Kind() {
@@ -98,7 +100,7 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 			return newValue.Interface(), nil
 		}
 	}
-	
+
 	// Handle boolean conversions
 	if targetType.Kind() == reflect.Bool && valueType.Kind() == reflect.String {
 		strVal := strings.ToLower(valueValue.String())
@@ -109,11 +111,11 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 		}
 		return nil, ErrorWrapper(nil, 400, "Cannot convert string '%s' to bool", strVal)
 	}
-	
+
 	// Try standard conversion if types are convertible
 	if valueType.ConvertibleTo(targetType) {
 		return valueValue.Convert(targetType).Interface(), nil
 	}
-	
+
 	return nil, ErrorWrapper(nil, 400, "Type mismatch: %T cannot be converted to %v", value, targetType)
 }

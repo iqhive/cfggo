@@ -70,7 +70,11 @@ func (h *handlerHTTP) LoadConfig() (json.RawMessage, error) {
 	if err != nil {
 		return nil, ErrorWrapper(err, 0, "")
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, ErrorWrapper(nil, resp.StatusCode, "failed to load config from HTTP source")
@@ -100,7 +104,11 @@ func (h *handlerHTTP) SaveConfig(data json.RawMessage) error {
 	if err != nil {
 		return ErrorWrapper(err, 0, "")
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return ErrorWrapper(nil, resp.StatusCode, "failed to save config to HTTP destination")

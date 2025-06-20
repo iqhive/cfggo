@@ -36,16 +36,15 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 		// Store the original value before we set up the flag
 		c.configData[configVarName] = boolVal
 
+		// Create a pointer to store the parsed boolean value
+		boolPtr := &boolVal
+
 		// Define a callback function that will be called after flag parsing
 		boolCallback := func(parsedValue bool) {
 			// The callback will be invoked by parseFlags after flags are parsed
-			if parsedValue != boolVal {
-				// Only update if the value changed
-				configMutex.Lock()
-				c.configData[configVarName] = parsedValue
-				c.changed = true
-				configMutex.Unlock()
-			}
+			// Note: parseFlags already holds the lock, so we don't acquire it here
+			c.configData[configVarName] = parsedValue
+			c.changed = true
 		}
 
 		// Register the callback in a map to be called later
@@ -55,7 +54,7 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 		c.boolCallbacks[configVarName] = boolCallback
 
 		// Use BoolVar for the flag, which properly handles both --flag and --flag=true formats
-		c.FlagSet.BoolVar(new(bool), configVarName, boolVal, configDescription)
+		c.FlagSet.BoolVar(boolPtr, configVarName, boolVal, configDescription)
 
 		// Logger.Infof("NewFlag start 5z %s", c.name)
 		return
@@ -162,12 +161,42 @@ func (d *safeVar) Set(s string) error {
 		value.SetString(s)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if i, err := strconv.ParseInt(s, 0, 64); err == nil {
+			// Check for overflow before setting the value
+			switch d.want.Kind() {
+			case reflect.Int8:
+				if i < -128 || i > 127 {
+					return fmt.Errorf("int8 overflow: %d (range: -128 to 127)", i)
+				}
+			case reflect.Int16:
+				if i < -32768 || i > 32767 {
+					return fmt.Errorf("int16 overflow: %d (range: -32768 to 32767)", i)
+				}
+			case reflect.Int32:
+				if i < -2147483648 || i > 2147483647 {
+					return fmt.Errorf("int32 overflow: %d (range: -2147483648 to 2147483647)", i)
+				}
+			}
 			value.SetInt(i)
 		} else {
 			return fmt.Errorf("invalid int value: %s", s)
 		}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		if i, err := strconv.ParseUint(s, 0, 64); err == nil {
+			// Check for overflow before setting the value
+			switch d.want.Kind() {
+			case reflect.Uint8:
+				if i > 255 {
+					return fmt.Errorf("uint8 overflow: %d (max: 255)", i)
+				}
+			case reflect.Uint16:
+				if i > 65535 {
+					return fmt.Errorf("uint16 overflow: %d (max: 65535)", i)
+				}
+			case reflect.Uint32:
+				if i > 4294967295 {
+					return fmt.Errorf("uint32 overflow: %d (max: 4294967295)", i)
+				}
+			}
 			value.SetUint(i)
 		} else {
 			return fmt.Errorf("invalid uint value: %s", s)
@@ -250,11 +279,41 @@ func (d *safeVar) Set(s string) error {
 				if err != nil {
 					return fmt.Errorf("invalid int in slice at position %d: %s", i, v)
 				}
+				// Check for overflow before setting the value
+				switch elemValue.Kind() {
+				case reflect.Int8:
+					if intVal < -128 || intVal > 127 {
+						return fmt.Errorf("int8 overflow in slice at position %d: %d (range: -128 to 127)", i, intVal)
+					}
+				case reflect.Int16:
+					if intVal < -32768 || intVal > 32767 {
+						return fmt.Errorf("int16 overflow in slice at position %d: %d (range: -32768 to 32767)", i, intVal)
+					}
+				case reflect.Int32:
+					if intVal < -2147483648 || intVal > 2147483647 {
+						return fmt.Errorf("int32 overflow in slice at position %d: %d (range: -2147483648 to 2147483647)", i, intVal)
+					}
+				}
 				elemValue.SetInt(intVal)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				uintVal, err := strconv.ParseUint(v, 10, 64)
 				if err != nil {
 					return fmt.Errorf("invalid uint in slice at position %d: %s", i, v)
+				}
+				// Check for overflow before setting the value
+				switch elemValue.Kind() {
+				case reflect.Uint8:
+					if uintVal > 255 {
+						return fmt.Errorf("uint8 overflow in slice at position %d: %d (max: 255)", i, uintVal)
+					}
+				case reflect.Uint16:
+					if uintVal > 65535 {
+						return fmt.Errorf("uint16 overflow in slice at position %d: %d (max: 65535)", i, uintVal)
+					}
+				case reflect.Uint32:
+					if uintVal > 4294967295 {
+						return fmt.Errorf("uint32 overflow in slice at position %d: %d (max: 4294967295)", i, uintVal)
+					}
 				}
 				elemValue.SetUint(uintVal)
 			case reflect.Float32, reflect.Float64:
@@ -302,6 +361,7 @@ func (c *Structure) waitForFlagParsed() {
 		select {
 		case <-ticker.C:
 			configMutex.RLock()
+			// Check if FlagSet is valid and parsed
 			parsed := c.FlagSet != nil && c.FlagSet.Parsed()
 			configMutex.RUnlock()
 			if parsed {
@@ -318,13 +378,11 @@ func (c *Structure) waitForFlagParsed() {
 func (c *Structure) parseFlags() {
 	// Logger.Infof("parseFlags start 1 %s", c.name)
 
-	// First check if flags are already parsed under a read lock
-	configMutex.RLock()
-	alreadyParsed := c.FlagSet.Parsed()
-	configMutex.RUnlock()
+	// Check if flags are already parsed and parse if needed - all under one lock
+	configMutex.Lock()
+	defer configMutex.Unlock()
 
-	// Short circuit if already parsed
-	if alreadyParsed {
+	if c.FlagSet.Parsed() {
 		Logger.Infof("parseFlags: flags already parsed %s", c.name)
 		return
 	}
@@ -334,12 +392,13 @@ func (c *Structure) parseFlags() {
 	args := filterTestFlags(os.Args[1:])
 	// Logger.Infof("parseFlags start 4 %s", c.name)
 
-	// Parse flags without holding the mutex
-	// This allows the Set() methods to acquire the mutex as needed
+	// Temporarily release lock for parsing to avoid deadlock with Set() methods
+	configMutex.Unlock()
 	var parseErr error
 	if parseErr = c.FlagSet.Parse(args); parseErr != nil {
 		Logger.Errorf("error parsing flags: %v", parseErr)
 	}
+	configMutex.Lock() // Re-acquire lock for the rest of the function
 	// Logger.Infof("parseFlags start 5 %s", c.name)
 
 	// After parsing, process any boolean flags
@@ -365,15 +424,12 @@ func (c *Structure) parseFlags() {
 	}
 	// Logger.Infof("parseFlags start 8 %s", c.name)
 
-	// Now acquire the lock to update the changed flag
-	configMutex.Lock()
-	defer configMutex.Unlock()
-
 	if parseErr == nil {
 		// Mark that configuration has changed if flags were successfully parsed
 		c.changed = true
 	}
 	// Logger.Infof("parseFlags start 9 %s", c.name)
+	// Note: configMutex.Lock() is already held and will be released by defer
 }
 
 // GetFlagSet returns the FlagSet used by this configuration

@@ -80,7 +80,10 @@ func WithFileConfigParamName(argName string) Option {
 	}
 	if filename == "" {
 		Logger.Warn("no filename found for argument (" + argName + ")")
-		return withNoop()
+		return func(c *Structure) error {
+			c.FlagSet.String(argName, "", "")
+			return nil
+		}
 	}
 	wrap := WithFileConfig(filename)
 	return func(c *Structure) error {

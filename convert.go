@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"encoding"
 	"reflect"
 	"strconv"
 	"strings"
@@ -115,6 +116,25 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 	// Try standard conversion if types are convertible
 	if valueType.ConvertibleTo(targetType) {
 		return valueValue.Convert(targetType).Interface(), nil
+	}
+
+	if valueType.Kind() == reflect.String && targetType.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+		newValue := reflect.New(targetType).Elem()
+		if err := newValue.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(valueValue.String())); err != nil {
+			return nil, ErrorWrapper(err, 400, "Cannot convert string to %v: %v", targetType, err)
+		}
+		return newValue.Interface(), nil
+	}
+	if valueType.Kind() == reflect.Slice && targetType.Kind() == reflect.Slice {
+		newValue := reflect.MakeSlice(targetType, valueValue.Len(), valueValue.Cap())
+		for i := range valueValue.Len() {
+			elem, err := ConvertValue(valueValue.Index(i).Interface(), targetType.Elem())
+			if err != nil {
+				return nil, ErrorWrapper(err, 400, "Cannot convert slice element %d to %v: %v", i, targetType.Elem(), err)
+			}
+			newValue.Index(i).Set(reflect.ValueOf(elem))
+		}
+		return newValue.Interface(), nil
 	}
 
 	return nil, ErrorWrapper(nil, 400, "Type mismatch: %T cannot be converted to %v", value, targetType)

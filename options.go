@@ -64,6 +64,7 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 
 // WithFileConfigParamName sets the config source/dest to a filename defined in the command line arguments
 func WithFileConfigParamName(argName string) Option {
+	flag.String(argName, "", "config file")
 	var filename string
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]

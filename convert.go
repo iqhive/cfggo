@@ -118,7 +118,7 @@ func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, erro
 		return valueValue.Convert(targetType).Interface(), nil
 	}
 
-	if valueType.Kind() == reflect.String && targetType.Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
+	if valueType.Kind() == reflect.String && reflect.PointerTo(targetType).Implements(reflect.TypeFor[encoding.TextUnmarshaler]()) {
 		newValue := reflect.New(targetType).Elem()
 		if err := newValue.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(valueValue.String())); err != nil {
 			return nil, ErrorWrapper(err, 400, "Cannot convert string to %v: %v", targetType, err)

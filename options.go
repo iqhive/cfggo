@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/iqhive/cfggo/cfglogger"
+	"github.com/iqhive/cfggo/errwrapper"
 	"github.com/iqhive/cfggo/sources"
 )
 
@@ -55,7 +57,7 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 				return nil
 			}
 			if !c.configHandler.IsDefault() {
-				return ErrorWrapper(nil, 400, "configHandler is already set, ignoring "+funcName)
+				return c.WrapError(nil, 400, "configHandler is already set, ignoring "+funcName)
 			}
 		}
 		handler := sources.NewHandlerFile(filename, defaultConfig)
@@ -90,7 +92,9 @@ func WithFileConfigParamName(argName string) Option {
 	wrap := WithFileConfig(filename)
 	return func(c *Structure) error {
 		c.FlagSet.String(argName, "", "")
-		wrap(c)
+		if err := wrap(c); err != nil {
+			Logger.Warnf("Failed to apply WithFileConfig: %v", err)
+		}
 		return nil
 	}
 }
@@ -99,12 +103,12 @@ func WithFileConfigParamName(argName string) Option {
 func WithHTTPConfig(httpLoader *http.Request, httpSaver *http.Request) Option {
 	if httpLoader == nil && httpSaver == nil {
 		return func(c *Structure) error {
-			return ErrorWrapper(nil, 400, "httpLoader and httpSaver cannot both be nil")
+			return c.WrapError(nil, 400, "httpLoader and httpSaver cannot both be nil")
 		}
 	}
 	return func(c *Structure) error {
 		if c.configHandler != nil {
-			return ErrorWrapper(nil, 400, "configHandler is already set, ignoring WithHTTPConfig")
+			return c.WrapError(nil, 400, "configHandler is already set, ignoring WithHTTPConfig")
 		}
 		handler := sources.NewHandlerHTTP(httpLoader, httpSaver, false)
 		c.configHandler = handler
@@ -149,6 +153,30 @@ func WithValidation(key string, validator Validator) Option {
 func WithConfigHandler(handler sources.ConfigHandler) Option {
 	return func(c *Structure) error {
 		c.configHandler = handler
+		return nil
+	}
+}
+
+// WithLogger sets a custom logger for this configuration instance
+func WithLogger(logger cfglogger.Logger) Option {
+	return func(c *Structure) error {
+		c.logger = logger
+		return nil
+	}
+}
+
+// WithErrorWrapper sets a custom error wrapper for this configuration instance
+func WithErrorWrapper(wrapper errwrapper.ErrorWrapper) Option {
+	return func(c *Structure) error {
+		c.errorWrapper = wrapper
+		return nil
+	}
+}
+
+// WithErrorWrapperWithLogger sets a custom error wrapper with logging for this configuration instance
+func WithErrorWrapperWithLogger(wrapper errwrapper.ErrorWrapperWithLogger) Option {
+	return func(c *Structure) error {
+		c.errorWrapperWithLogger = wrapper
 		return nil
 	}
 }

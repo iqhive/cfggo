@@ -9,6 +9,9 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/iqhive/cfggo/cfglogger"
+	"github.com/iqhive/cfggo/convert"
+	"github.com/iqhive/cfggo/errwrapper"
 	"github.com/iqhive/cfggo/sources"
 )
 
@@ -18,7 +21,6 @@ type Structure struct {
 	name               string                 // Name given to this configuration (useful when loading multiple configs)
 	configHandler      sources.ConfigHandler  // Configuration handler (optional)
 	skipEnv            bool                   // Skip Environment variables
-	createdFile        bool                   // Did we create the config file
 	changed            bool                   // Has the config changed (used to trigger save on exit)
 	defaultsAlreadySet bool                   // Are the defaults already set
 	parent             interface{}            // This is a pointer to the parent struct
@@ -30,6 +32,11 @@ type Structure struct {
 
 	// Map to store callbacks for boolean flags
 	boolCallbacks map[string]func(bool)
+
+	// Per-instance logger and error wrapper
+	logger                 cfglogger.Logger                  // Instance-specific logger (defaults to global Logger)
+	errorWrapper           errwrapper.ErrorWrapper           // Instance-specific error wrapper (defaults to global ErrorWrapper)
+	errorWrapperWithLogger errwrapper.ErrorWrapperWithLogger // Instance-specific error wrapper with logging
 }
 
 // DefaultValue returns a function that returns the type of the input parameter X
@@ -47,6 +54,17 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 			fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
 			c.FlagSet.PrintDefaults()
 		}
+	}
+
+	// Initialize per-instance logger and error wrappers if not set
+	if c.logger == nil {
+		c.logger = Logger // Use global logger as default
+	}
+	if c.errorWrapper == nil {
+		c.errorWrapper = ErrorWrapper // Use global error wrapper as default
+	}
+	if c.errorWrapperWithLogger == nil {
+		c.errorWrapperWithLogger = errwrapper.NewDefaultErrorWrapperWithLogger()
 	}
 
 	// Ensure parent is a pointer
@@ -118,6 +136,48 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	}
 
 	// Logger.Info("Done Init")
+}
+
+// WrapError wraps an error using the instance's error wrapper
+func (c *Structure) WrapError(err error, errorcode int, msg string, args ...interface{}) error {
+	if c.errorWrapper == nil {
+		c.errorWrapper = ErrorWrapper // Use global as fallback
+	}
+	return c.errorWrapper(err, errorcode, msg, args...)
+}
+
+// WrapErrorWithLogging wraps an error using the instance's error wrapper with logging
+func (c *Structure) WrapErrorWithLogging(err error, errorcode int, msg string, args ...interface{}) error {
+	if c.errorWrapperWithLogger == nil {
+		c.errorWrapperWithLogger = errwrapper.NewDefaultErrorWrapperWithLogger()
+	}
+	if c.logger == nil {
+		c.logger = Logger // Use global as fallback
+	}
+	return c.errorWrapperWithLogger(c.logger, err, errorcode, msg, args...)
+}
+
+// SetLogger sets the instance-specific logger
+func (c *Structure) SetLogger(logger cfglogger.Logger) {
+	c.logger = logger
+}
+
+// SetErrorWrapper sets the instance-specific error wrapper
+func (c *Structure) SetErrorWrapper(wrapper errwrapper.ErrorWrapper) {
+	c.errorWrapper = wrapper
+}
+
+// SetErrorWrapperWithLogger sets the instance-specific error wrapper with logging
+func (c *Structure) SetErrorWrapperWithLogger(wrapper errwrapper.ErrorWrapperWithLogger) {
+	c.errorWrapperWithLogger = wrapper
+}
+
+// GetLogger returns the instance's logger
+func (c *Structure) GetLogger() cfglogger.Logger {
+	if c.logger == nil {
+		return Logger // Return global as fallback
+	}
+	return c.logger
 }
 
 func (c *Structure) InitSelf(options ...Option) {
@@ -199,10 +259,22 @@ func (c *Structure) setupConfigData() {
 				processStruct(fieldValue, field.Type, fullKey)
 			} else if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
 				// Set the default value in the map, to the reflect.Zero of the type returned from the config function
-				c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface())
+				if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
+					Logger.Warnf("Failed to set default value for %s: %v", fullKey, err)
+				}
 			} else if fieldValue.Kind() == reflect.Func {
 				// Set the default value in the map, to the value (and type) returned from the config function
-				c.set(fullKey, fieldValue.Call(nil)[0].Interface())
+				// Make sure the field is exported and callable
+				if fieldValue.CanInterface() {
+					if err := c.set(fullKey, fieldValue.Call(nil)[0].Interface()); err != nil {
+						Logger.Warnf("Failed to set value for %s: %v", fullKey, err)
+					}
+				} else {
+					// For unexported fields, set zero value
+					if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
+						Logger.Warnf("Failed to set default value for %s: %v", fullKey, err)
+					}
+				}
 			}
 		}
 	}
@@ -227,8 +299,8 @@ func (c *Structure) set(key string, value interface{}) error {
 	if existing, exists := c.configData[key]; exists {
 		existingType := reflect.TypeOf(existing)
 
-		// Use the helper function for type conversion
-		convertedValue, err := ConvertValue(value, existingType)
+		// Use the new convert package with instance-based error wrapper
+		convertedValue, err := convert.ConvertValue(value, existingType, c)
 		if err != nil {
 			return err
 		}
@@ -239,18 +311,6 @@ func (c *Structure) set(key string, value interface{}) error {
 
 	c.configData[key] = value
 	return nil
-}
-
-// Helper function to check if a type is numeric
-func isNumericType(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return true
-	default:
-		return false
-	}
 }
 
 // Get gets a configuration value and whether it exists from the configData
@@ -316,14 +376,17 @@ func (c *Structure) replaceConfigFuncs() {
 
 				// Create a closure that captures the config variable name correctly
 				// This is critical to avoid all functions returning the same value
-				func(capturedConfigVarName string) {
-					fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
-						// Get a fresh read lock for each function call to ensure thread safety
-						configMutex.RLock()
-						defer configMutex.RUnlock()
-						return []reflect.Value{reflect.ValueOf(c.configData[capturedConfigVarName])}
-					}))
-				}(configVarName)
+				// Only set if field is settable (exported)
+				if fieldValue.CanSet() {
+					func(capturedConfigVarName string) {
+						fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(args []reflect.Value) (results []reflect.Value) {
+							// Get a fresh read lock for each function call to ensure thread safety
+							configMutex.RLock()
+							defer configMutex.RUnlock()
+							return []reflect.Value{reflect.ValueOf(c.configData[capturedConfigVarName])}
+						}))
+					}(configVarName)
+				}
 			}
 		}
 	}

@@ -19,12 +19,12 @@ var signalCleanupOnce sync.Once
 
 func (c *Structure) loadConfig(alreadyLocked bool) error {
 	if c.configHandler == nil {
-		return ErrorWrapper(nil, 400, "configSource is nil")
+		return c.WrapError(nil, 400, "configSource is nil")
 	}
 
 	data, err := c.configHandler.LoadConfig()
 	if err != nil {
-		return ErrorWrapper(err, 0, "")
+		return c.WrapError(err, 0, "")
 	}
 
 	// if c.configHandler.SaveConfig != nil {
@@ -36,7 +36,7 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 }
 
 func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) error {
-	if data == nil || len(data) == 0 {
+	if len(data) == 0 {
 		Logger.Debug("loadJSONConfigFromBytes: empty or nil data provided")
 		return nil
 	}
@@ -392,11 +392,11 @@ func (c *Structure) saveConfig() error {
 
 	data, err := json.Marshal(c.configData)
 	if err != nil {
-		return ErrorWrapper(err, 0, "")
+		return c.WrapError(err, 0, "")
 	}
 
 	if err := c.configHandler.SaveConfig(data); err != nil {
-		return ErrorWrapper(err, 0, "")
+		return c.WrapError(err, 0, "")
 	}
 
 	return nil

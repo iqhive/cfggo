@@ -79,16 +79,33 @@ type NoopLogger struct{}
 // Debug does nothing
 func (nl *NoopLogger) Debug(msg string, args ...interface{}) {}
 
+// Debugf does nothing
+func (nl *NoopLogger) Debugf(format string, args ...interface{}) {}
+
 // Info does nothing
 func (nl *NoopLogger) Info(msg string, args ...interface{}) {}
+
+// Infof does nothing
+func (nl *NoopLogger) Infof(format string, args ...interface{}) {}
 
 // Warn does nothing
 func (nl *NoopLogger) Warn(msg string, args ...interface{}) {}
 
+// Warnf does nothing
+func (nl *NoopLogger) Warnf(format string, args ...interface{}) {}
+
 // Error does nothing
 func (nl *NoopLogger) Error(msg string, args ...interface{}) {}
 
+// Errorf does nothing
+func (nl *NoopLogger) Errorf(format string, args ...interface{}) {}
+
 // Fatal does nothing
 func (nl *NoopLogger) Fatal(msg string, args ...interface{}) {
+	os.Exit(1)
+}
+
+// Fatalf does nothing
+func (nl *NoopLogger) Fatalf(format string, args ...interface{}) {
 	os.Exit(1)
 }

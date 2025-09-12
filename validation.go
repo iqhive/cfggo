@@ -127,7 +127,7 @@ func (c *Structure) ValidateKey(key string) error {
 
 	value, exists := c.configData[key]
 	if !exists {
-		return ErrorWrapper(nil, 404, "Configuration key %s not found", key)
+		return c.WrapError(nil, 404, "Configuration key %s not found", key)
 	}
 
 	validator, exists := validators[key]
@@ -136,7 +136,7 @@ func (c *Structure) ValidateKey(key string) error {
 	}
 
 	if err := validator(value); err != nil {
-		return ErrorWrapper(err, 0, "Validation failed for key %s", key)
+		return c.WrapError(err, 0, "Validation failed for key %s", key)
 	}
 
 	return nil

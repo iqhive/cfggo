@@ -13,6 +13,7 @@ import (
 	"github.com/iqhive/cfggo/convert"
 	"github.com/iqhive/cfggo/errwrapper"
 	"github.com/iqhive/cfggo/sources"
+	"github.com/iqhive/cfggo/validcfg"
 )
 
 var configMutex sync.RWMutex
@@ -37,6 +38,10 @@ type Structure struct {
 	logger                 cfglogger.Logger                  // Instance-specific logger (defaults to global Logger)
 	errorWrapper           errwrapper.ErrorWrapper           // Instance-specific error wrapper (defaults to global ErrorWrapper)
 	errorWrapperWithLogger errwrapper.ErrorWrapperWithLogger // Instance-specific error wrapper with logging
+
+	// validationMap stores validation rules for configuration keys
+	validationMap   map[string]map[string]validcfg.Validator
+	validationMutex sync.RWMutex
 }
 
 // DefaultValue returns a function that returns the type of the input parameter X
@@ -54,6 +59,10 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 			fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
 			c.FlagSet.PrintDefaults()
 		}
+	}
+
+	if c.validationMap == nil {
+		c.validationMap = make(map[string]map[string]validcfg.Validator)
 	}
 
 	// Initialize per-instance logger and error wrappers if not set

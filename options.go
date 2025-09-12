@@ -9,6 +9,7 @@ import (
 	"github.com/iqhive/cfggo/cfglogger"
 	"github.com/iqhive/cfggo/errwrapper"
 	"github.com/iqhive/cfggo/sources"
+	"github.com/iqhive/cfggo/validcfg"
 )
 
 // Option is a function that configures a Structure
@@ -142,7 +143,7 @@ func WithFlagSet(fs *flag.FlagSet) Option {
 }
 
 // WithValidation adds a validator for a configuration key
-func WithValidation(key string, validator Validator) Option {
+func WithValidation(key string, validator validcfg.Validator) Option {
 	return func(c *Structure) error {
 		c.RegisterValidator(key, validator)
 		return nil

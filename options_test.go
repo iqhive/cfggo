@@ -1,8 +1,11 @@
 package cfggo
 
 import (
+	"flag"
 	"os"
 	"testing"
+
+	"github.com/iqhive/cfggo/sources"
 )
 
 // TestWithFileConfigParamName tests the WithFileConfigParamName option
@@ -42,6 +45,7 @@ func TestWithFileConfigParamName(t *testing.T) {
 			os.Args = tt.args
 
 			s := &Structure{}
+			s.FlagSet = flag.NewFlagSet("test", flag.ContinueOnError)
 			opt := WithFileConfigParamName(tt.argName)
 			err := opt(s)
 
@@ -57,14 +61,14 @@ func TestWithFileConfigParamName(t *testing.T) {
 				return
 			}
 
-			handler, ok := s.configHandler.(*handlerFile)
+			handler, ok := s.configHandler.(*sources.HandlerFile)
 			if !ok {
-				t.Error("configHandler is not a handlerFile")
+				t.Error("configHandler is not a HandlerFile")
 				return
 			}
 
-			if handler.filename != tt.expected {
-				t.Errorf("filename = %v, want %v", handler.filename, tt.expected)
+			if handler.Filename != tt.expected {
+				t.Errorf("filename = %v, want %v", handler.Filename, tt.expected)
 			}
 		})
 	}
@@ -122,14 +126,14 @@ func TestWithFileConfig(t *testing.T) {
 				return
 			}
 
-			handler, ok := s.configHandler.(*handlerFile)
+			handler, ok := s.configHandler.(*sources.HandlerFile)
 			if !ok {
-				t.Error("configHandler is not a handlerFile")
+				t.Error("configHandler is not a HandlerFile")
 				return
 			}
 
-			if handler.filename != tt.expectFilename {
-				t.Errorf("filename = %v, want %v", handler.filename, tt.expectFilename)
+			if handler.Filename != tt.expectFilename {
+				t.Errorf("filename = %v, want %v", handler.Filename, tt.expectFilename)
 			}
 		})
 	}
@@ -187,14 +191,14 @@ func TestWithDefaultFileConfig(t *testing.T) {
 				return
 			}
 
-			handler, ok := s.configHandler.(*handlerFile)
+			handler, ok := s.configHandler.(*sources.HandlerFile)
 			if !ok {
-				t.Error("configHandler is not a handlerFile")
+				t.Error("configHandler is not a HandlerFile")
 				return
 			}
 
-			if handler.filename != tt.expectFilename {
-				t.Errorf("filename = %v, want %v", handler.filename, tt.expectFilename)
+			if handler.Filename != tt.expectFilename {
+				t.Errorf("filename = %v, want %v", handler.Filename, tt.expectFilename)
 			}
 		})
 	}

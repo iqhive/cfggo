@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/iqhive/cfggo/sources"
 )
 
 // Option is a function that configures a Structure
@@ -56,7 +58,7 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 				return ErrorWrapper(nil, 400, "configHandler is already set, ignoring "+funcName)
 			}
 		}
-		handler := &handlerFile{filename: filename, defaultConfig: defaultConfig}
+		handler := sources.NewHandlerFile(filename, defaultConfig)
 		c.configHandler = handler
 		return nil
 	}
@@ -104,13 +106,7 @@ func WithHTTPConfig(httpLoader *http.Request, httpSaver *http.Request) Option {
 		if c.configHandler != nil {
 			return ErrorWrapper(nil, 400, "configHandler is already set, ignoring WithHTTPConfig")
 		}
-		handler := &handlerHTTP{}
-		if httpLoader != nil {
-			handler.source = *httpLoader
-		}
-		if httpSaver != nil {
-			handler.dest = *httpSaver
-		}
+		handler := sources.NewHandlerHTTP(httpLoader, httpSaver, false)
 		c.configHandler = handler
 		return nil
 	}
@@ -150,7 +146,7 @@ func WithValidation(key string, validator Validator) Option {
 }
 
 // WithConfigHandler uses the given ConfigHandler to save and load configuration.
-func WithConfigHandler(handler ConfigHandler) Option {
+func WithConfigHandler(handler sources.ConfigHandler) Option {
 	return func(c *Structure) error {
 		c.configHandler = handler
 		return nil

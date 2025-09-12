@@ -6,16 +6,17 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"unsafe"
 
-	"sync"
+	"github.com/iqhive/cfggo/sources"
 )
 
 var configMutex sync.RWMutex
 
 type Structure struct {
 	name               string                 // Name given to this configuration (useful when loading multiple configs)
-	configHandler      ConfigHandler          // Configuration handler (optional)
+	configHandler      sources.ConfigHandler  // Configuration handler (optional)
 	skipEnv            bool                   // Skip Environment variables
 	createdFile        bool                   // Did we create the config file
 	changed            bool                   // Has the config changed (used to trigger save on exit)

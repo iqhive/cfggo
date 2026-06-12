@@ -150,6 +150,20 @@ func WithValidation(key string, validator validcfg.Validator) Option {
 	}
 }
 
+// WithEnvConfig sets a ConfigHandler that reads configuration from environment
+// variables, optionally filtered to those whose names start with prefix
+// (e.g. "MYAPP_"). An empty prefix accepts all environment variables.
+// The handler is read-only: saving configuration via env vars is a no-op.
+func WithEnvConfig(prefix string) Option {
+	return func(c *Structure) error {
+		if c.configHandler != nil {
+			return c.WrapError(nil, 400, "configHandler is already set, ignoring WithEnvConfig")
+		}
+		c.configHandler = sources.NewHandlerEnv(prefix, true)
+		return nil
+	}
+}
+
 // WithConfigHandler uses the given ConfigHandler to save and load configuration.
 func WithConfigHandler(handler sources.ConfigHandler) Option {
 	return func(c *Structure) error {

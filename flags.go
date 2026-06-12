@@ -1,26 +1,23 @@
 package cfggo
 
 import (
-	"encoding/json"
 	"flag"
-	"fmt"
 	"os"
 	"reflect"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/iqhive/cfggo/internal/flags"
 )
 
 // NewFlag creates a new configuration item, using the type of the defaultValue
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {
 	if c.parent == nil {
-		// Logger.Infof("NewFlag InitSelf %s", c.name)
 		c.InitSelf()
 	}
 
 	configMutex.Lock()
 	defer configMutex.Unlock()
-	// Logger.Infof("NewFlag start %s", c.name)
 
 	if c.configData == nil {
 		c.configData = make(map[string]interface{})
@@ -33,78 +30,45 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 
 	// Special handling for boolean flags
 	if boolVal, isBool := defaultValue.(bool); isBool {
-		// Store the original value before we set up the flag
 		c.configData[configVarName] = boolVal
-
-		// Create a pointer to store the parsed boolean value
 		boolPtr := &boolVal
 
-		// Define a callback function that will be called after flag parsing
 		boolCallback := func(parsedValue bool) {
-			// The callback will be invoked by parseFlags after flags are parsed
-			// Note: parseFlags already holds the lock, so we don't acquire it here
+			// parseFlags already holds the lock when invoking callbacks
 			c.configData[configVarName] = parsedValue
 			c.changed = true
 		}
 
-		// Register the callback in a map to be called later
 		if c.boolCallbacks == nil {
 			c.boolCallbacks = make(map[string]func(bool))
 		}
 		c.boolCallbacks[configVarName] = boolCallback
-
-		// Use BoolVar for the flag, which properly handles both --flag and --flag=true formats
 		c.FlagSet.BoolVar(boolPtr, configVarName, boolVal, configDescription)
-
-		// Logger.Infof("NewFlag start 5z %s", c.name)
 		return
 	}
 
-	// Logger.Infof("NewFlag start 6 %s", c.name)
-
-	// Logger.Infof("NewFlag start 7 %s", c.name)
-	// Only register with the dedicated FlagSet, not the global one
 	if c.configData[configVarName] == nil {
-		// Logger.Infof("NewFlag start 7a %s", c.name)
 		Logger.Warnf("configData[%s] is not set, using default value for type", configVarName)
-		// Create a safe copy of the data we need rather than keeping a reference to c
-		typeName := configVarName
-		targetType := reflect.TypeOf(defaultValue)
-
-		// Store the value now while we have the lock
 		c.configData[configVarName] = defaultValue
-
-		// Create a var without holding a reference to c
-		dvar := &safeVar{
-			name:   typeName,
-			want:   targetType,
-			setter: c.createSetter(configVarName),
+		dvar := &flags.ConfigVar{
+			Name:   configVarName,
+			Want:   reflect.TypeOf(defaultValue),
+			Setter: c.createSetter(configVarName),
 		}
 		c.FlagSet.Var(dvar, configVarName, configDescription)
-		// Logger.Infof("NewFlag start 7b %s", c.name)
 	} else {
-		// Logger.Infof("NewFlag start 8a %s", c.name)
-		// Create a safe copy of the data we need rather than keeping a reference to c
-		typeName := configVarName
-		targetType := reflect.TypeOf(c.configData[configVarName])
-
-		// Create a var without holding a reference to c
-		dvar := &safeVar{
-			name:   typeName,
-			want:   targetType,
-			setter: c.createSetter(configVarName),
+		dvar := &flags.ConfigVar{
+			Name:   configVarName,
+			Want:   reflect.TypeOf(c.configData[configVarName]),
+			Setter: c.createSetter(configVarName),
 		}
 		c.FlagSet.Var(dvar, configVarName, configDescription)
-		// Logger.Infof("NewFlag start 8b %s", c.name)
 	}
-
-	// Logger.Infof("NewFlag end %s", c.name)
 }
 
-// Creates a safe setter function that doesn't hold a reference to the Structure
+// createSetter returns a closure that acquires configMutex and stores the value.
 func (c *Structure) createSetter(key string) func(interface{}) error {
 	return func(value interface{}) error {
-		// Acquire a new lock when setting the value
 		configMutex.Lock()
 		defer configMutex.Unlock()
 		c.changed = true
@@ -112,263 +76,22 @@ func (c *Structure) createSetter(key string) func(interface{}) error {
 	}
 }
 
-// safeVar is a replacement for dynamicVar that doesn't hold a direct reference to Structure
-type safeVar struct {
-	name   string
-	want   reflect.Type
-	setter func(interface{}) error
-}
-
-// Set implements the flag.Value interface
-func (d *safeVar) Set(s string) error {
-	if d.want == nil {
-		return fmt.Errorf("safeVar has nil type")
-	}
-
-	// All the conversion logic from dynamicVar.Set...
-	var value = reflect.New(d.want).Elem()
-
-	// The rest of the type conversion logic is the same as in dynamicVar.Set
-	// Interface handling
-	if d.want.Kind() == reflect.Interface {
-		// Try to parse as number first
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			// Check if it's actually an integer
-			if float64(int(f)) == f {
-				return d.setter(int(f))
-			}
-			return d.setter(f)
-		}
-
-		// Try to parse as bool
-		if b, err := strconv.ParseBool(s); err == nil {
-			return d.setter(b)
-		}
-
-		// Default to string
-		return d.setter(s)
-	}
-
-	// Basic type conversion for common types
-	switch d.want.Kind() {
-	case reflect.Bool:
-		if b, err := strconv.ParseBool(s); err == nil {
-			value.SetBool(b)
-		} else {
-			return fmt.Errorf("invalid bool value: %s", s)
-		}
-	case reflect.String:
-		value.SetString(s)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if i, err := strconv.ParseInt(s, 0, 64); err == nil {
-			// Check for overflow before setting the value
-			switch d.want.Kind() {
-			case reflect.Int8:
-				if i < -128 || i > 127 {
-					return fmt.Errorf("int8 overflow: %d (range: -128 to 127)", i)
-				}
-			case reflect.Int16:
-				if i < -32768 || i > 32767 {
-					return fmt.Errorf("int16 overflow: %d (range: -32768 to 32767)", i)
-				}
-			case reflect.Int32:
-				if i < -2147483648 || i > 2147483647 {
-					return fmt.Errorf("int32 overflow: %d (range: -2147483648 to 2147483647)", i)
-				}
-			}
-			value.SetInt(i)
-		} else {
-			return fmt.Errorf("invalid int value: %s", s)
-		}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if i, err := strconv.ParseUint(s, 0, 64); err == nil {
-			// Check for overflow before setting the value
-			switch d.want.Kind() {
-			case reflect.Uint8:
-				if i > 255 {
-					return fmt.Errorf("uint8 overflow: %d (max: 255)", i)
-				}
-			case reflect.Uint16:
-				if i > 65535 {
-					return fmt.Errorf("uint16 overflow: %d (max: 65535)", i)
-				}
-			case reflect.Uint32:
-				if i > 4294967295 {
-					return fmt.Errorf("uint32 overflow: %d (max: 4294967295)", i)
-				}
-			}
-			value.SetUint(i)
-		} else {
-			return fmt.Errorf("invalid uint value: %s", s)
-		}
-	case reflect.Float32, reflect.Float64:
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			value.SetFloat(f)
-		} else {
-			return fmt.Errorf("invalid float value: %s", s)
-		}
-	case reflect.Slice:
-		// Handle empty string case for slices
-		if s == "" {
-			value.Set(reflect.MakeSlice(d.want, 0, 0))
-			return d.setter(value.Interface())
-		}
-
-		// Check if the input looks like a JSON array
-		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-			// Try to parse as JSON
-			elemKind := d.want.Elem().Kind()
-			if elemKind == reflect.String {
-				var stringSlice []string
-				if err := json.Unmarshal([]byte(s), &stringSlice); err == nil {
-					value.Set(reflect.MakeSlice(d.want, len(stringSlice), len(stringSlice)))
-					for i, v := range stringSlice {
-						value.Index(i).SetString(v)
-					}
-					return d.setter(value.Interface())
-				}
-				// If JSON parsing fails, fall back to comma-separated format
-			} else if elemKind == reflect.Int || elemKind == reflect.Int8 ||
-				elemKind == reflect.Int16 || elemKind == reflect.Int32 ||
-				elemKind == reflect.Int64 {
-				var intSlice []int
-				if err := json.Unmarshal([]byte(s), &intSlice); err == nil {
-					value.Set(reflect.MakeSlice(d.want, len(intSlice), len(intSlice)))
-					for i, v := range intSlice {
-						value.Index(i).SetInt(int64(v))
-					}
-					return d.setter(value.Interface())
-				}
-				// If JSON parsing fails, fall back to comma-separated format
-			} else if elemKind == reflect.Bool {
-				var boolSlice []bool
-				if err := json.Unmarshal([]byte(s), &boolSlice); err == nil {
-					value.Set(reflect.MakeSlice(d.want, len(boolSlice), len(boolSlice)))
-					for i, v := range boolSlice {
-						value.Index(i).SetBool(v)
-					}
-					return d.setter(value.Interface())
-				}
-				// If JSON parsing fails, fall back to comma-separated format
-			} else if elemKind == reflect.Float32 || elemKind == reflect.Float64 {
-				var floatSlice []float64
-				if err := json.Unmarshal([]byte(s), &floatSlice); err == nil {
-					value.Set(reflect.MakeSlice(d.want, len(floatSlice), len(floatSlice)))
-					for i, v := range floatSlice {
-						value.Index(i).SetFloat(v)
-					}
-					return d.setter(value.Interface())
-				}
-				// If JSON parsing fails, fall back to comma-separated format
-			}
-		}
-
-		split := strings.Split(s, ",")
-		value.Set(reflect.MakeSlice(d.want, len(split), len(split)))
-
-		for i, v := range split {
-			v = strings.TrimSpace(v)
-			elemValue := value.Index(i)
-
-			// Handle different element types
-			switch elemValue.Kind() {
-			case reflect.String:
-				elemValue.SetString(v)
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				intVal, err := strconv.ParseInt(v, 10, 64)
-				if err != nil {
-					return fmt.Errorf("invalid int in slice at position %d: %s", i, v)
-				}
-				// Check for overflow before setting the value
-				switch elemValue.Kind() {
-				case reflect.Int8:
-					if intVal < -128 || intVal > 127 {
-						return fmt.Errorf("int8 overflow in slice at position %d: %d (range: -128 to 127)", i, intVal)
-					}
-				case reflect.Int16:
-					if intVal < -32768 || intVal > 32767 {
-						return fmt.Errorf("int16 overflow in slice at position %d: %d (range: -32768 to 32767)", i, intVal)
-					}
-				case reflect.Int32:
-					if intVal < -2147483648 || intVal > 2147483647 {
-						return fmt.Errorf("int32 overflow in slice at position %d: %d (range: -2147483648 to 2147483647)", i, intVal)
-					}
-				}
-				elemValue.SetInt(intVal)
-			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				uintVal, err := strconv.ParseUint(v, 10, 64)
-				if err != nil {
-					return fmt.Errorf("invalid uint in slice at position %d: %s", i, v)
-				}
-				// Check for overflow before setting the value
-				switch elemValue.Kind() {
-				case reflect.Uint8:
-					if uintVal > 255 {
-						return fmt.Errorf("uint8 overflow in slice at position %d: %d (max: 255)", i, uintVal)
-					}
-				case reflect.Uint16:
-					if uintVal > 65535 {
-						return fmt.Errorf("uint16 overflow in slice at position %d: %d (max: 65535)", i, uintVal)
-					}
-				case reflect.Uint32:
-					if uintVal > 4294967295 {
-						return fmt.Errorf("uint32 overflow in slice at position %d: %d (max: 4294967295)", i, uintVal)
-					}
-				}
-				elemValue.SetUint(uintVal)
-			case reflect.Float32, reflect.Float64:
-				floatVal, err := strconv.ParseFloat(v, 64)
-				if err != nil {
-					return fmt.Errorf("invalid float in slice at position %d: %s", i, v)
-				}
-				elemValue.SetFloat(floatVal)
-			case reflect.Bool:
-				boolVal, err := strconv.ParseBool(v)
-				if err != nil {
-					return fmt.Errorf("invalid bool in slice at position %d: %s", i, v)
-				}
-				elemValue.SetBool(boolVal)
-			default:
-				return fmt.Errorf("unsupported slice element type: %s", elemValue.Kind())
-			}
-		}
-		return d.setter(value.Interface())
-	default:
-		// For more complex types, we'll just pass the string
-		return d.setter(s)
-	}
-
-	return d.setter(value.Interface())
-}
-
-// String implements the flag.Value interface
-func (d *safeVar) String() string {
-	// We don't have direct access to the value, so just return empty string
-	return ""
-}
-
-// Helper method to wait for flags to be parsed
+// waitForFlagParsed blocks until the FlagSet has been parsed or a 2-second
+// timeout is reached.
 func (c *Structure) waitForFlagParsed() {
-	// Create a ticker to periodically check if flags have been parsed
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-
-	// Watch for up to 2 seconds to avoid infinite wait but allow more time for complex applications
 	timeout := time.After(2 * time.Second)
-
-	// Use a mutex to protect access to FlagSet
 	for {
 		select {
 		case <-ticker.C:
 			configMutex.RLock()
-			// Check if FlagSet is valid and parsed
 			parsed := c.FlagSet != nil && c.FlagSet.Parsed()
 			configMutex.RUnlock()
 			if parsed {
 				return
 			}
 		case <-timeout:
-			// Don't wait forever, just return
 			Logger.Debug("Timeout waiting for flags to be parsed")
 			return
 		}
@@ -376,9 +99,6 @@ func (c *Structure) waitForFlagParsed() {
 }
 
 func (c *Structure) parseFlags() {
-	// Logger.Infof("parseFlags start 1 %s", c.name)
-
-	// Check if flags are already parsed and parse if needed - all under one lock
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
@@ -387,34 +107,21 @@ func (c *Structure) parseFlags() {
 		return
 	}
 
-	// Logger.Infof("parseFlags start 3 %s", c.name)
-	// Filter out Go test flags
-	args := filterTestFlags(os.Args[1:])
-	// Logger.Infof("parseFlags start 4 %s", c.name)
+	args := flags.FilterTestFlags(os.Args[1:])
 
-	// Temporarily release lock for parsing to avoid deadlock with Set() methods
+	// Temporarily release the lock during parsing to avoid deadlocks with Set().
 	configMutex.Unlock()
 	var parseErr error
 	if parseErr = c.FlagSet.Parse(args); parseErr != nil {
 		Logger.Errorf("error parsing flags: %v", parseErr)
 	}
-	configMutex.Lock() // Re-acquire lock for the rest of the function
-	// Logger.Infof("parseFlags start 5 %s", c.name)
+	configMutex.Lock()
 
-	// After parsing, process any boolean flags
-	// We need to do this here rather than relying on Set() for bool flags
-	// because standalone boolean flags (--flag vs --flag=true) don't call Set()
 	if c.boolCallbacks != nil && parseErr == nil {
-		// Visit all flags that were set (explicitly or via defaults)
-		// Logger.Infof("parseFlags start 6 %s", c.name)
 		c.FlagSet.Visit(func(f *flag.Flag) {
-			// Logger.Infof("parseFlags start 7 %s", c.name)
-			// Check if we have a callback for this flag
 			if callback, exists := c.boolCallbacks[f.Name]; exists {
-				// Get the flag value
 				value, err := strconv.ParseBool(f.Value.String())
 				if err == nil {
-					// Call the callback with the parsed value
 					callback(value)
 				} else {
 					Logger.Errorf("Failed to parse bool flag %s: %v", f.Name, err)
@@ -422,33 +129,17 @@ func (c *Structure) parseFlags() {
 			}
 		})
 	}
-	// Logger.Infof("parseFlags start 8 %s", c.name)
 
 	if parseErr == nil {
-		// Mark that configuration has changed if flags were successfully parsed
 		c.changed = true
 	}
-	// Logger.Infof("parseFlags start 9 %s", c.name)
-	// Note: configMutex.Lock() is already held and will be released by defer
 }
 
-// GetFlagSet returns the FlagSet used by this configuration
-// This allows applications to register the FlagSet with their own flag parsing system
+// GetFlagSet returns the FlagSet used by this configuration, initialising it
+// via InitSelf if necessary.
 func (c *Structure) GetFlagSet() *flag.FlagSet {
 	if c.parent == nil {
 		c.InitSelf()
 	}
-
 	return c.FlagSet
-}
-
-// filterTestFlags removes Go test flags (starting with -test.) from arguments
-func filterTestFlags(args []string) []string {
-	filtered := make([]string, 0, len(args))
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-test.") {
-			filtered = append(filtered, arg)
-		}
-	}
-	return filtered
 }

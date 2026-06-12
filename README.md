@@ -86,7 +86,7 @@ func main() {
 
 1. **Default values**: Set in code using `cfggo.DefaultValue()` or via struct tags
 2. **Configuration files**: JSON files loaded via options
-3. **Environment variables**: Automatically mapped from config keys (e.g., `server_port` → `SERVER_PORT`)
+3. **Environment variables**: Automatically mapped from config keys (e.g., `server_port` -> `SERVER_PORT`)
 4. **Command-line flags**: Automatically registered based on your struct fields
 
 ## Environment Variables
@@ -98,8 +98,8 @@ Environment variables are automatically mapped from your configuration keys. The
 
 For example:
 
-- `server_port` → `SERVER_PORT`
-- `db.url` → `DB_URL`
+- `server_port` -> `SERVER_PORT`
+- `db.url` -> `DB_URL`
 
 ## Command-Line Flags
 

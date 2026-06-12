@@ -2,6 +2,7 @@ package cfglogger
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 )
@@ -24,10 +25,17 @@ type DefaultLogger struct {
 	logger *slog.Logger
 }
 
-// NewDefaultLogger creates a new DefaultLogger with the specified level
+// NewDefaultLogger creates a new DefaultLogger that writes to os.Stderr.
 func NewDefaultLogger() *DefaultLogger {
 	return &DefaultLogger{
 		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+}
+
+// NewDefaultLoggerWithWriter creates a DefaultLogger that writes to w.
+func NewDefaultLoggerWithWriter(w io.Writer) *DefaultLogger {
+	return &DefaultLogger{
+		logger: slog.New(slog.NewTextHandler(w, nil)),
 	}
 }
 

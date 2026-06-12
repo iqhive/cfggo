@@ -217,7 +217,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	defer RestoreFlagValues()
 
 	// Use WithAutoSave to enable automatic saving for this test
-	config.Init(config, WithFileConfig("tests/test.json"), WithAutoSave())
+	config.Init(config, WithFileConfig("testdata/test.json"), WithAutoSave())
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")
@@ -231,7 +231,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	// Create a new config instance to load the saved data
 	newConfig := NewTestConfig()
 	defer RestoreFlagValues()
-	newConfig.Init(newConfig, WithFileConfig("tests/test.json"))
+	newConfig.Init(newConfig, WithFileConfig("testdata/test.json"))
 
 	// Verify the loaded value
 	if newConfig.StringField() != "test_value" {
@@ -248,7 +248,7 @@ func TestEnvironmentVariables(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("tests/test.json"))
+	config.Init(config, WithFileConfig("testdata/test.json"))
 
 	if config.StringField() != "env_value" {
 		t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -261,7 +261,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("tests/test.json"))
+	config.Init(config, WithFileConfig("testdata/test.json"))
 
 	// Modify the TestEnvironmentVariables test
 	t.Run("TestEnvironmentVariables", func(t *testing.T) {
@@ -270,7 +270,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 		config := NewTestConfig()
 		defer RestoreFlagValues()
-		config.Init(config, WithFileConfig("tests/test.json"))
+		config.Init(config, WithFileConfig("testdata/test.json"))
 
 		if config.StringField() != "env_value" {
 			t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -322,7 +322,7 @@ func TestCommandLineFlags1(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("tests/test.json"))
+	config.Init(config, WithFileConfig("testdata/test.json"))
 	os.Args = []string{"cmd"}
 
 	if config.StringField() != "flag_value" {
@@ -339,7 +339,7 @@ func TestCommandLineFlags2(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("tests/test.json"))
+	config.Init(config, WithFileConfig("testdata/test.json"))
 	os.Args = []string{"cmd"}
 
 	if config.StringField() != "flag_value" {
@@ -359,7 +359,7 @@ func TestValuePrecedence(t *testing.T) {
 	}
 
 	// We'll create a temporary JSON file to simulate the "config file" layer.
-	tempFileName := "tests/precedence_test.json"
+	tempFileName := "testdata/precedence_test.json"
 	jsonData := []byte(`{"field":"file_value"}`)
 	if err := os.WriteFile(tempFileName, jsonData, 0644); err != nil {
 		t.Fatalf("failed to write temp config file: %v", err)

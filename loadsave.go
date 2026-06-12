@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 )
 
 var configsToSave []*Structure
@@ -27,9 +26,6 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 		return c.WrapError(err, 0, "")
 	}
 
-	// if c.configHandler.SaveConfig != nil {
-	// 	// Logger.Debug("Setting up config saver")
-	// }
 	c.setupConfigSaver()
 
 	return c.loadJSONConfigFromBytes(data, alreadyLocked)
@@ -43,8 +39,6 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
-		// Log the error but don't fail the entire configuration process
-		// This allows the system to continue with defaults when JSON is invalid
 		Logger.Errorf("Failed to unmarshal JSON data: %v", err)
 		return nil
 	}
@@ -62,161 +56,26 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 				fullKey = prefix + "." + key
 			}
 
-			switch v := value.(type) {
-			case map[string]interface{}:
-				// Process nested maps
-				processMap(v, fullKey)
+			// Nested JSON objects represent nested struct fields; recurse.
+			if nested, ok := value.(map[string]interface{}); ok {
+				processMap(nested, fullKey)
+				continue
+			}
 
-				// Special handling for nested time.Duration fields
-				// Check if any nested fields need special handling
-				for nestedKey, nestedValue := range v {
-					nestedFullKey := fullKey + "." + nestedKey
-					if existingVal, exists := c.configData[nestedFullKey]; exists {
-						// Handle time.Duration in nested structures
-						if _, isDuration := existingVal.(time.Duration); isDuration {
-							if strVal, ok := nestedValue.(string); ok {
-								if duration, err := time.ParseDuration(strVal); err == nil {
-									c.configData[nestedFullKey] = duration
-								} else {
-									Logger.Warnf("Failed to parse duration for %s: %v", nestedFullKey, err)
-								}
-							} else if floatVal, ok := nestedValue.(float64); ok {
-								c.configData[nestedFullKey] = time.Duration(int64(floatVal))
-							}
-						}
-					}
-				}
-			default:
-				// Special handling for known types
-				if existingVal, exists := c.configData[fullKey]; exists {
-					// Handle nil values
-					if v == nil {
-						c.configData[fullKey] = nil
-						continue
-					}
+			// Respect fields tagged with "-".
+			if c.shouldIgnoreField(fullKey) {
+				continue
+			}
 
-					// Handle time.Time conversion
-					if _, isTime := existingVal.(time.Time); isTime {
-						if strVal, ok := v.(string); ok {
-							if t, err := time.Parse(time.RFC3339, strVal); err == nil {
-								c.configData[fullKey] = t
-								continue
-							} else {
-								Logger.Warnf("Failed to parse time for %s: %v", fullKey, err)
-							}
-						}
-					}
+			if value == nil {
+				// Preserve explicit JSON null.
+				c.configData[fullKey] = nil
+				continue
+			}
 
-					// Handle time.Duration conversion
-					if _, isDuration := existingVal.(time.Duration); isDuration {
-						if strVal, ok := v.(string); ok {
-							if duration, err := time.ParseDuration(strVal); err == nil {
-								c.configData[fullKey] = duration
-								continue
-							} else {
-								Logger.Warnf("Failed to parse duration for %s: %v", fullKey, err)
-							}
-						} else if floatVal, ok := v.(float64); ok {
-							// Handle numeric duration (assuming nanoseconds)
-							c.configData[fullKey] = time.Duration(int64(floatVal))
-							continue
-						}
-					}
-
-					// Handle slice conversions
-					if reflect.TypeOf(existingVal) != nil && reflect.TypeOf(existingVal).Kind() == reflect.Slice {
-						// Handle empty slices
-						if sliceVal, ok := v.([]interface{}); ok {
-							// Convert slice based on the existing type
-							switch existingVal.(type) {
-							case []string:
-								strSlice := make([]string, len(sliceVal))
-								for i, item := range sliceVal {
-									if item != nil {
-										strSlice[i] = fmt.Sprintf("%v", item)
-									}
-								}
-								c.configData[fullKey] = strSlice
-								continue
-							case []int:
-								intSlice := make([]int, len(sliceVal))
-								for i, item := range sliceVal {
-									if intVal, ok := item.(float64); ok {
-										intSlice[i] = int(intVal)
-									} else {
-										Logger.Warnf("Failed to convert %v to int for %s[%d]", item, fullKey, i)
-									}
-								}
-								c.configData[fullKey] = intSlice
-								continue
-							case []bool:
-								boolSlice := make([]bool, len(sliceVal))
-								for i, item := range sliceVal {
-									if boolVal, ok := item.(bool); ok {
-										boolSlice[i] = boolVal
-									} else {
-										Logger.Warnf("Failed to convert %v to bool for %s[%d]", item, fullKey, i)
-									}
-								}
-								c.configData[fullKey] = boolSlice
-								continue
-							case []float32:
-								floatSlice := make([]float32, len(sliceVal))
-								for i, item := range sliceVal {
-									if floatVal, ok := item.(float64); ok {
-										floatSlice[i] = float32(floatVal)
-									} else {
-										Logger.Warnf("Failed to convert %v to float32 for %s[%d]", item, fullKey, i)
-									}
-								}
-								c.configData[fullKey] = floatSlice
-								continue
-							case []float64:
-								floatSlice := make([]float64, len(sliceVal))
-								for i, item := range sliceVal {
-									if floatVal, ok := item.(float64); ok {
-										floatSlice[i] = floatVal
-									} else {
-										Logger.Warnf("Failed to convert %v to float64 for %s[%d]", item, fullKey, i)
-									}
-								}
-								c.configData[fullKey] = floatSlice
-								continue
-							}
-						}
-					}
-
-					// Handle map conversions
-					if reflect.TypeOf(existingVal) != nil && reflect.TypeOf(existingVal).Kind() == reflect.Map {
-						if mapVal, ok := v.(map[string]interface{}); ok {
-							switch existingVal.(type) {
-							case map[string]string:
-								strMap := make(map[string]string)
-								for k, item := range mapVal {
-									if item != nil {
-										strMap[k] = fmt.Sprintf("%v", item)
-									}
-								}
-								c.configData[fullKey] = strMap
-								continue
-							case map[string]interface{}:
-								c.configData[fullKey] = mapVal
-								continue
-							}
-						}
-					}
-				}
-
-				// Check if this field should be ignored (has hyphen tag)
-				if c.shouldIgnoreField(fullKey) {
-					continue
-				}
-
-				// Try to set the value with proper type conversion
-				if err := c.set(fullKey, v); err != nil {
-					// Log type conversion errors but don't fail the entire config load
-					Logger.Warnf("Error setting config key %s: %v", fullKey, err)
-				}
+			// All type coercion is handled by the unified converter inside c.set.
+			if err := c.set(fullKey, value); err != nil {
+				Logger.Warnf("Error setting config key %s: %v", fullKey, err)
 			}
 		}
 	}
@@ -226,7 +85,6 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 }
 
 func (c *Structure) setupConfigSaver() {
-	// Only set up config saver if explicitly enabled
 	if c.autoSave {
 		configsToSave = append(configsToSave, c)
 
@@ -235,7 +93,6 @@ func (c *Structure) setupConfigSaver() {
 			signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
 			go func() {
 				defer func() {
-					// Clean up signal channel on exit
 					signal.Stop(signalChannel)
 					close(signalChannel)
 				}()
@@ -255,8 +112,8 @@ func (c *Structure) setupConfigSaver() {
 	}
 }
 
-// CleanupSignalHandler allows for graceful cleanup of the signal handler
-// This should be called in tests or when the application wants to clean up
+// CleanupSignalHandler allows tests and applications to release the signal
+// handler installed by setupConfigSaver.
 func CleanupSignalHandler() {
 	signalCleanupOnce.Do(func() {
 		if signalChannel != nil {
@@ -312,7 +169,6 @@ func (c *Structure) String() string {
 
 func (c *Structure) GetHelpTag(key string) string {
 	if c.parent == nil {
-		// Logger.Infof("GetHelpTag InitSelf %s", c.name)
 		c.InitSelf()
 	}
 
@@ -334,7 +190,8 @@ func (c *Structure) GetHelpTag(key string) string {
 	return ""
 }
 
-// shouldIgnoreField checks if a field should be ignored based on its tag
+// shouldIgnoreField returns true when a config key corresponds to a struct
+// field tagged with `cfggo:"-"` (or its aliases).
 func (c *Structure) shouldIgnoreField(key string) bool {
 	v := reflect.ValueOf(c.parent)
 	for v.Kind() == reflect.Ptr {
@@ -344,31 +201,22 @@ func (c *Structure) shouldIgnoreField(key string) bool {
 		return false
 	}
 
-	t := v.Type()
-
-	// Check all fields in the struct
 	var checkStruct func(reflect.Type, string) bool
 	checkStruct = func(t reflect.Type, prefix string) bool {
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
-
-			// Get the config name for this field
 			configVarName := c.getConfigNameFromField(field)
 
-			// If this field has a hyphen tag, it should be ignored
 			if configVarName == "-" {
 				fieldName := field.Name
 				if prefix != "" {
 					fieldName = prefix + "." + fieldName
 				}
-
-				// Check if the key matches this field name
 				if key == fieldName {
 					return true
 				}
 			}
 
-			// Check nested structs
 			if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(Structure{}) {
 				nestedPrefix := field.Name
 				if prefix != "" {
@@ -382,7 +230,7 @@ func (c *Structure) shouldIgnoreField(key string) bool {
 		return false
 	}
 
-	return checkStruct(t, "")
+	return checkStruct(v.Type(), "")
 }
 
 func (c *Structure) saveConfig() error {

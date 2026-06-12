@@ -1,98 +1,97 @@
-# CFGGO Examples
+# cfggo Examples
 
-This directory contains examples demonstrating how to use cfggo's new error handling and logging features.
+This directory contains runnable examples that demonstrate key cfggo features.
+Each example can be run from its own subdirectory with `go run main.go`.
 
-## New Features
-
-### Per-Instance Loggers and Error Wrappers
-
-cfggo now supports instance-specific loggers and error wrappers while maintaining full backwards compatibility.
+---
 
 ## Examples
 
-### Basic Example (`basic/`)
+### `basic/` - Getting started
 
 Demonstrates:
-- Basic usage (backwards compatible)
-- Custom logger per instance
-- Error wrapping with logging
-- Multiple instances with different loggers
+- Embedding `cfggo.Structure` and defining typed accessor functions.
+- Default values via `cfggo.DefaultValue(...)` and `default:"..."` struct tags.
+- Per-instance loggers (`cfggo.WithLogger`).
+- Multiple configuration instances with different names.
 
-Run: `cd basic && go run main.go`
+```sh
+cd basic && go run main.go
+```
 
-### Advanced Example (`advanced/`)
+Sample `config.json` is included to show how file-based values are loaded.
+
+---
+
+### `advanced/` - Custom loggers and error wrappers
 
 Demonstrates:
-- Custom logger implementations
-- Custom error wrappers
-- Multiple services with different error handling
-- Type conversion errors with instance-specific handling
-- Backwards compatibility verification
+- Implementing a fully custom `cfglogger.Logger`.
+- Custom `errwrapper.ErrorWrapper` for rich error formatting.
+- Running multiple independent service configs in one process.
+- `WrapErrorWithLogging` for error wrapping that also logs.
 
-Run: `cd advanced && go run main.go`
-
-## Key Features Demonstrated
-
-### 1. Instance-Specific Loggers
-
-```go
-// Each configuration instance can have its own logger
-config := &MyConfig{}
-config.Init(config, cfggo.WithLogger(customLogger))
+```sh
+cd advanced && go run main.go
 ```
 
-### 2. Instance-Specific Error Wrappers
+---
 
-```go
-// Custom error wrapper for this instance only
-config.Init(config, cfggo.WithErrorWrapper(customErrorWrapper))
+### `validation/` - Built-in and custom validators
+
+Demonstrates the full validator API:
+
+| Constructor                       | What it checks                              |
+|-----------------------------------|---------------------------------------------|
+| `cfggo.Required()`                | Value is non-nil and non-empty              |
+| `cfggo.Range(min, max)`           | Numeric value within `[min, max]`           |
+| `cfggo.MinLength(n)`              | String/slice has at least *n* elements      |
+| `cfggo.MaxLength(n)`              | String/slice has at most *n* elements       |
+| `cfggo.OneOf(opts...)`            | Value equals one of the listed options      |
+| `cfggo.Regex(pattern)`            | String matches the regular expression       |
+| `cfggo.Email()`                   | Valid email address                         |
+| `cfggo.URL()`                     | Valid URL with scheme and host              |
+| `cfggo.All(validators...)`        | All validators must pass                    |
+| `cfggo.Any(validators...)`        | At least one validator must pass            |
+| `cfggo.Custom(func(any) error)`   | User-supplied validation function           |
+
+```sh
+cd validation && go run main.go
 ```
 
-### 3. Error Wrapping with Automatic Logging
+---
+
+## Key patterns
+
+### `cfggo.Init` vs method call
+
+Both are equivalent:
 
 ```go
-// Wrap errors and automatically log them
-err := config.WrapErrorWithLogging(nil, 500, "Something went wrong")
+// Convenience function (added in Phase 2):
+cfggo.Init(cfg, cfggo.WithDefaultFileConfig("config.json"))
+
+// Equivalent method call:
+cfg.Init(cfg, cfggo.WithDefaultFileConfig("config.json"))
 ```
 
-### 4. Multiple Configuration Instances
+### Per-instance vs global logger
 
 ```go
-// Different services can have different loggers and error handling
-serviceA := &Config{}
-serviceA.Init(serviceA, cfggo.WithLogger(serviceALogger))
+// Use the global logger (default):
+cfg.Init(cfg)
 
-serviceB := &Config{}
-serviceB.Init(serviceB, cfggo.WithLogger(serviceBLogger))
+// Use a custom logger for this instance only:
+cfg.Init(cfg, cfggo.WithLogger(myLogger))
+
+// Change the global log level:
+cfggo.SetLogLevel(cfggo.LogLevelDebug)
 ```
 
-### 5. Backwards Compatibility
+### Configuration source precedence (lowest to highest)
 
-```go
-// Existing code continues to work unchanged
-config := &MyConfig{}
-config.Init(config)  // Uses global logger and error wrapper
-```
-
-## Migration Guide
-
-### For Existing Users
-
-No changes required! Your existing code will continue to work exactly as before. The global `cfggo.Logger` and `cfggo.ErrorWrapper` are still available and work the same way.
-
-### For New Features
-
-To use the new per-instance features:
-
-1. **Custom Logger**: Use `cfggo.WithLogger(yourLogger)` as an option when calling `Init()`
-2. **Custom Error Wrapper**: Use `cfggo.WithErrorWrapper(yourWrapper)` as an option
-3. **Error Logging**: Call `config.WrapErrorWithLogging()` instead of the global `ErrorWrapper`
-
-## Directory Structure
-
-The conversion functions have been moved to their own package for better organization:
-
-- `convert/` - Type conversion utilities (moved from `convert.go`)
-- The original `convert.go` now provides backwards-compatible wrappers
-
-This refactoring improves code organization while maintaining full backwards compatibility.
+1. `cfggo.DefaultValue(...)` set at struct literal time
+2. `default:"..."` struct tag
+3. JSON configuration file
+4. Environment variables (`KEY` -> `KEY`, `nested.key` -> `NESTED_KEY`)
+5. Command-line flags (`--key=value`)

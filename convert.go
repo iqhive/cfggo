@@ -6,16 +6,11 @@ import (
 	"github.com/iqhive/cfggo/convert"
 )
 
-// globalErrorWrapper implements the ErrorWrapper interface for global usage
-type globalErrorWrapper struct{}
-
-func (g globalErrorWrapper) WrapError(err error, errorcode int, msg string, args ...interface{}) error {
-	return ErrorWrapper(err, errorcode, msg, args...)
-}
-
-// ConvertValue converts a value to the target type using the global error wrapper
-// This function maintains backward compatibility
+// ConvertValue converts a value to targetType.
+//
+// Deprecated: this is an internal implementation detail exposed for backward
+// compatibility. Use cfggo.Structure.Set to update configuration values.
+// This symbol will be removed in the next minor version.
 func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, error) {
-	wrapper := globalErrorWrapper{}
-	return convert.ConvertValue(value, targetType, wrapper)
+	return convert.ConvertValue(value, targetType, nil)
 }

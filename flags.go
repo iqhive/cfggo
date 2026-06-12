@@ -2,9 +2,9 @@ package cfggo
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
@@ -232,10 +232,19 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 		}
 
 		f := c.FlagSet.Lookup(name)
-		if f != nil && isBoolFlag(f) && i+1 < len(args) && isBoolLiteral(args[i+1]) {
-			out = append(out, arg+"="+args[i+1])
-			i++
-			continue
+		if f != nil && isBoolFlag(f) && i+1 < len(args) {
+			// be flexible with the values we support for bool flags, because
+			// some config var names may cause end-users to supply "yes/no/y/n"
+			// instead of "true/false/t/f"
+			if boolval, boolErr := customParseBool(args[i+1]); boolErr == nil {
+				if boolval {
+					out = append(out, arg+"=true")
+				} else {
+					out = append(out, arg+"=false")
+				}
+				i++
+				continue
+			}
 		}
 
 		out = append(out, arg)
@@ -243,11 +252,15 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 	return out
 }
 
-// isBoolLiteral reports whether s is a value the flag package accepts for a
-// boolean flag (matches strconv.ParseBool: 1, t, T, TRUE, true, False, etc.).
-func isBoolLiteral(s string) bool {
-	_, err := strconv.ParseBool(s)
-	return err == nil
+// replacement for strconv.ParseBool that also supports yes/y/no/n
+func customParseBool(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "true", "t", "yes", "y", "1":
+		return true, nil
+	case "false", "f", "no", "n", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("cannot parse bool %q", s)
 }
 
 // isBoolFlag reports whether the given flag behaves like a boolean flag

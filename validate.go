@@ -27,9 +27,16 @@ func (c *Structure) RegisterValidator(key string, validator validcfg.Validator) 
 
 // AddValidator is an alias for RegisterValidator.
 func (c *Structure) AddValidator(key string, validator validcfg.Validator) {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
 	c.validationMutex.Lock()
 	defer c.validationMutex.Unlock()
 
+	if c.validationMap == nil {
+		c.validationMap = make(map[string]map[string]validcfg.Validator)
+	}
 	if _, exists := c.validationMap[c.name]; !exists {
 		c.validationMap[c.name] = make(map[string]validcfg.Validator)
 	}

@@ -68,8 +68,14 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 			}
 
 			if value == nil {
-				// Preserve explicit JSON null.
-				c.configData[fullKey] = nil
+				// An explicit JSON null clears the value. For a known key keep
+				// the typed zero value so accessors and flags stay correctly
+				// typed; otherwise store a bare nil
+				if existing, ok := c.configData[fullKey]; ok && existing != nil {
+					c.configData[fullKey] = reflect.Zero(reflect.TypeOf(existing)).Interface()
+				} else {
+					c.configData[fullKey] = nil
+				}
 				continue
 			}
 
@@ -129,6 +135,8 @@ func (c *Structure) GetJSONBytes() []byte {
 		c.InitSelf()
 	}
 
+	configMutex.RLock()
+	defer configMutex.RUnlock()
 	data, _ := json.Marshal(c.configData)
 	return data
 }
@@ -142,8 +150,9 @@ func (c *Structure) String() string {
 	sb.WriteString(c.name + ":\n")
 	maxKeyLen := 0
 	maxValueLen := 0
-	values := make(map[string]string, len(c.configData))
 
+	configMutex.RLock()
+	values := make(map[string]string, len(c.configData))
 	for key, value := range c.configData {
 		if len(key) > maxKeyLen {
 			maxKeyLen = len(key)
@@ -154,6 +163,7 @@ func (c *Structure) String() string {
 			maxValueLen = len(valueStr)
 		}
 	}
+	configMutex.RUnlock()
 
 	for key, valueStr := range values {
 		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
@@ -238,7 +248,9 @@ func (c *Structure) saveConfig() error {
 		return nil
 	}
 
+	configMutex.RLock()
 	data, err := json.Marshal(c.configData)
+	configMutex.RUnlock()
 	if err != nil {
 		return c.WrapError(err, 0, "")
 	}

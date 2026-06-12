@@ -44,8 +44,11 @@ func (c *Structure) Reload() error {
 		c.parseFlags()
 	}
 
-	// Update the config functions
-	c.replaceConfigFuncs()
+	// The accessor closures installed during Init read c.configData live on
+	// every call, so the reloaded values are already visible without
+	// reinstalling them. Re-running replaceConfigFuncs here would rewrite the
+	// struct func fields, racing with any goroutine currently calling an
+	// accessor (and with a concurrent reload)
 
 	// Validate configuration after reloading
 	if err = c.Validate(); err != nil {

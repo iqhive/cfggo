@@ -49,6 +49,8 @@ func (c *Structure) Get(key string) (interface{}, bool) {
 }
 
 func (c *Structure) getAllKeys() []string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
 	keys := make([]string, 0, len(c.configData))
 	for key := range c.configData {
 		keys = append(keys, key)

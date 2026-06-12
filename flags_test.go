@@ -181,6 +181,98 @@ func TestBoolFlagValueDoesNotSwallowLaterFlags(t *testing.T) {
 	}
 }
 
+// TestBoolFlagSpaceSupportedValues verifies that every boolean literal accepted
+// by customParseBool works in the space-separated "--bool value" form.
+// Each case also appends a trailing "--string_field" flag to prove
+// parsing continued past the boolean value. ie value was collapsed
+// // into "--bool=value" and not treated as a positional argument
+func TestBoolFlagSpaceSupportedValues(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	type TestConfig struct {
+		Structure
+		BoolField   func() bool   `json:"boolfield"`
+		StringField func() string `json:"string_field"`
+	}
+
+	for _, tt := range []struct {
+		value string
+		want  bool
+	}{
+		// some truthyish strings
+		{"true", true},
+		{"True", true},
+		{"TRUE", true},
+		{"t", true},
+		{"T", true},
+		{"yes", true},
+		{"Yes", true},
+		{"y", true},
+		{"Y", true},
+		{"1", true},
+		// some falsyish strings
+		{"false", false},
+		{"False", false},
+		{"FALSE", false},
+		{"f", false},
+		{"F", false},
+		{"no", false},
+		{"No", false},
+		{"n", false},
+		{"N", false},
+		{"0", false},
+	} {
+		os.Args = []string{"cmd", "--boolfield", tt.value, "--string_field", "after"}
+		cfg := &TestConfig{
+			BoolField:   func() bool { return !tt.want }, // default to the opposite of want, safety is #1 priority
+			StringField: func() string { return "default" },
+		}
+		cfg.Init(cfg)
+
+		if got := cfg.BoolField(); got != tt.want {
+			t.Errorf("value %q: BoolField() = %v, want %v", tt.value, got, tt.want)
+		}
+		// If the value had not been collapsed, it would have stopped parsing and
+		// string_field would still be "default".
+		if got := cfg.StringField(); got != "after" {
+			t.Errorf("value %q: StringField() = %q, want %q (later flag was dropped)", tt.value, got, "after")
+		}
+	}
+	os.Args = []string{"cmd"}
+}
+
+// TestBoolFlagInvalidValueTreatedAsPositional verifies that when a bool flag
+// is followed by a token that is NOT a valid bool literal, the token is not
+// collapsed into the flag. The bool flag takes its standalone "true"
+// value and the non-boolean token is left as a positional CLI arg
+func TestBoolFlagInvalidValueTreatedAsPositional(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	os.Args = []string{"cmd", "--boolfield", "notabool"}
+
+	type TestConfig struct {
+		Structure
+		BoolField func() bool `json:"boolfield"`
+	}
+	cfg := &TestConfig{BoolField: func() bool { return false }}
+	cfg.Init(cfg)
+
+	// bare boolean flag defaults to true when no valid value follows it
+	if !cfg.BoolField() {
+		t.Error("Expected --boolfield to default to true when followed by a non-boolean token")
+	}
+
+	// non-bool token is treated as a positional/command line argument
+	rest := cfg.GetFlagSet().Args()
+	if len(rest) != 1 || rest[0] != "notabool" {
+		t.Errorf("Expected leftover positional args [notabool], got %v", rest)
+	}
+
+	os.Args = []string{"cmd"}
+}
+
 // TestBoolFlagEquals verifies the --flag=value form sets the bool explicitly.
 func TestBoolFlagEquals(t *testing.T) {
 	type TestConfig struct {

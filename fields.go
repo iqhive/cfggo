@@ -162,8 +162,11 @@ func (c *Structure) setDefaultsFromTags() {
 // replaceConfigFuncs wires each func field in the parent struct to read from
 // the config map so that hot reloading is transparent to callers.
 func (c *Structure) replaceConfigFuncs() {
-	configMutex.RLock()
-	defer configMutex.RUnlock()
+	// This mutates the parent struct func fields via reflect.Value.Set, so it
+	// must hold the write lock: a read lock would let two concurrent callers
+	// (eg overlapping reloads) write the same field at once
+	configMutex.Lock()
+	defer configMutex.Unlock()
 
 	v := reflect.ValueOf(c.parent)
 	for v.Kind() == reflect.Ptr {
@@ -202,13 +205,28 @@ func (c *Structure) replaceConfigFuncs() {
 			continue
 		}
 
-		func(key string) {
+		func(key string, outType reflect.Type) {
 			fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(_ []reflect.Value) []reflect.Value {
 				configMutex.RLock()
 				defer configMutex.RUnlock()
-				return []reflect.Value{reflect.ValueOf(c.configData[key])}
+				raw := c.configData[key]
+				// A nil value (eg an explicit JSON null, an unset interface{}
+				// field, or a failed conversion gives an invalid reflect.Value,
+				// so fall back to the typed zero value
+				if raw == nil {
+					return []reflect.Value{reflect.Zero(outType)}
+				}
+				rv := reflect.ValueOf(raw)
+				if !rv.Type().AssignableTo(outType) {
+					if rv.Type().ConvertibleTo(outType) {
+						rv = rv.Convert(outType)
+					} else {
+						return []reflect.Value{reflect.Zero(outType)}
+					}
+				}
+				return []reflect.Value{rv}
 			}))
-		}(configVarName)
+		}(configVarName, fieldValue.Type().Out(0))
 	}
 }
 

@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"flag"
 	"os"
 	"testing"
 )
@@ -150,6 +151,129 @@ func TestBoolFlagWithValue(t *testing.T) {
 
 	// Reset args
 	os.Args = []string{"cmd"}
+}
+
+// TestBoolFlagEquals verifies the --flag=value form sets the bool explicitly.
+func TestBoolFlagEquals(t *testing.T) {
+	type TestConfig struct {
+		Structure
+		BoolField func() bool `json:"boolfield"`
+	}
+
+	for _, tt := range []struct {
+		arg  string
+		want bool
+	}{
+		{"--boolfield=true", true},
+		{"--boolfield=false", false},
+	} {
+		os.Args = []string{"cmd", tt.arg}
+		cfg := &TestConfig{BoolField: func() bool { return false }}
+		cfg.Init(cfg)
+		os.Args = []string{"cmd"}
+
+		if got := cfg.BoolField(); got != tt.want {
+			t.Errorf("arg %s: BoolField() = %v, want %v", tt.arg, got, tt.want)
+		}
+	}
+}
+
+// TestIgnoreUnknownVars verifies that, with WithIgnoreUnknownVars, an
+// unrecognized flag does not terminate the process and known flags are still
+// parsed.
+func TestIgnoreUnknownVars(t *testing.T) {
+	type TestConfig struct {
+		Structure
+		StringField func() string `json:"string_field"`
+	}
+
+	for _, args := range [][]string{
+		{"cmd", "--unknownflag=x", "--string_field=keep"},
+		{"cmd", "--unknownflag", "value", "--string_field=keep"},
+		{"cmd", "--string_field=keep", "--unknownflag=x"},
+	} {
+		os.Args = args
+		cfg := &TestConfig{StringField: func() string { return "default" }}
+		cfg.Init(cfg, WithIgnoreUnknownVars())
+		os.Args = []string{"cmd"}
+
+		if got := cfg.StringField(); got != "keep" {
+			t.Errorf("args %v: StringField() = %q, want keep", args, got)
+		}
+	}
+}
+
+// TestWithStandardFlags verifies that cfggo can register on flag.CommandLine and
+// let the host own the single flag.Parse() call, resolving cfggo's flags
+// alongside another library's flag (acceptance criteria #1 and #2).
+func TestWithStandardFlags(t *testing.T) {
+	oldArgs := os.Args
+	oldCmdLine := flag.CommandLine
+	defer func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCmdLine
+	}()
+
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	// A flag registered by some other library/package.
+	otherFlag := flag.String("someotherflag", "", "owned by another package")
+
+	os.Args = []string{"cmd", "--string_field=std_value", "--boolfield=true", "--someotherflag=ok"}
+
+	type TestConfig struct {
+		Structure
+		StringField func() string `json:"string_field"`
+		BoolField   func() bool   `json:"boolfield"`
+	}
+	cfg := &TestConfig{
+		StringField: func() string { return "default" },
+		BoolField:   func() bool { return false },
+	}
+	cfg.Init(cfg, WithStandardFlags())
+
+	// The host performs the single canonical parse.
+	flag.Parse()
+
+	if got := cfg.StringField(); got != "std_value" {
+		t.Errorf("StringField() = %q, want std_value", got)
+	}
+	if !cfg.BoolField() {
+		t.Error("BoolField() = false, want true")
+	}
+	if *otherFlag != "ok" {
+		t.Errorf("someotherflag = %q, want ok", *otherFlag)
+	}
+}
+
+// TestWithFlagSetSkipsAutoParse verifies that when an external flag set is
+// supplied, cfggo does not parse it during Init (the host owns Parse).
+func TestWithFlagSetSkipsAutoParse(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	os.Args = []string{"cmd", "--string_field=later"}
+
+	type TestConfig struct {
+		Structure
+		StringField func() string `json:"string_field"`
+	}
+	cfg := &TestConfig{StringField: func() string { return "default" }}
+	cfg.Init(cfg, WithFlagSet(fs))
+
+	if fs.Parsed() {
+		t.Fatal("external flag set should not be parsed during Init")
+	}
+	if got := cfg.StringField(); got != "default" {
+		t.Errorf("before parse: StringField() = %q, want default", got)
+	}
+
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if got := cfg.StringField(); got != "later" {
+		t.Errorf("after parse: StringField() = %q, want later", got)
+	}
 }
 
 // TestBoolFlagStandalone tests that the --debug flag enables debug mode

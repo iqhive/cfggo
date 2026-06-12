@@ -121,6 +121,49 @@ Boolean flags can be used with or without a value:
 --feature_enabled=false  # Sets to false
 ```
 
+> **Important:** As with the standard `flag` package, boolean flags do **not**
+> consume a following space-separated token. `--feature_enabled true` enables the
+> flag from its *presence* and leaves `true` as a stray positional argument. To
+> set a boolean explicitly always use the `--feature_enabled=value` form. cfggo
+> logs a warning when unexpected positional arguments remain after parsing, since
+> that almost always indicates a `--bool value` mistake.
+
+### Parsing model and interop with the standard `flag` package
+
+By default, cfggo creates its own private `*flag.FlagSet` and parses
+`os.Args` for you inside `Init()`. In this mode:
+
+- You do **not** need to (and should **not**) call `flag.Parse()` yourself.
+- A flag that cfggo doesn't define (e.g. a typo, or one registered by another
+  library on `flag.CommandLine`) prints usage and terminates the process
+  (`flag.ExitOnError`). Pass `cfggo.WithIgnoreUnknownVars()` to instead ignore
+  unrecognized flags (and their separate values) and continue:
+
+  ```go
+  config.Init(config, cfggo.WithIgnoreUnknownVars())
+  ```
+
+If you want cfggo to coexist with the idiomatic "register flags, call
+`flag.Parse()` once" pattern, register cfggo's flags on a flag set you control
+and own the single parse call yourself:
+
+```go
+config := &Config{ /* ... */ }
+
+// Register cfggo's flags on the process-global flag.CommandLine.
+config.Init(config, cfggo.WithStandardFlags())
+// (equivalent: config.Init(config, cfggo.WithFlagSet(flag.CommandLine)))
+
+// The host performs the one canonical parse; cfggo flags AND any other
+// library's flags (glog/klog, OpenTelemetry, testing, etc.) resolve together.
+flag.Parse()
+```
+
+When an external flag set is supplied via `WithFlagSet`/`WithStandardFlags`,
+cfggo registers its flags but does **not** parse during `Init()` the host owns
+the single `Parse()` call. cfggo flag values still propagate automatically as the
+host parses, because each flag writes directly into the config map.
+
 ## Hot Reloading
 
 One of the key features of `cfggo` is the ability to reload configuration at runtime. This is useful for applications that need to change configuration without restarting.
@@ -277,8 +320,14 @@ cfggo.Init(config, cfggo.WithSkipEnvironment())
 // Enable automatic saving of configuration on program exit
 cfggo.Init(config, cfggo.WithAutoSave())
 
-// Use a custom FlagSet
+// Register cfggo's flags on a custom FlagSet (host owns the Parse() call)
 cfggo.Init(config, cfggo.WithFlagSet(myFlagSet))
+
+// Register cfggo's flags on the global flag.CommandLine, then call flag.Parse()
+cfggo.Init(config, cfggo.WithStandardFlags())
+
+// Ignore (instead of exiting on) command-line flags cfggo doesn't define
+cfggo.Init(config, cfggo.WithIgnoreUnknownVars())
 
 // Add a validator during initialization
 cfggo.Init(config, cfggo.WithValidation("server_port", portValidator))

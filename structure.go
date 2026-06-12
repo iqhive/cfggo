@@ -32,8 +32,16 @@ type Structure struct {
 	autoSave           bool
 
 	FlagSet *flag.FlagSet
-
-	boolCallbacks map[string]func(bool)
+	// externalFlagSet is true when the caller supplied the FlagSet (e.g. via
+	// WithFlagSet / WithStandardFlags). In that mode cfggo registers its flags
+	// on the supplied set but does NOT parse it: the host owns the single
+	// canonical Parse() call, commonly flag.Parse()
+	externalFlagSet bool
+	// ignoreUnknownVars, when true, makes cfggo ignore command-line flags it
+	// doesn't define instead of treating them as an error. Enabled via
+	// WithIgnoreUnknownVars. The default (false) preserves the historical
+	// behaviour of exiting on unknown flags
+	ignoreUnknownVars bool
 
 	logger                 cfglogger.Logger
 	errorWrapper           errwrapper.ErrorWrapper
@@ -55,6 +63,9 @@ func DefaultValue[T any](x T) func() T {
 // that embeds Structure.
 func (c *Structure) Init(parent interface{}, options ...Option) {
 	if c.FlagSet == nil {
+		// Default behaviour: an unrecognized flag terminates the process with
+		// usage output (flag.ExitOnError). Use WithIgnoreUnknownVars to instead
+		// ignore flags cfggo doesn't define.
 		c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 		c.FlagSet.Usage = func() {
 			fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
@@ -122,7 +133,12 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	c.loadFromEnv()
 	c.createFlags()
-	c.parseFlags()
+	// When the caller supplied the flag set (e.g. flag.CommandLine), they own the
+	// single canonical Parse() call so cfggo flags resolve together with any
+	// other library's flags. Otherwise cfggo parses its own private set here
+	if !c.externalFlagSet {
+		c.parseFlags()
+	}
 
 	if err := c.Validate(); err != nil {
 		Logger.Warnf("Configuration validation failed: %v", err)

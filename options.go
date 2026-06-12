@@ -84,7 +84,7 @@ func WithFileConfigParamName(argName string) Option {
 		}
 	}
 	if filename == "" {
-		Logger.Warn("no filename found for argument (" + argName + ")")
+		Logger.Debug("no filename found for argument (" + argName + ")")
 		return func(c *Structure) error {
 			c.FlagSet.String(argName, "", "")
 			return nil
@@ -134,10 +134,54 @@ func WithAutoSave() Option {
 	}
 }
 
-// WithFlagSet sets a custom FlagSet for the configuration
+// WithFlagSet registers cfggo's flags on an existing *flag.FlagSet (commonly
+// flag.CommandLine) instead of creating a private one.
+//
+// In this mode cfggo does NOT parse the flag set during Init: the host owns the
+// single canonical parse, e.g.
+//
+//	config.Init(config, cfggo.WithFlagSet(flag.CommandLine))
+//	flag.Parse() // resolves cfggo flags AND any other library's flags together
+//
+// cfggo flag values still propagate automatically as the host parses, because
+// each flag is backed by a flag.Value that writes straight into the config map.
 func WithFlagSet(fs *flag.FlagSet) Option {
 	return func(c *Structure) error {
+		if fs == nil {
+			return c.WrapError(nil, 400, "WithFlagSet: flag set must not be nil")
+		}
 		c.FlagSet = fs
+		c.externalFlagSet = true
+		return nil
+	}
+}
+
+// WithStandardFlags registers cfggo's flags on the process-global
+// flag.CommandLine, so a single flag.Parse() in the host resolves cfggo's flags
+// alongside any flags registered by the standard library or other packages.
+//
+// It is a convenience wrapper around WithFlagSet(flag.CommandLine). As with
+// WithFlagSet, cfggo does not parse during Init; the host must call
+// flag.Parse() exactly once
+func WithStandardFlags() Option {
+	return WithFlagSet(flag.CommandLine)
+}
+
+// WithIgnoreUnknownVars makes cfggo ignore command-line flags it does not
+// define instead of treating them as an error.
+//
+// By default cfggo uses flag.ExitOnError for its private flag set, so an
+// unrecognized flag prints usage and terminates the process. Enabling this
+// option switches the private set to flag.ContinueOnError and drops any
+// unrecognized flags (and their separate values) before parsing, allowing cfggo
+// to coexist with flags owned by other libraries or to tolerate typos.
+//
+// This affects only cfggo's own (private) flag parsing. When an external flag
+// set is supplied via WithFlagSet/WithStandardFlags, the host owns parsing and
+// is responsible for its own error-handling policy.
+func WithIgnoreUnknownVars() Option {
+	return func(c *Structure) error {
+		c.ignoreUnknownVars = true
 		return nil
 	}
 }

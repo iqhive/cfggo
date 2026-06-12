@@ -15,6 +15,19 @@ type ConfigVar struct {
 	Name   string
 	Want   reflect.Type
 	Setter func(interface{}) error
+	// IsBool marks this flag as boolean so the standard flag package treats it
+	// like the built-in bool flags (i.e. "--flag" without a value, and
+	// "--flag=true"/"--flag=false"). It also allows boolean values to be
+	// propagated to the config map during Parse, no matter which flag set
+	// (private or flag.CommandLine) performs the parsing.
+	IsBool bool
+}
+
+// IsBoolFlag reports whether this flag is boolean. The standard library's flag
+// package looks for this method to decide whether the flag may be used without a
+// following value.
+func (d *ConfigVar) IsBoolFlag() bool {
+	return d.IsBool
 }
 
 // Set implements flag.Value: converts s to the target type then calls Setter.

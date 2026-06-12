@@ -4,7 +4,7 @@ import (
 	"flag"
 	"os"
 	"reflect"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/iqhive/cfggo/internal/flags"
@@ -28,22 +28,19 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 		return
 	}
 
-	// Special handling for boolean flags
+	// Special handling for boolean flags: register a bool-aware ConfigVar so the
+	// value propagates to the config map during Parse (whether cfggo parses its
+	// own private FlagSet or the host parses flag.CommandLine), and so the
+	// standard flag package allows the "--flag" / "--flag=true" forms.
 	if boolVal, isBool := defaultValue.(bool); isBool {
 		c.configData[configVarName] = boolVal
-		boolPtr := &boolVal
-
-		boolCallback := func(parsedValue bool) {
-			// parseFlags already holds the lock when invoking callbacks
-			c.configData[configVarName] = parsedValue
-			c.changed = true
+		dvar := &flags.ConfigVar{
+			Name:   configVarName,
+			Want:   reflect.TypeOf(boolVal),
+			Setter: c.createSetter(configVarName),
+			IsBool: true,
 		}
-
-		if c.boolCallbacks == nil {
-			c.boolCallbacks = make(map[string]func(bool))
-		}
-		c.boolCallbacks[configVarName] = boolCallback
-		c.FlagSet.BoolVar(boolPtr, configVarName, boolVal, configDescription)
+		c.FlagSet.Var(dvar, configVarName, configDescription)
 		return
 	}
 
@@ -109,6 +106,17 @@ func (c *Structure) parseFlags() {
 
 	args := flags.FilterTestFlags(os.Args[1:])
 
+	// When WithIgnoreUnknownVars is enabled, only parse the flags cfggo knows
+	// about. Flags owned by other libraries or simple typos are filtered out so
+	// they never cause a parse failure (or a hard process exit). Otherwise the
+	// default flag.ExitOnError behaviour applies and an unknown flag aborts
+	if c.ignoreUnknownVars {
+		if !c.externalFlagSet {
+			c.FlagSet.Init(c.FlagSet.Name(), flag.ContinueOnError)
+		}
+		args = c.filterKnownFlags(args)
+	}
+
 	// Temporarily release the lock during parsing to avoid deadlocks with Set().
 	configMutex.Unlock()
 	var parseErr error
@@ -117,22 +125,79 @@ func (c *Structure) parseFlags() {
 	}
 	configMutex.Lock()
 
-	if c.boolCallbacks != nil && parseErr == nil {
-		c.FlagSet.Visit(func(f *flag.Flag) {
-			if callback, exists := c.boolCallbacks[f.Name]; exists {
-				value, err := strconv.ParseBool(f.Value.String())
-				if err == nil {
-					callback(value)
-				} else {
-					Logger.Errorf("Failed to parse bool flag %s: %v", f.Name, err)
-				}
-			}
-		})
+	// Leftover positional arguments usually indicate a "--bool value" mistake
+	// (boolean flags require the "--bool=value" form) or a stray argument.
+	if parseErr == nil {
+		if rest := c.FlagSet.Args(); len(rest) > 0 {
+			Logger.Warnf("cfggo: ignoring unexpected positional arguments after flag parsing: %v "+
+				"(note: boolean flags must use the --flag=value form to set an explicit value)", rest)
+		}
 	}
 
 	if parseErr == nil {
 		c.changed = true
 	}
+}
+
+// filterKnownFlags returns only the argument tokens that correspond to flags
+// registered on c.FlagSet. Unknown flags (and their separate values) are
+// dropped so they neither abort parsing nor terminate the process. This lets
+// cfggo coexist with libraries that register flags elsewhere (e.g. on
+// flag.CommandLine) when cfggo is using its own private flag set
+func (c *Structure) filterKnownFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// "--" terminates flag parsing; pass it and everything after through.
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+
+		// Non-flag (positional) argument, or a bare "-".
+		if len(arg) < 2 || arg[0] != '-' {
+			out = append(out, arg)
+			continue
+		}
+
+		name := strings.TrimLeft(arg, "-")
+		hasInlineValue := false
+		if idx := strings.IndexByte(name, '='); idx != -1 {
+			name = name[:idx]
+			hasInlineValue = true
+		}
+
+		f := c.FlagSet.Lookup(name)
+		if f == nil {
+			Logger.Debugf("cfggo: ignoring unrecognized flag %q (not defined on this config)", arg)
+			// For "--unknown value", also drop the following value token so it is
+			// not misread as a positional argument (which would stop parsing)
+			if !hasInlineValue && i+1 < len(args) {
+				if next := args[i+1]; len(next) == 0 || next[0] != '-' {
+					i++
+				}
+			}
+			continue
+		}
+
+		out = append(out, arg)
+
+		// A known non-bool flag with no inline value consumes the next token
+		if !hasInlineValue && i+1 < len(args) && !isBoolFlag(f) {
+			out = append(out, args[i+1])
+			i++
+		}
+	}
+	return out
+}
+
+// isBoolFlag reports whether the given flag behaves like a boolean flag
+func isBoolFlag(f *flag.Flag) bool {
+	if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok {
+		return bf.IsBoolFlag()
+	}
+	return false
 }
 
 // GetFlagSet returns the FlagSet used by this configuration, initialising it

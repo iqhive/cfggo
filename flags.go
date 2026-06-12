@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -117,6 +118,12 @@ func (c *Structure) parseFlags() {
 		args = c.filterKnownFlags(args)
 	}
 
+	// Collapse "--bool value" into "--bool=value" for known boolean flags. The
+	// standard flag package stops parsing at the first non-flag token, so an
+	// uncollapsed boolean value (e.g. "--boolval true") would otherwise be read
+	// as a positional argument and silently drop every flag that follows it.
+	args = c.normalizeBoolFlagArgs(args)
+
 	// Temporarily release the lock during parsing to avoid deadlocks with Set().
 	configMutex.Unlock()
 	var parseErr error
@@ -190,6 +197,57 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 		}
 	}
 	return out
+}
+
+// normalizeBoolFlagArgs rewrites "--bool value" into "--bool=value" for any
+// known boolean flag whose value is supplied as a separate boolean-literal
+// token. This is required because Go's flag package treats a boolean flag's
+// following token as a positional argument and stops parsing at it, which would
+// otherwise cause every subsequent flag to be ignored (e.g. the trailing
+// "--stringval x" in "--boolval true --stringval x"). Tokens that are not
+// boolean literals are left untouched so genuinely stray arguments still
+// surface via the existing positional-argument warning.
+func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		// "--" terminates flag parsing; pass it and everything after through.
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+
+		// Non-flag (positional) argument, or a bare "-".
+		if len(arg) < 2 || arg[0] != '-' {
+			out = append(out, arg)
+			continue
+		}
+
+		name := strings.TrimLeft(arg, "-")
+		// Already in "--flag=value" form; nothing to collapse.
+		if strings.IndexByte(name, '=') != -1 {
+			out = append(out, arg)
+			continue
+		}
+
+		f := c.FlagSet.Lookup(name)
+		if f != nil && isBoolFlag(f) && i+1 < len(args) && isBoolLiteral(args[i+1]) {
+			out = append(out, arg+"="+args[i+1])
+			i++
+			continue
+		}
+
+		out = append(out, arg)
+	}
+	return out
+}
+
+// isBoolLiteral reports whether s is a value the flag package accepts for a
+// boolean flag (matches strconv.ParseBool: 1, t, T, TRUE, true, False, etc.).
+func isBoolLiteral(s string) bool {
+	_, err := strconv.ParseBool(s)
+	return err == nil
 }
 
 // isBoolFlag reports whether the given flag behaves like a boolean flag

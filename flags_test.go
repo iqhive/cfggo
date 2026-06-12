@@ -153,6 +153,34 @@ func TestBoolFlagWithValue(t *testing.T) {
 	os.Args = []string{"cmd"}
 }
 
+// TestBoolFlagValueDoesNotSwallowLaterFlags verifies that the "--bool value"
+// form does not stop flag parsing and drop subsequent flags (regression test:
+// "--boolval true --stringval x" must still set stringval).
+func TestBoolFlagValueDoesNotSwallowLaterFlags(t *testing.T) {
+	os.Args = []string{"cmd", "--boolfield", "true", "--string_field", "stringstring"}
+
+	type TestConfig struct {
+		Structure
+		BoolField   func() bool   `json:"boolfield"`
+		StringField func() string `json:"string_field"`
+	}
+
+	cfg := &TestConfig{
+		BoolField:   func() bool { return false },
+		StringField: func() string { return "default" },
+	}
+
+	cfg.Init(cfg)
+	os.Args = []string{"cmd"}
+
+	if !cfg.BoolField() {
+		t.Error("Expected --boolfield to be set to true")
+	}
+	if got := cfg.StringField(); got != "stringstring" {
+		t.Errorf("Expected string_field 'stringstring', got %q", got)
+	}
+}
+
 // TestBoolFlagEquals verifies the --flag=value form sets the bool explicitly.
 func TestBoolFlagEquals(t *testing.T) {
 	type TestConfig struct {

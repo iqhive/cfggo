@@ -12,11 +12,11 @@ func (c *Structure) loadFromEnv() {
 
 	// Get all configuration keys
 	var keys []string
-	configMutex.RLock()
+	c.configMutex.RLock()
 	for key := range c.configData {
 		keys = append(keys, key)
 	}
-	configMutex.RUnlock()
+	c.configMutex.RUnlock()
 
 	// Use internal env loader to get environment variables
 	envVars := internalEnvLoader.LoadEnvironmentVariables(keys)
@@ -24,9 +24,9 @@ func (c *Structure) loadFromEnv() {
 	// Process each environment variable found
 	for key, value := range envVars {
 		// Get the target type for this key
-		configMutex.RLock()
+		c.configMutex.RLock()
 		existing, exists := c.configData[key]
-		configMutex.RUnlock()
+		c.configMutex.RUnlock()
 		
 		if !exists {
 			continue
@@ -48,9 +48,9 @@ func (c *Structure) loadFromEnv() {
 			c.logDebugf("Set config %s from environment variable %s=(%v)", key, envVar, value)
 			
 			// Mark that configuration has changed
-			configMutex.Lock()
+			c.configMutex.Lock()
 			c.changed = true
-			configMutex.Unlock()
+			c.configMutex.Unlock()
 		}
 	}
 }

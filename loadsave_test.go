@@ -444,15 +444,8 @@ func TestAutoSaveDisabledByDefault(t *testing.T) {
 		t.Error("autoSave should be false by default")
 	}
 
-	// Verify configsToSave doesn't contain our config
-	found := false
-	for _, c := range configsToSave {
-		if c == &config.Structure {
-			found = true
-			break
-		}
-	}
-	if found {
-		t.Error("config should not be in configsToSave when autoSave is disabled")
+	// Without WithAutoSave there should be no auto-save context wired up.
+	if config.autoSaveCtx != nil {
+		t.Error("autoSaveCtx should be nil when autoSave is disabled")
 	}
 }

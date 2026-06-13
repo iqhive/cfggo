@@ -6,7 +6,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/iqhive/cfggo/internal/flags"
 )
@@ -17,8 +16,8 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 		c.InitSelf()
 	}
 
-	configMutex.Lock()
-	defer configMutex.Unlock()
+	c.configMutex.Lock()
+	defer c.configMutex.Unlock()
 
 	if c.configData == nil {
 		c.configData = make(map[string]interface{})
@@ -64,41 +63,20 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	}
 }
 
-// createSetter returns a closure that acquires configMutex and stores the value.
+// createSetter returns a closure that acquires the instance's configMutex and
+// stores the value.
 func (c *Structure) createSetter(key string) func(interface{}) error {
 	return func(value interface{}) error {
-		configMutex.Lock()
-		defer configMutex.Unlock()
+		c.configMutex.Lock()
+		defer c.configMutex.Unlock()
 		c.changed = true
 		return c.set(key, value)
 	}
 }
 
-// waitForFlagParsed blocks until the FlagSet has been parsed or a 2-second
-// timeout is reached.
-func (c *Structure) waitForFlagParsed() {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	timeout := time.After(2 * time.Second)
-	for {
-		select {
-		case <-ticker.C:
-			configMutex.RLock()
-			parsed := c.FlagSet != nil && c.FlagSet.Parsed()
-			configMutex.RUnlock()
-			if parsed {
-				return
-			}
-		case <-timeout:
-			c.log().Debug("Timeout waiting for flags to be parsed")
-			return
-		}
-	}
-}
-
 func (c *Structure) parseFlags() {
-	configMutex.Lock()
-	defer configMutex.Unlock()
+	c.configMutex.Lock()
+	defer c.configMutex.Unlock()
 
 	if c.FlagSet.Parsed() {
 		c.logInfof("parseFlags: flags already parsed %s", c.name)
@@ -125,12 +103,12 @@ func (c *Structure) parseFlags() {
 	args = c.normalizeBoolFlagArgs(args)
 
 	// Temporarily release the lock during parsing to avoid deadlocks with Set().
-	configMutex.Unlock()
+	c.configMutex.Unlock()
 	var parseErr error
 	if parseErr = c.FlagSet.Parse(args); parseErr != nil {
 		c.logErrorf("error parsing flags: %v", parseErr)
 	}
-	configMutex.Lock()
+	c.configMutex.Lock()
 
 	// Leftover positional arguments usually indicate a "--bool value" mistake
 	// (boolean flags require the "--bool=value" form) or a stray argument.

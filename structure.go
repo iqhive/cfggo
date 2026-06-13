@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -15,8 +16,6 @@ import (
 	"github.com/iqhive/cfggo/validcfg"
 )
 
-var configMutex sync.RWMutex
-
 var internalEnvLoader = env.NewLoader()
 
 // Structure is the type that configuration structs must embed.
@@ -30,6 +29,7 @@ type Structure struct {
 	parent             interface{}
 	configData         map[string]interface{}
 	autoSave           bool
+	autoSaveCtx        context.Context
 
 	FlagSet *flag.FlagSet
 	// externalFlagSet is true when the caller supplied the FlagSet (e.g. via
@@ -46,6 +46,11 @@ type Structure struct {
 	logger                 cfglogger.Logger
 	errorWrapper           errwrapper.ErrorWrapper
 	errorWrapperWithLogger errwrapper.ErrorWrapperWithLogger
+
+	// configMutex guards this instance's configData and flag/func wiring.
+	// It is per-instance so independent Structure values never contend on a
+	// single shared lock.
+	configMutex sync.RWMutex
 
 	validationMap   map[string]map[string]validcfg.Validator
 	validationMutex sync.RWMutex
@@ -143,6 +148,8 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	if err := c.Validate(); err != nil {
 		c.logWarnf("Configuration validation failed: %v", err)
 	}
+
+	c.startAutoSave()
 }
 
 // WrapError wraps an error using the instance's error wrapper.

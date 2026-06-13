@@ -317,8 +317,13 @@ cfggo.Init(config, cfggo.WithHTTPConfig(httpLoader, httpSaver))
 // Skip loading from environment variables
 cfggo.Init(config, cfggo.WithSkipEnvironment())
 
-// Enable automatic saving of configuration on program exit
-cfggo.Init(config, cfggo.WithAutoSave())
+// Save the configuration when a context is cancelled (e.g. on shutdown).
+// cfggo does not install signal handlers or call os.Exit; you own the context
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+cfggo.Init(config, cfggo.WithAutoSave(ctx))
+// Or save explicitly from your own shutdown path:
+//   err := config.SaveIfChanged()
 
 // Register cfggo's flags on a custom FlagSet (host owns the Parse() call)
 cfggo.Init(config, cfggo.WithFlagSet(myFlagSet))

@@ -50,9 +50,9 @@ func (c *Structure) Validate() error {
 		c.InitSelf()
 	}
 
-	configMutex.RLock()
+	c.configMutex.RLock()
 	c.validationMutex.RLock()
-	defer configMutex.RUnlock()
+	defer c.configMutex.RUnlock()
 	defer c.validationMutex.RUnlock()
 
 	var errs validcfg.ValidationErrors
@@ -82,9 +82,9 @@ func (c *Structure) ValidateKey(key string) error {
 		c.InitSelf()
 	}
 
-	configMutex.RLock()
+	c.configMutex.RLock()
 	c.validationMutex.RLock()
-	defer configMutex.RUnlock()
+	defer c.configMutex.RUnlock()
 	defer c.validationMutex.RUnlock()
 
 	validators, exists := c.validationMap[c.name]

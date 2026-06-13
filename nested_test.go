@@ -8,8 +8,9 @@ import (
 
 // Database is a nested (non-embedded) config sub-struct.
 type Database struct {
-	Host func() string `cfggo:"host" default:"localhost"`
-	Port func() int    `cfggo:"port" default:"5432"`
+	Host   func() string `cfggo:"host" default:"localhost" help:"database host"`
+	Port   func() int    `cfggo:"port" default:"5432"`
+	Secret func() string `cfggo:"-"`
 }
 
 // Server is another nested level to exercise deeper recursion.
@@ -83,5 +84,56 @@ func TestNestedStructFileOverrideAndReload(t *testing.T) {
 	}
 	if got := cfg.Server.DB.Port(); got != 2222 {
 		t.Errorf("after reload Server.DB.Port = %d, want %d", got, 2222)
+	}
+}
+
+func TestNestedStructEnvOverride(t *testing.T) {
+	SetupNewFlags()
+	defer RestoreFlagValues()
+	os.Args = []string{"cmd"}
+
+	os.Setenv("SERVER_DB_HOST", "env-db")
+	defer os.Unsetenv("SERVER_DB_HOST")
+
+	cfg := &NestedConfig{}
+	cfg.Init(cfg)
+
+	if got := cfg.Server.DB.Host(); got != "env-db" {
+		t.Errorf("Server.DB.Host = %q, want %q", got, "env-db")
+	}
+}
+
+func TestNestedStructHelpTag(t *testing.T) {
+	SetupNewFlags()
+	defer RestoreFlagValues()
+	os.Args = []string{"cmd"}
+
+	cfg := &NestedConfig{}
+	cfg.Init(cfg)
+
+	if got := cfg.GetHelpTag("server.db.host"); got != "database host" {
+		t.Errorf("GetHelpTag(server.db.host) = %q, want %q", got, "database host")
+	}
+	// A nested key without a help tag returns an empty string.
+	if got := cfg.GetHelpTag("server.db.port"); got != "" {
+		t.Errorf("GetHelpTag(server.db.port) = %q, want empty", got)
+	}
+}
+
+func TestNestedIgnoredFieldNotManaged(t *testing.T) {
+	SetupNewFlags()
+	defer RestoreFlagValues()
+	os.Args = []string{"cmd"}
+
+	cfg := &NestedConfig{}
+	cfg.Init(cfg)
+
+	// A field tagged cfggo:"-" is never added to the managed config map,
+	// at any nesting depth
+	if _, ok := cfg.Get("server.db.Secret"); ok {
+		t.Errorf("ignored field server.db.Secret should not be present in config map")
+	}
+	if _, ok := cfg.Get("server.db.-"); ok {
+		t.Errorf("ignored field should not be present under a %q key", "-")
 	}
 }

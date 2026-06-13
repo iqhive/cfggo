@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"context"
 	"flag"
 	"net/http"
 	"os"
@@ -126,10 +127,23 @@ func WithSkipEnvironment() Option {
 	}
 }
 
-// WithAutoSave enables automatic saving of configuration on program exit
-func WithAutoSave() Option {
+// WithAutoSave enables saving the configuration when ctx is cancelled.
+//
+// Unlike earlier versions, cfggo no longer installs a process-wide signal
+// handler or calls os.Exit. The application owns its shutdown lifecycle and
+// passes in a context — typically one derived from signal.NotifyContext:
+//
+//	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+//	defer stop()
+//	cfg.Init(cfg, cfggo.WithFileConfig("config.json"), cfggo.WithAutoSave(ctx))
+//
+// When ctx is cancelled, any changed configuration is saved once via the
+// configured ConfigHandler. For full control, call Save / SaveIfChanged
+// directly instead. A nil ctx disables auto-save.
+func WithAutoSave(ctx context.Context) Option {
 	return func(c *Structure) error {
-		c.autoSave = true
+		c.autoSave = ctx != nil
+		c.autoSaveCtx = ctx
 		return nil
 	}
 }

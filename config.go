@@ -12,8 +12,8 @@ func (c *Structure) Set(key string, value interface{}) error {
 		c.InitSelf()
 	}
 
-	configMutex.Lock()
-	defer configMutex.Unlock()
+	c.configMutex.Lock()
+	defer c.configMutex.Unlock()
 	c.changed = true
 	return c.set(key, value)
 }
@@ -42,15 +42,15 @@ func (c *Structure) Get(key string) (interface{}, bool) {
 		c.InitSelf()
 	}
 
-	configMutex.RLock()
-	defer configMutex.RUnlock()
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
 	value, exists := c.configData[key]
 	return value, exists
 }
 
 func (c *Structure) getAllKeys() []string {
-	configMutex.RLock()
-	defer configMutex.RUnlock()
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
 	keys := make([]string, 0, len(c.configData))
 	for key := range c.configData {
 		keys = append(keys, key)

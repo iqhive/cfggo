@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"testing"
@@ -217,7 +218,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	defer RestoreFlagValues()
 
 	// Use WithAutoSave to enable automatic saving for this test
-	config.Init(config, WithFileConfig("testdata/test.json"), WithAutoSave())
+	config.Init(config, WithFileConfig("testdata/test.json"), WithAutoSave(context.Background()))
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")

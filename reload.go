@@ -6,14 +6,14 @@ func (c *Structure) Reload() error {
 	var oldConfig map[string]interface{}
 
 	// Get a snapshot of the current configuration
-	configMutex.Lock()
+	c.configMutex.Lock()
 	oldConfig = make(map[string]interface{})
 	for k, v := range c.configData {
 		oldConfig[k] = v
 	}
 	// Reset the changed flag
 	c.changed = false
-	configMutex.Unlock()
+	c.configMutex.Unlock()
 
 	var err error
 
@@ -23,9 +23,9 @@ func (c *Structure) Reload() error {
 			c.logErrorf("Failed to reload configuration from file: %v", err)
 
 			// Rollback to old configuration on error
-			configMutex.Lock()
+			c.configMutex.Lock()
 			c.configData = oldConfig
-			configMutex.Unlock()
+			c.configMutex.Unlock()
 			return err
 		}
 	}
@@ -35,9 +35,9 @@ func (c *Structure) Reload() error {
 
 	// Check if flags have been parsed before calling parseFlags
 	var flagsParsed bool
-	configMutex.RLock()
+	c.configMutex.RLock()
 	flagsParsed = c.FlagSet != nil && c.FlagSet.Parsed()
-	configMutex.RUnlock()
+	c.configMutex.RUnlock()
 
 	// Reload from flags if they've been parsed
 	if flagsParsed {

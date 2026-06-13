@@ -3,19 +3,9 @@ package cfggo
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/signal"
 	"reflect"
 	"strings"
-	"sync"
-	"syscall"
 )
-
-var configsToSave []*Structure
-var configsToSaveMutex sync.Mutex
-var once sync.Once
-var signalChannel chan os.Signal
-var signalCleanupOnce sync.Once
 
 func (c *Structure) loadConfig(alreadyLocked bool) error {
 	if c.configHandler == nil {
@@ -26,8 +16,6 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 	if err != nil {
 		return c.WrapError(err, 0, "")
 	}
-
-	c.setupConfigSaver()
 
 	return c.loadJSONConfigFromBytes(data, alreadyLocked)
 }
@@ -45,8 +33,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 	}
 
 	if !alreadyLocked {
-		configMutex.Lock()
-		defer configMutex.Unlock()
+		c.configMutex.Lock()
+		defer c.configMutex.Unlock()
 	}
 
 	var processMap func(map[string]interface{}, string)
@@ -91,68 +79,74 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 	return nil
 }
 
-func (c *Structure) setupConfigSaver() {
-	if !c.autoSave {
+// startAutoSave launches, when WithAutoSave(ctx) was supplied, a single
+// goroutine that saves the configuration once the context is cancelled. cfggo
+// no longer installs a process-wide signal handler or calls os.Exit: the
+// application owns its shutdown lifecycle and passes in a context (commonly one
+// from signal.NotifyContext). When the context is never cancelled the goroutine
+// simply lives for the lifetime of the program.
+func (c *Structure) startAutoSave() {
+	if !c.autoSave || c.autoSaveCtx == nil {
 		return
 	}
-
-	configsToSaveMutex.Lock()
-	configsToSave = append(configsToSave, c)
-	configsToSaveMutex.Unlock()
-
-	once.Do(func() {
-		signalChannel = make(chan os.Signal, 1)
-		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
-		go func() {
-			defer func() {
-				signal.Stop(signalChannel)
-				close(signalChannel)
-			}()
-
-			<-signalChannel
-
-			// Snapshot the slice under the lock so a concurrent Init that is
-			// still appending cannot race with this iteration.
-			configsToSaveMutex.Lock()
-			snapshot := make([]*Structure, len(configsToSave))
-			copy(snapshot, configsToSave)
-			configsToSaveMutex.Unlock()
-
-			for _, config := range snapshot {
-				configMutex.RLock()
-				changed := config.changed
-				configMutex.RUnlock()
-				if changed {
-					config.log().Info("Saving config before exit...")
-					if err := config.saveConfig(); err != nil {
-						config.logErrorf("Error saving configuration: %v", err)
-					}
-				}
-			}
-			os.Exit(0)
-		}()
-	})
-}
-
-// CleanupSignalHandler allows tests and applications to release the signal
-// handler installed by setupConfigSaver.
-func CleanupSignalHandler() {
-	signalCleanupOnce.Do(func() {
-		if signalChannel != nil {
-			signal.Stop(signalChannel)
-			close(signalChannel)
-			signalChannel = nil
+	ctx := c.autoSaveCtx
+	go func() {
+		<-ctx.Done()
+		if err := c.SaveIfChanged(); err != nil {
+			c.logErrorf("cfggo: auto-save on context cancellation failed: %v", err)
 		}
-	})
+	}()
 }
+
+// Save writes the current configuration through the configured ConfigHandler
+// It is a no-op (returning nil) when no handler is configured
+func (c *Structure) Save() error {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+	return c.saveConfig()
+}
+
+// SaveIfChanged saves the configuration only when it has been modified since it
+// was last loaded or saved, clearing the dirty flag on a successful save
+// It is the building block applications should call from their own shutdown path
+func (c *Structure) SaveIfChanged() error {
+	if c.parent == nil {
+		c.InitSelf()
+	}
+
+	c.configMutex.RLock()
+	changed := c.changed
+	c.configMutex.RUnlock()
+	if !changed {
+		return nil
+	}
+
+	c.log().Info("cfggo: saving changed configuration")
+	if err := c.saveConfig(); err != nil {
+		return err
+	}
+
+	c.configMutex.Lock()
+	c.changed = false
+	c.configMutex.Unlock()
+	return nil
+}
+
+// CleanupSignalHandler is retained for backwards compatibility and now does
+// nothing: cfggo no longer installs a process-wide signal handler for
+// auto-save. Drive shutdown saves via the context passed to WithAutoSave, or
+// call Save / SaveIfChanged explicitly
+// Deprecated: this is a no-op and will be removed in a future version.
+func CleanupSignalHandler() {}
 
 func (c *Structure) GetJSONBytes() []byte {
 	if c.parent == nil {
 		c.InitSelf()
 	}
 
-	configMutex.RLock()
-	defer configMutex.RUnlock()
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
 	data, _ := json.Marshal(c.configData)
 	return data
 }
@@ -167,7 +161,7 @@ func (c *Structure) String() string {
 	maxKeyLen := 0
 	maxValueLen := 0
 
-	configMutex.RLock()
+	c.configMutex.RLock()
 	values := make(map[string]string, len(c.configData))
 	for key, value := range c.configData {
 		if len(key) > maxKeyLen {
@@ -179,7 +173,7 @@ func (c *Structure) String() string {
 			maxValueLen = len(valueStr)
 		}
 	}
-	configMutex.RUnlock()
+	c.configMutex.RUnlock()
 
 	for key, valueStr := range values {
 		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
@@ -205,15 +199,44 @@ func (c *Structure) GetHelpTag(key string) string {
 	if v.Kind() != reflect.Struct {
 		return ""
 	}
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		configVarName := c.getConfigNameFromField(field)
-		if configVarName == key {
-			return field.Tag.Get("help")
+
+	// Walk recursively so `help` tags on func fields inside nested
+	// (non-embedded) structs resolve against the same dotted keys that
+	// setupConfigData/createFlags use
+	var walk func(reflect.Type, string) (string, bool)
+	walk = func(t reflect.Type, prefix string) (string, bool) {
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
+				continue
+			}
+
+			configVarName := c.getConfigNameFromField(field)
+			if configVarName == "" || configVarName == "-" {
+				continue
+			}
+
+			fullKey := configVarName
+			if prefix != "" {
+				fullKey = prefix + "." + configVarName
+			}
+
+			if field.Type.Kind() == reflect.Struct {
+				if help, ok := walk(field.Type, fullKey); ok {
+					return help, true
+				}
+				continue
+			}
+
+			if fullKey == key {
+				return field.Tag.Get("help"), true
+			}
 		}
+		return "", false
 	}
-	return ""
+
+	help, _ := walk(v.Type(), "")
+	return help
 }
 
 // shouldIgnoreField returns true when a config key corresponds to a struct
@@ -231,8 +254,14 @@ func (c *Structure) shouldIgnoreField(key string) bool {
 	checkStruct = func(t reflect.Type, prefix string) bool {
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
+			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
+				continue
+			}
 			configVarName := c.getConfigNameFromField(field)
 
+			// A field tagged "-" has no config name, so match the explicit key
+			// a caller would use for it (its Go field name) under the dotted
+			// prefix built from the ancestor structs' config names.
 			if configVarName == "-" {
 				fieldName := field.Name
 				if prefix != "" {
@@ -241,12 +270,15 @@ func (c *Structure) shouldIgnoreField(key string) bool {
 				if key == fieldName {
 					return true
 				}
+				continue
 			}
 
-			if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(Structure{}) {
-				nestedPrefix := field.Name
+			// Recurse into nested structs using the config-name prefix so the
+			// keys here line up with those produced by setupConfigData.
+			if field.Type.Kind() == reflect.Struct {
+				nestedPrefix := configVarName
 				if prefix != "" {
-					nestedPrefix = prefix + "." + nestedPrefix
+					nestedPrefix = prefix + "." + configVarName
 				}
 				if checkStruct(field.Type, nestedPrefix) {
 					return true
@@ -264,9 +296,9 @@ func (c *Structure) saveConfig() error {
 		return nil
 	}
 
-	configMutex.RLock()
+	c.configMutex.RLock()
 	data, err := json.Marshal(c.configData)
-	configMutex.RUnlock()
+	c.configMutex.RUnlock()
 	if err != nil {
 		return c.WrapError(err, 0, "")
 	}

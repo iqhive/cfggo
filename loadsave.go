@@ -213,8 +213,10 @@ func (c *Structure) String() string {
 // once during Init rather than re-walking the struct on every call
 func (c *Structure) GetHelpTag(key string) string {
 	c.ensureInit()
-	if info, ok := c.fields[key]; ok {
-		return info.Help
+	if c.plan != nil {
+		if leaf, ok := c.plan.byKey[key]; ok {
+			return leaf.info.Help
+		}
 	}
 	return ""
 }
@@ -223,7 +225,7 @@ func (c *Structure) GetHelpTag(key string) string {
 // field tagged with `cfggo:"-"` (or its aliases). It reads from the metadata
 // computed once during Init()
 func (c *Structure) shouldIgnoreField(key string) bool {
-	return c.ignoredFields[key]
+	return c.plan != nil && c.plan.ignored[key]
 }
 
 func (c *Structure) saveConfig() error {

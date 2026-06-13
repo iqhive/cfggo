@@ -81,8 +81,14 @@ func (c *Structure) Diagnose() Diagnostics {
 	valid := true
 	diags := make([]KeyDiagnostic, 0, len(keys))
 	for _, key := range keys {
-		info := c.fields[key]
-		_, recognized := c.fields[key]
+		var info fieldInfo
+		var recognized bool
+		if c.plan != nil {
+			if leaf, ok := c.plan.byKey[key]; ok {
+				info = leaf.info
+				recognized = true
+			}
+		}
 		kd := KeyDiagnostic{
 			Key:        key,
 			Value:      data[key],
@@ -147,12 +153,16 @@ func (d Diagnostics) String() string {
 func (c *Structure) ConfigReference() string {
 	c.ensureInit()
 
-	infos := make([]fieldInfo, 0, len(c.fields))
-	for _, info := range c.fields {
-		if !info.IsAccessor {
-			continue
+	var infos []fieldInfo
+	if c.plan != nil {
+		infos = make([]fieldInfo, 0, len(c.plan.leaves))
+		for i := range c.plan.leaves {
+			info := c.plan.leaves[i].info
+			if !info.IsAccessor {
+				continue
+			}
+			infos = append(infos, info)
 		}
-		infos = append(infos, info)
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Key < infos[j].Key })
 

@@ -13,6 +13,7 @@ import (
 // NewFlag creates a new configuration item, using the type of the defaultValue
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {
 	c.ensureInit()
+	c.ensureFlagSet()
 
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
@@ -252,8 +253,27 @@ func isBoolFlag(f *flag.Flag) bool {
 }
 
 // GetFlagSet returns the FlagSet used by this configuration, initialising it
-// via InitSelf if necessary.
+// via InitSelf if necessary. When the configuration was created WithoutFlags,
+// the private flag set is created lazily on first access so the returned value
+// is never nil.
 func (c *Structure) GetFlagSet() *flag.FlagSet {
 	c.ensureInit()
+	c.ensureFlagSet()
 	return c.FlagSet
+}
+
+// ensureFlagSet lazily creates the private flag set. It is a no-op once a set
+// exists (including a caller-supplied external one). This backs the WithoutFlags
+// path, where Init deliberately skips creating the set, while keeping the
+// exported FlagSet field and GetFlagSet/NewFlag usable if a caller still wants
+// flags afterwards
+func (c *Structure) ensureFlagSet() {
+	if c.FlagSet != nil {
+		return
+	}
+	c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	c.FlagSet.Usage = func() {
+		fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
+		c.FlagSet.PrintDefaults()
+	}
 }

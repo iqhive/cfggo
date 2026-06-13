@@ -200,6 +200,23 @@ func WithIgnoreUnknownVars() Option {
 	}
 }
 
+// WithoutFlags disables command-line flag support entirely. cfggo will not
+// create a private flag.FlagSet or register a flag.Value per configuration key,
+// and will not parse os.Args during Init. Use it for programs that configure
+// cfggo purely from files, environment variables, and struct defaults: it
+// removes the flag system's setup cost from Init()
+//
+// It has no effect when an external flag set is supplied via
+// WithFlagSet/WithStandardFlags, since that explicitly opts into flag support
+// (the host owns parsing). A caller can still obtain a flag set later via
+// GetFlagSet, which creates one lazily on demand
+func WithoutFlags() Option {
+	return func(c *Structure) error {
+		c.noFlags = true
+		return nil
+	}
+}
+
 // WithValidation adds a validator for a configuration key
 func WithValidation(key string, validator validcfg.Validator) Option {
 	return func(c *Structure) error {

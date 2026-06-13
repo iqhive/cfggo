@@ -41,6 +41,11 @@ type Structure struct {
 	// WithIgnoreUnknownVars. The default (false) preserves the historical
 	// behaviour of exiting on unknown flags
 	ignoreUnknownVars bool
+	// noFlags, when true (via WithoutFlags), skips command-line flag
+	// registration and parsing entirely. Programs that configure cfggo purely
+	// from files/env/defaults avoid building a flag.FlagSet and a flag.Value
+	// per key. It is mutually exclusive with WithFlagSet/WithStandardFlags
+	noFlags bool
 
 	// lenient, when true (via WithLenientLoad), downgrades configuration load
 	// and validation failures during Init from hard errors to logged warnings.
@@ -56,13 +61,13 @@ type Structure struct {
 	logger       cfglogger.Logger
 	errorWrapper errwrapper.ErrorWrapper
 
-	// fields holds precomputed metadata for every leaf (non-struct) config
-	// field, keyed by its dotted config key. It is built once during Init so
-	// help-tag lookups, the config reference, and key-recognition checks do not
-	// repeatedly walk the parent struct via reflection. ignoredFields records
-	// the dotted keys of fields tagged `cfggo:"-"`
-	fields        map[string]fieldInfo
-	ignoredFields map[string]bool
+	// plan is the cached, reflection-free blueprint for the parent struct's
+	// type: every leaf field's dotted key, help/default tags, accessor type,
+	// and field-index path. It is computed once per Go type and shared across
+	// all Structure instances of that type, so repeated Init calls (and
+	// help-tag lookups, the config reference, key-recognition checks) do no
+	// per-field tag parsing or StructField copying.
+	plan *structPlan
 
 	// configMutex guards this instance's configData, provenance, and flag/func
 	// wiring. It is per-instance so independent Structure values never contend
@@ -93,17 +98,6 @@ func DefaultValue[T any](x T) func() T {
 // Init initialises the configuration and returns an error on failure
 // parent must be a pointer to the struct that embeds Structure
 func (c *Structure) Init(parent interface{}, options ...Option) error {
-	if c.FlagSet == nil {
-		// Default behaviour: an unrecognized flag terminates the process with
-		// usage output (flag.ExitOnError). Use WithIgnoreUnknownVars to instead
-		// ignore flags cfggo doesn't define.
-		c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-		c.FlagSet.Usage = func() {
-			fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
-			c.FlagSet.PrintDefaults()
-		}
-	}
-
 	if c.validationMap == nil {
 		c.validationMap = make(map[string]map[string]validcfg.Validator)
 	}
@@ -145,10 +139,12 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 		}
 	}
 
-	c.buildFieldMeta()
-	c.setupConfigData()
-	c.setDefaultsFromTags()
-	c.replaceConfigFuncs()
+	parentType := reflect.TypeOf(c.parent)
+	for parentType.Kind() == reflect.Ptr {
+		parentType = parentType.Elem()
+	}
+	c.plan = planForType(parentType)
+	c.applyPlan()
 
 	if c.configHandler != nil {
 		if err := c.loadConfig(false); err != nil {
@@ -163,11 +159,27 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 	}
 
 	c.loadFromEnv()
-	c.createFlags()
-	// When the caller supplied the flag set (e.g. flag.CommandLine), they own the
-	// single canonical Parse() call so cfggo flags resolve together with any
-	// other library's flags. Otherwise cfggo parses its own private set here
-	if !c.externalFlagSet {
+
+	// Flag handling. When the caller supplied the flag set (e.g.
+	// flag.CommandLine) they own the single canonical Parse() call, so cfggo
+	// only registers its flags and lets the host parse. Otherwise cfggo creates
+	// a private set, registers, and parses it here. WithoutFlags skips the
+	// private flag set entirely (no FlagSet allocation, no per-key flag.Value)
+	// for programs that configure purely from files, env, and defaults.
+	if c.externalFlagSet {
+		c.createFlags()
+	} else if !c.noFlags {
+		if c.FlagSet == nil {
+			// Default behaviour: an unrecognized flag terminates the process
+			// with usage output (flag.ExitOnError). Use WithIgnoreUnknownVars to
+			// instead ignore flags cfggo doesn't define.
+			c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+			c.FlagSet.Usage = func() {
+				fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
+				c.FlagSet.PrintDefaults()
+			}
+		}
+		c.createFlags()
 		c.parseFlags()
 	}
 

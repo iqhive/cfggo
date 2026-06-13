@@ -39,8 +39,10 @@ github.com/iqhive/cfggo/
   errors.go           # Sentinel errors (ErrUnknownKey/ErrNoHandler/ErrSource) + ErrorCode
   provenance.go       # Source enum + Source()/Sources()/Explain() value provenance
   watch.go            # OnChange change-notification callbacks
-  fields.go           # Reflection helpers: setupConfigData, replaceConfigFuncs,
-                      #   setDefaultsFromTags, getConfigNameFromField, createFlags
+  plan.go             # Cached per-type struct plan (planForType/applyPlan),
+                      #   typed accessors + readTyped, reflection-free Init wiring
+  fieldmeta.go        # fieldInfo metadata type + unrecognizedKeys
+  fields.go           # createFlags (flag registration from the config map)
   options.go          # Option type + all With* constructors
   flags.go            # Flag registration/parsing (delegates to internal/flags)
   env.go              # Env loading (delegates to internal/env)

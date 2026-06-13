@@ -640,11 +640,32 @@ it with `errors.Is` (e.g. `errors.Is(err, cfggo.ErrSource)`).
 
 ## Performance
 
-Accessor calls are cheap: each one takes a read lock and returns a **cached,
-already-converted** value — no parsing or reflection happens per call. Conversion
-and validation occur once, at load/reload time. In practice a read is on the
-order of ‹~XX ns/op› (see `bench_test.go`), dominated by the mutex; if you read
-the same value in a tight hot loop, hoist it into a local variable.
+cfggo's runtime performance is exceptional: **accessor function calls have virtually zero overhead**. Each call does only two things — grabs a read lock and returns an already-cached, type-safe value. There is **no reflection or parsing** during normal use: all configuration values are converted, validated, and stored at load/reload time, not on access.
+
+**Numbers speak:** in [our benchmarks](benchmarks/comparison), accessing an integer or string value via a cfggo accessor takes about **10–14 ns/op** (nanoseconds per operation), with zero allocations — the cost is only that of a read-locked pointer dereference. For comparison:
+
+- cfggo: **~10 ns/op** (0 allocs/op) for reads
+- Viper: ~130–135 ns/op (2 allocs/op)
+- koanf: ~65–175 ns/op (1–2 allocs/op)
+- envconfig: (for static fields) as low as 0.3 ns/op (no locking, not reloadable, environment vars only)
+
+For any runtime-intensive workload — configuration access in request handlers, hot code paths, or metrics polling — **cfggo delivers near-zero latency**. If you need to access a config value repeatedly in a hot loop, you can hoist it to a local variable to eliminate even the mutex overhead:
+
+```go
+port := config.ServerPort()
+for i := 0; i < N; i++ {
+    doSomething(port)
+}
+```
+
+> ⚡️ **cfggo accessors are safe for concurrent use.** Hot reloading, if triggered, seamlessly updates the cached values for new calls, with no race conditions or locking issues.
+
+See more in [bench_test.go](benchmarks/comparison) and the results below:
+
+```
+BenchmarkReadInt_Cfggo-64      9.97 ns/op      0 B/op    0 allocs/op
+BenchmarkReadString_Cfggo-64   13.55 ns/op     0 B/op    0 allocs/op
+```
 
 ## Advanced Features
 

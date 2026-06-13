@@ -48,13 +48,20 @@ type TestConfig struct {
 	TimeField         func() time.Time              `cfggo:"time_field" help:"Test field"`
 }
 
-var originalArgs []string
+// pristineArgs captures the test binary's startup arguments once, before any
+// test mutates os.Args. RestoreFlagValues always returns to this immutable
+// baseline. Previously a mutable global was re-saved on every SetupNewFlags
+// call, and because NewTestConfig calls SetupNewFlags reentrantly (after a
+// test had already injected simulated CLI flags), the deferred restore would
+// "restore" os.Args back to the polluted value and leak flags like
+// -string_field into later tests, aborting the whole binary during auto-parse
+var pristineArgs = append([]string(nil), os.Args...)
 
 func SetupNewFlags() {
-	// Only save and restore args, don't manipulate flag.CommandLine anymore
-	originalArgs = os.Args
-
-	// Find the index of "--" in os.Args
+	// Strip everything up to and including a "--" separator so a
+	// `go test ... -- --appflag` invocation exposes only the program args
+	// Operate on the current os.Args so flags a test injects before building a
+	// config (and thus before NewTestConfig's reentrant call) are preserved
 	args := os.Args
 	for i, arg := range args {
 		if arg == "--" {
@@ -66,8 +73,8 @@ func SetupNewFlags() {
 }
 
 func RestoreFlagValues() {
-	// Only restore args
-	os.Args = originalArgs
+	// Always restore to the pristine startup args, never a polluted snapshot
+	os.Args = append([]string(nil), pristineArgs...)
 }
 
 func NewTestConfig() *TestConfig {

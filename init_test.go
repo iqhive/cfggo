@@ -5,29 +5,6 @@ import (
 	"testing"
 )
 
-// initMyParentConfig embeds Structure to exercise InitMyParent.
-type initMyParentConfig struct {
-	Structure
-	Host func() string `cfggo:"host" default:"localhost"`
-}
-
-// TestInitMyParentDoesNotPanic guards against a regression where InitMyParent
-// dereferenced the wrong reflect field and panicked ("Elem of invalid type
-// string") for every caller. It must now fail gracefully with an error.
-func TestInitMyParentDoesNotPanic(t *testing.T) {
-	cfg := &initMyParentConfig{}
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("InitMyParent panicked: %v", r)
-		}
-	}()
-
-	err := cfg.InitMyParent()
-	if err == nil {
-		t.Fatal("InitMyParent should return an actionable error, got nil")
-	}
-}
-
 // envPrefixConfig is used to verify WithEnvConfig strips the prefix correctly.
 type envPrefixConfig struct {
 	Structure
@@ -38,6 +15,12 @@ type envPrefixConfig struct {
 // source converted "_" to "." before stripping the prefix, so MYAPP_PORT
 // produced the junk key "myapp.port" instead of mapping to "port".
 func TestWithEnvConfigStripsPrefix(t *testing.T) {
+	// Isolate from os.Args pollution leaked by other tests: these tests
+	// auto-parse os.Args, and a stray flag would abort the whole binary
+	oldArgs := os.Args
+	os.Args = []string{"cmd"}
+	defer func() { os.Args = oldArgs }()
+
 	t.Setenv("MYAPP_PORT", "9999")
 
 	cfg := &envPrefixConfig{}
@@ -57,7 +40,13 @@ func TestWithEnvConfigStripsPrefix(t *testing.T) {
 
 // TestWithEnvConfigNoPrefix verifies the no-prefix path still works.
 func TestWithEnvConfigNoPrefix(t *testing.T) {
-	// Guard against a leftover var from another test affecting this one.
+	// Isolate from os.Args pollution leaked by other tests: these tests
+	// auto-parse os.Args, and a stray flag would abort the whole binary
+	oldArgs := os.Args
+	os.Args = []string{"cmd"}
+	defer func() { os.Args = oldArgs }()
+
+	// Guard against leftover vars from another test affecting this one
 	os.Unsetenv("MYAPP_PORT")
 	t.Setenv("PORT", "4321")
 

@@ -34,7 +34,7 @@ github.com/iqhive/cfggo/
 
   # Root package `cfggo` (public API)
   doc.go              # Package overview + usage examples
-  structure.go        # Structure type + lifecycle (Init/InitSelf/InitMyParent, all return error)
+  structure.go        # Structure type + lifecycle (Init/InitSelf return error)
   config.go           # Get / Set / set (private) / applyLoaded / getAllKeys
   errors.go           # Sentinel errors (ErrUnknownKey/ErrNoHandler/ErrSource) + ErrorCode
   provenance.go       # Source enum + Source()/Sources()/Explain() value provenance

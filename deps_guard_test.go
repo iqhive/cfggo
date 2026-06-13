@@ -48,10 +48,18 @@ func TestNoThirdPartyConfigImports(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			// Skip hidden directories (e.g. .git) and any vendored tree.
-			name := d.Name()
-			if path != root && (strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata") {
-				return filepath.SkipDir
+			if path != root {
+				// Skip hidden directories (e.g. .git) and any vendored tree
+				name := d.Name()
+				if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" {
+					return filepath.SkipDir
+				}
+				// Skip nested modules: a subdirectory with its own go.mod is an
+				// independent module whose dependency graph is intentionally
+				// separate from cfggo's (eg benchmarks, which will import)
+				if _, statErr := os.Stat(filepath.Join(path, "go.mod")); statErr == nil {
+					return filepath.SkipDir
+				}
 			}
 			return nil
 		}

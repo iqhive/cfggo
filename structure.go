@@ -18,7 +18,7 @@ import (
 var internalEnvLoader = env.NewLoader()
 
 // Structure is the type that configuration structs must embed.
-// All lifecycle methods (Init, InitSelf, InitMyParent) live here.
+// All lifecycle methods (Init, InitSelf) live here
 type Structure struct {
 	name               string
 	configHandler      sources.ConfigHandler

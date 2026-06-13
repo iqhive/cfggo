@@ -598,7 +598,7 @@ if err := config.ReloadConfig(); err != nil {
 
 ### Handling initialisation errors
 
-`Init` (and `InitSelf` / `InitMyParent`) returns an `error` instead of
+`Init` (and `InitSelf`) returns an `error` instead of
 terminating the process, so you can handle initialisation failures yourself:
 
 ```go
@@ -779,7 +779,7 @@ future major version. Prefer the replacements:
 
 | Deprecated | Use instead |
 |---|---|
-| `InitE` / `InitSelfE` / `InitMyParentE` | `Init` / `InitSelf` / `InitMyParent` now return the error directly |
+| `InitE` / `InitSelfE` | `Init` / `InitSelf` now return the error directly |
 | `CleanupSignalHandler()` (now a no-op) | `WithAutoSave(ctx)` or call `Save`/`SaveIfChanged` from your own shutdown path |
 | `WithErrorWrapperWithLogger` / `WrapErrorWithLogging` | `WithErrorWrapper` and log the returned error yourself |
 | `convert.ConvertValue` / `cfggo.ConvertValue` | `config.Set(key, value)` |
@@ -833,7 +833,7 @@ you own and you make the single `flag.Parse()` call. See
 [Parsing model and interop](#parsing-model-and-interop-with-the-standard-flag-package).
 
 **Does `Init` exit the process on failure?**
-No. `Init` (and `InitSelf` / `InitMyParent`) returns an `error` — handle it
+No. `Init` (and `InitSelf`) returns an `error` — handle it
 yourself. (The old `InitE` variants are deprecated; `Init` now returns the error
 directly.)
 

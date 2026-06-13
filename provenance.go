@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/iqhive/cfggo/sources"
 )
@@ -98,6 +99,9 @@ func (c *Structure) Sources() map[string]Source {
 // Explain returns a human-readable, key-sorted dump of every configuration
 // value annotated with where it came from (and the field's help text, if any).
 // It is the recommended starting point for debugging "why is this value X?".
+//
+// Values for fields tagged `secret:"true"` are masked,
+// so the output is safe to log or paste into a bug report
 func (c *Structure) Explain() string {
 	c.ensureInit()
 
@@ -105,18 +109,14 @@ func (c *Structure) Explain() string {
 	keys := make([]string, 0, len(c.configData))
 	values := make(map[string]string, len(c.configData))
 	srcs := make(map[string]Source, len(c.configData))
-	maxKeyLen, maxValueLen := 0, 0
 	for key, value := range c.configData {
 		keys = append(keys, key)
-		valueStr := fmt.Sprintf("%v", value)
-		values[key] = valueStr
+		if c.isSecretKey(key) {
+			values[key] = maskedValue
+		} else {
+			values[key] = fmt.Sprintf("%v", value)
+		}
 		srcs[key] = c.provenance[key]
-		if len(key) > maxKeyLen {
-			maxKeyLen = len(key)
-		}
-		if len(valueStr) > maxValueLen {
-			maxValueLen = len(valueStr)
-		}
 	}
 	c.configMutex.RUnlock()
 
@@ -124,14 +124,15 @@ func (c *Structure) Explain() string {
 
 	var sb strings.Builder
 	sb.WriteString(c.name + ":\n")
+	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
 	for _, key := range keys {
-		valueStr := values[key]
-		valueSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
-		fmt.Fprintf(&sb, "%*s: %s %s(from %s)", maxKeyLen, key, valueStr, valueSpacer, srcs[key])
-		if help := c.GetHelpTag(key); help != "" {
-			sb.WriteString("  // " + help)
+		help := c.GetHelpTag(key)
+		if help != "" {
+			fmt.Fprintf(tw, "%s\t%s\t(from %s)\t// %s\n", key, values[key], srcs[key], help)
+		} else {
+			fmt.Fprintf(tw, "%s\t%s\t(from %s)\t\n", key, values[key], srcs[key])
 		}
-		sb.WriteString("\n")
 	}
+	tw.Flush()
 	return sb.String()
 }

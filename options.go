@@ -247,7 +247,16 @@ func WithConfigHandler(handler sources.ConfigHandler) Option {
 	}
 }
 
-// WithLogger sets a custom logger for this configuration instance
+// WithLogger sets a custom logger for this configuration instance.
+//
+// During Init cfggo binds the configuration's name onto the logger as a
+// "config" attribute when the logger supports it (the built-in DefaultLogger
+// and a raw *slog.Logger both do), so every line is attributable to the
+// instance
+//
+// Note: SetLogLevel adjusts only the global logger.
+// An instance logger supplied here controls its own verbosity;
+// cfggo does not change its level
 func WithLogger(logger cfglogger.Logger) Option {
 	return func(c *Structure) error {
 		c.logger = logger

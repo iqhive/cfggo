@@ -31,9 +31,11 @@ func (c *Structure) Reload() error {
 		if err = c.loadConfig(false); err != nil {
 			c.log().Error("cfggo: failed to reload configuration source", "err", err)
 
-			// Rollback to old configuration on error
+			// Rollback to old configuration on error. Restore provenance too so
+			// it stays consistent with the values after a failed reload
 			c.configMutex.Lock()
 			c.configData = oldConfig
+			c.provenance = oldProvenance
 			c.configMutex.Unlock()
 			return err
 		}

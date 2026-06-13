@@ -24,6 +24,27 @@ type fieldInfo struct {
 	// IsAccessor reports whether the field is a cfggo accessor (func() T) and
 	// therefore backs a real configuration value
 	IsAccessor bool
+	// IsSecret reports whether the field is tagged `secret:"true"`. Secret
+	// values are masked in the human-readable / diagnostic outputs (Explain,
+	// String, Diagnose, ConfigReference, Report) so a config dump pasted into a
+	// log or bug report does not leak credentials. It does NOT affect Save /
+	// GetJSONBytes, which must persist real values for round-tripping
+	IsSecret bool
+}
+
+// maskedValue is the placeholder shown in human-readable / diagnostic output in
+// place of a value whose field is tagged `secret:"true"`
+const maskedValue = "****"
+
+// isSecretKey reports whether the field backing key is tagged `secret:"true"`
+func (c *Structure) isSecretKey(key string) bool {
+	if c.plan == nil {
+		return false
+	}
+	if leaf, ok := c.plan.byKey[key]; ok {
+		return leaf.info.IsSecret
+	}
+	return false
 }
 
 // unrecognizedKeys returns the configuration keys currently present in the

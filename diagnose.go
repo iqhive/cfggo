@@ -27,6 +27,10 @@ type KeyDiagnostic struct {
 	// Recognized reports whether the key is backed by a struct field. A false
 	// value usually indicates a typo in a config file or environment variable
 	Recognized bool
+	// Secret reports whether the field is tagged `secret:"true"`. When true,
+	// Value is masked (set to "****") so the diagnostic never carries the
+	// sensitive value; validation is still performed against the real value
+	Secret bool
 	// Err is the validation error for this key
 	// or nil when it passes or has no validator
 	Err error
@@ -66,8 +70,8 @@ func (c *Structure) Diagnose() Diagnostics {
 	c.configMutex.RUnlock()
 
 	c.validationMutex.RLock()
-	validators := make(map[string]validcfg.Validator)
-	for k, v := range c.validationMap[c.name] {
+	validators := make(map[string]validcfg.Validator, len(c.validationMap))
+	for k, v := range c.validationMap {
 		validators[k] = v
 	}
 	c.validationMutex.RUnlock()
@@ -96,15 +100,22 @@ func (c *Structure) Diagnose() Diagnostics {
 			Help:       info.Help,
 			EnvVar:     internalEnvLoader.KeyToEnvVar(key),
 			Recognized: recognized,
+			Secret:     info.IsSecret,
 		}
 		if info.Type != nil {
 			kd.Type = info.Type.String()
 		}
+		// Validate against the real value before masking,
+		// so a bad secret is still reported as invalid
 		if v, ok := validators[key]; ok {
 			if err := v(data[key]); err != nil {
 				kd.Err = validcfg.ValidationError{Key: key, Err: err}.WithProvenance(data[key], prov[key].String())
 				valid = false
 			}
+		}
+		// Never let a secret value escape via the diagnostic struct itself
+		if kd.Secret {
+			kd.Value = maskedValue
 		}
 		diags = append(diags, kd)
 	}
@@ -178,6 +189,10 @@ func (c *Structure) ConfigReference() string {
 		def := "-"
 		if info.HasDefault {
 			def = info.DefaultTag
+			// A default for a secret field may itself be a credential
+			if info.IsSecret && def != "" {
+				def = maskedValue
+			}
 		}
 		help := info.Help
 		if help == "" {
@@ -186,5 +201,19 @@ func (c *Structure) ConfigReference() string {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", info.Key, typ, internalEnvLoader.KeyToEnvVar(info.Key), def, help)
 	}
 	tw.Flush()
+	return sb.String()
+}
+
+// Report returns a single, one-stop human-readable dump intended for bug
+// reports and "--config-check" style commands. It combines the static field
+// reference (ConfigReference) with the resolved runtime state and validation
+// status (Diagnose). Values for fields tagged `secret:"true"` are masked
+// throughout, so the output is safe to attach to an issue or paste into a log
+func (c *Structure) Report() string {
+	c.ensureInit()
+	var sb strings.Builder
+	sb.WriteString(c.ConfigReference())
+	sb.WriteString("\n")
+	sb.WriteString(c.Diagnose().String())
 	return sb.String()
 }

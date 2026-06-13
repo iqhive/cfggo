@@ -1,7 +1,7 @@
 package cfggo
 
 import (
-	"fmt"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/iqhive/cfggo/cfglogger"
@@ -79,19 +79,25 @@ func (c *Structure) log() cfglogger.Logger {
 	return GlobalLogger()
 }
 
-// The logXxxf helpers preserve cfggo's historical printf-style internal log
-// calls on top of the slimmer structured Logger interface: they pre-format the
-// message and emit it through the instance logger with no slog attributes.
-//
-// Deprecated: prefer logging through c.log() with structured slog key/value
-// attributes (e.g. c.log().Warn("msg", "key", k, "err", err)) so output behind
-// a structured handler stays queryable. These remain only for the lower-value
-// internal call sites that have not yet been migrated
-func (c *Structure) logDebugf(format string, args ...any) {
-	c.log().Debug(fmt.Sprintf(format, args...))
-}
-func (c *Structure) logInfof(format string, args ...any) { c.log().Info(fmt.Sprintf(format, args...)) }
-func (c *Structure) logWarnf(format string, args ...any) { c.log().Warn(fmt.Sprintf(format, args...)) }
-func (c *Structure) logErrorf(format string, args ...any) {
-	c.log().Error(fmt.Sprintf(format, args...))
+// bindConfigName returns a child logger with the configuration's name attached
+// as a "config" attribute, so every line a Structure emits is attributable to
+// that instance without each call site repeating the name
+// It is called once during Init() - Loggers that cannot attach attributes are
+// returned unchanged.
+// The built-in DefaultLogger and a raw *slog.Logger are both handled
+func bindConfigName(l cfglogger.Logger, name string) cfglogger.Logger {
+	if l == nil || name == "" {
+		return l
+	}
+	switch v := l.(type) {
+	case cfglogger.WithAttrer:
+		return v.With("config", name)
+	case interface {
+		With(args ...any) *slog.Logger
+	}:
+		// *slog.Logger.With returns *slog.Logger, which already satisfies
+		// cfglogger.Logger, so a logger passed as slog.Default() still benefits
+		return v.With("config", name)
+	}
+	return l
 }

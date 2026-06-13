@@ -186,8 +186,9 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int) {
 		leaf := planLeaf{
 			index: fieldIndex,
 			info: fieldInfo{
-				Key:  fullKey,
-				Help: field.Tag.Get("help"),
+				Key:      fullKey,
+				Help:     field.Tag.Get("help"),
+				IsSecret: isSecretTag(field.Tag.Get("secret")),
 			},
 		}
 		if dv, ok := field.Tag.Lookup("default"); ok {
@@ -231,6 +232,18 @@ func groupType(field reflect.StructField) (t reflect.Type, isPtr bool, ok bool) 
 	return nil, false, false
 }
 
+// isSecretTag reports whether a `secret` struct tag value marks the field as
+// sensitive. A truthy value (true/1/yes/y/on, case-insensitive) counts;
+// anything else (including an absent or empty tag) is treated as not secret
+func isSecretTag(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // configNameFromField returns the config map key for a struct field by
 // inspecting struct tags in priority order: cfggo, cfg, config, json, Name.
 // It runs only during one-time plan construction, so it does no caching
@@ -270,7 +283,7 @@ func (c *Structure) applyPlan() {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		c.logWarnf("cfggo: Init expected a struct, got %v", v.Kind())
+		c.log().Warn("cfggo: Init expected a struct", "kind", v.Kind())
 		return
 	}
 

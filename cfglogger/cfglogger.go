@@ -34,6 +34,19 @@ type LevelSetter interface {
 	SetLevel(level slog.Level)
 }
 
+// WithAttrer is an optional interface a Logger may implement to return a child
+// logger with the given slog-style key/value attributes permanently attached.
+//
+// When a Logger implements it, cfggo binds the configuration's name onto the
+// instance logger once during Init (as a "config" attribute), so every line a
+// Structure emits is automatically attributable to that instance without each
+// call site repeating the name. DefaultLogger implements this; a raw
+// *slog.Logger is also handled because its own With returns *slog.Logger (which
+// already satisfies Logger)
+type WithAttrer interface {
+	With(args ...any) Logger
+}
+
 // DefaultLogger is the default Logger implementation. It is backed by the
 // standard library's log/slog and, crucially, honours a configurable level: a
 // *slog.LevelVar drives the underlying handler so that raising the verbosity
@@ -74,6 +87,13 @@ func (dl *DefaultLogger) Info(msg string, args ...any)  { dl.logger.Info(msg, ar
 func (dl *DefaultLogger) Warn(msg string, args ...any)  { dl.logger.Warn(msg, args...) }
 func (dl *DefaultLogger) Error(msg string, args ...any) { dl.logger.Error(msg, args...) }
 
+// With returns a child DefaultLogger that prepends args to every record. The
+// returned logger shares the parent's *slog.LevelVar,
+// so SetLogLevel continues to control its verbosity
+func (dl *DefaultLogger) With(args ...any) Logger {
+	return &DefaultLogger{level: dl.level, logger: dl.logger.With(args...)}
+}
+
 // NoopLogger is a Logger that discards everything. Useful for silencing cfggo
 // entirely on a per-instance basis via WithLogger(&cfglogger.NoopLogger{}).
 type NoopLogger struct{}
@@ -82,3 +102,7 @@ func (nl *NoopLogger) Debug(msg string, args ...any) {}
 func (nl *NoopLogger) Info(msg string, args ...any)  {}
 func (nl *NoopLogger) Warn(msg string, args ...any)  {}
 func (nl *NoopLogger) Error(msg string, args ...any) {}
+
+// With returns the same NoopLogger: attaching attributes to
+// a logger that discards everything is still a no-op
+func (nl *NoopLogger) With(args ...any) Logger { return nl }

@@ -81,6 +81,46 @@ func (c *Structure) Get(key string) (interface{}, bool) {
 	return value, exists
 }
 
+// Value returns the current value for key typed as T, and whether a usable
+// value was found. It is the type-safe alternative to Get for callers that know
+// the expected type and want to avoid a manual interface{} assertion:
+//
+//	port, ok := cfggo.Value[int](&cfg.Structure, "port")
+//
+// ok is false when the key is absent or its stored value is neither a T nor
+// convertible to one (in which case the zero value of T is returned). The fast
+// path (the stored value is already a T) is a single map lookup and assertion
+func Value[T any](c *Structure, key string) (T, bool) {
+	var zero T
+	raw, ok := c.Get(key)
+	if !ok {
+		return zero, false
+	}
+	if v, ok := raw.(T); ok {
+		return v, true
+	}
+	if raw == nil {
+		return zero, false
+	}
+	rv := reflect.ValueOf(raw)
+	tt := reflect.TypeOf(&zero).Elem()
+	if rv.Type().ConvertibleTo(tt) {
+		if cv, ok := rv.Convert(tt).Interface().(T); ok {
+			return cv, true
+		}
+	}
+	return zero, false
+}
+
+// MustValue is like Value but returns only the value, falling back to the zero
+// value of T when the key is missing or not convertible to T. Use it when a
+// missing/!ok case is acceptable as the zero value; use Value when you need to
+// distinguish "absent" from "present and zero"
+func MustValue[T any](c *Structure, key string) T {
+	v, _ := Value[T](c, key)
+	return v
+}
+
 func (c *Structure) getAllKeys() []string {
 	c.configMutex.RLock()
 	defer c.configMutex.RUnlock()

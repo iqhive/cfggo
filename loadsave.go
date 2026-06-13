@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"text/tabwriter"
 )
 
 func (c *Structure) loadConfig(alreadyLocked bool) error {
@@ -168,26 +169,21 @@ func (c *Structure) GetJSONBytes() []byte {
 	return data
 }
 
+// String returns a human-readable, key-sorted dump of the configuration.
+// Values for fields tagged `secret:"true"` are masked,
+// so the output is safe to log or paste into a bug report
 func (c *Structure) String() string {
 	c.ensureInit()
-
-	var sb strings.Builder
-	sb.WriteString(c.name + ":\n")
-	maxKeyLen := 0
-	maxValueLen := 0
 
 	c.configMutex.RLock()
 	keys := make([]string, 0, len(c.configData))
 	values := make(map[string]string, len(c.configData))
 	for key, value := range c.configData {
 		keys = append(keys, key)
-		if len(key) > maxKeyLen {
-			maxKeyLen = len(key)
-		}
-		valueStr := fmt.Sprintf("%v", value)
-		values[key] = valueStr
-		if len(valueStr) > maxValueLen {
-			maxValueLen = len(valueStr)
+		if c.isSecretKey(key) {
+			values[key] = maskedValue
+		} else {
+			values[key] = fmt.Sprintf("%v", value)
 		}
 	}
 	c.configMutex.RUnlock()
@@ -195,16 +191,17 @@ func (c *Structure) String() string {
 	// Sort keys so the output is deterministic (handy for diffs and bug reports)
 	sort.Strings(keys)
 
+	var sb strings.Builder
+	sb.WriteString(c.name + ":\n")
+	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
 	for _, key := range keys {
-		valueStr := values[key]
-		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
-		helpTag := c.GetHelpTag(key)
-		if helpTag != "" {
-			sb.WriteString(fmt.Sprintf("%*s: %v %s// %s\n", maxKeyLen, key, valueStr, helpSpacer, helpTag))
+		if helpTag := c.GetHelpTag(key); helpTag != "" {
+			fmt.Fprintf(tw, "%s\t%s\t// %s\n", key, values[key], helpTag)
 		} else {
-			sb.WriteString(fmt.Sprintf("%*s: %v\n", maxKeyLen, key, valueStr))
+			fmt.Fprintf(tw, "%s\t%s\t\n", key, values[key])
 		}
 	}
+	tw.Flush()
 	return sb.String()
 }
 

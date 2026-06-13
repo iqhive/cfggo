@@ -44,7 +44,7 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	}
 
 	if c.configData[configVarName] == nil {
-		c.logWarnf("configData[%s] is not set, using default value for type", configVarName)
+		c.log().Warn("cfggo: config key not set, using default value for type", "key", configVarName)
 		c.configData[configVarName] = defaultValue
 		dvar := &flags.ConfigVar{
 			Name:   configVarName,
@@ -82,7 +82,7 @@ func (c *Structure) parseFlags() {
 	defer c.configMutex.Unlock()
 
 	if c.FlagSet.Parsed() {
-		c.logInfof("parseFlags: flags already parsed %s", c.name)
+		c.log().Info("cfggo: flags already parsed")
 		return
 	}
 

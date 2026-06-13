@@ -13,31 +13,14 @@ func (c *Structure) RegisterValidator(key string, validator validcfg.Validator) 
 	c.validationMutex.Lock()
 	defer c.validationMutex.Unlock()
 	if c.validationMap == nil {
-		c.validationMap = make(map[string]map[string]validcfg.Validator)
+		c.validationMap = make(map[string]validcfg.Validator)
 	}
-
-	if _, exists := c.validationMap[c.name]; !exists {
-		c.validationMap[c.name] = make(map[string]validcfg.Validator)
-	}
-
-	c.validationMap[c.name][key] = validator
+	c.validationMap[key] = validator
 }
 
 // AddValidator is an alias for RegisterValidator.
 func (c *Structure) AddValidator(key string, validator validcfg.Validator) {
-	c.ensureInit()
-
-	c.validationMutex.Lock()
-	defer c.validationMutex.Unlock()
-
-	if c.validationMap == nil {
-		c.validationMap = make(map[string]map[string]validcfg.Validator)
-	}
-	if _, exists := c.validationMap[c.name]; !exists {
-		c.validationMap[c.name] = make(map[string]validcfg.Validator)
-	}
-
-	c.validationMap[c.name][key] = validator
+	c.RegisterValidator(key, validator)
 }
 
 // Validate runs all registered validators for this configuration instance.
@@ -49,15 +32,13 @@ func (c *Structure) Validate() error {
 	defer c.configMutex.RUnlock()
 	defer c.validationMutex.RUnlock()
 
-	var errs validcfg.ValidationErrors
-
-	validators, exists := c.validationMap[c.name]
-	if !exists {
+	if len(c.validationMap) == 0 {
 		return nil
 	}
 
+	var errs validcfg.ValidationErrors
 	for key, value := range c.configData {
-		if validator, exists := validators[key]; exists {
+		if validator, exists := c.validationMap[key]; exists {
 			if err := validator(value); err != nil {
 				ve := validcfg.ValidationError{Key: key, Err: err}
 				errs = append(errs, ve.WithProvenance(value, c.provenance[key].String()))
@@ -85,12 +66,7 @@ func (c *Structure) ValidateKey(key string) error {
 		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found", key)
 	}
 
-	validators, exists := c.validationMap[c.name]
-	if !exists {
-		return nil
-	}
-
-	validator, exists := validators[key]
+	validator, exists := c.validationMap[key]
 	if !exists {
 		return nil
 	}

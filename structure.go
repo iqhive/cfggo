@@ -20,15 +20,14 @@ var internalEnvLoader = env.NewLoader()
 // Structure is the type that configuration structs must embed.
 // All lifecycle methods (Init, InitSelf) live here
 type Structure struct {
-	name               string
-	configHandler      sources.ConfigHandler
-	skipEnv            bool
-	changed            bool
-	defaultsAlreadySet bool
-	parent             interface{}
-	configData         map[string]interface{}
-	autoSave           bool
-	autoSaveCtx        context.Context
+	name          string
+	configHandler sources.ConfigHandler
+	skipEnv       bool
+	changed       bool
+	parent        interface{}
+	configData    map[string]interface{}
+	autoSave      bool
+	autoSaveCtx   context.Context
 
 	FlagSet *flag.FlagSet
 	// externalFlagSet is true when the caller supplied the FlagSet (e.g. via
@@ -78,7 +77,10 @@ type Structure struct {
 	// by configMutex.
 	provenance map[string]Source
 
-	validationMap   map[string]map[string]validcfg.Validator
+	// validationMap holds the registered validators keyed by config key. It is
+	// per-instance (a Structure has exactly one configuration), so it is a flat
+	// key->validator map rather than being nested under the config name
+	validationMap   map[string]validcfg.Validator
 	validationMutex sync.RWMutex
 
 	// changeCallbacks holds OnChange listeners, guarded by callbackMutex.
@@ -99,7 +101,7 @@ func DefaultValue[T any](x T) func() T {
 // parent must be a pointer to the struct that embeds Structure
 func (c *Structure) Init(parent interface{}, options ...Option) error {
 	if c.validationMap == nil {
-		c.validationMap = make(map[string]map[string]validcfg.Validator)
+		c.validationMap = make(map[string]validcfg.Validator)
 	}
 
 	if c.logger == nil {
@@ -138,6 +140,11 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 			return c.WrapError(err, ErrCodeNone, "Init: option returned error")
 		}
 	}
+
+	// Bind the (now-final) configuration name onto the instance logger so every
+	// line this Structure emits is attributable to it without each call site
+	// repeating the name. No-op for loggers that cannot attach attributes
+	c.logger = bindConfigName(c.log(), c.name)
 
 	parentType := reflect.TypeOf(c.parent)
 	for parentType.Kind() == reflect.Ptr {
@@ -188,7 +195,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 	// otherwise be silently ignored. WithStrictKeys upgrades this to an error
 	if unrecognized := c.unrecognizedKeys(); len(unrecognized) > 0 {
 		for _, key := range unrecognized {
-			c.log().Warn("cfggo: unrecognized configuration key (no matching struct field)", "config", c.name, "key", key)
+			c.log().Warn("cfggo: unrecognized configuration key (no matching struct field)", "key", key)
 		}
 		if c.strictKeys {
 			return c.WrapError(wrapKind(ErrUnknownKey, fmt.Errorf("%v", unrecognized)), ErrCodeNotFound,
@@ -240,9 +247,16 @@ func (c *Structure) InitSelf(options ...Option) error {
 	return c.Init(c, options...)
 }
 
-// ensureInit lazily initialises the configuration via InitSelf when a method is
-// called before Init. The initialisation error is logged because the calling
-// method has no way to return it; call Init explicitly to handle errors.
+// ensureInit lazily initialises the configuration via InitSelf when an accessor
+// (Get, Set, Explain, Diagnose, ...) is called before Init.
+//
+// IMPORTANT: this is a convenience safety net, not the intended path. Lazy
+// initialisation runs with NO options (no config source, no validators, no
+// custom logger) and the resulting error can only be logged, because the
+// calling method has no way to return it. A program that relies on lazy init
+// therefore silently runs on struct/tag defaults only. Always call Init (or
+// InitSelf) explicitly at startup so configuration sources are loaded and load
+// errors are surfaced
 func (c *Structure) ensureInit() {
 	if c.parent == nil {
 		if err := c.InitSelf(); err != nil {
@@ -254,6 +268,6 @@ func (c *Structure) ensureInit() {
 // ReloadConfig reloads the configuration from all sources.
 func (c *Structure) ReloadConfig() error {
 	c.ensureInit()
-	c.log().Info("cfggo: reloading configuration", "config", c.name)
+	c.log().Info("cfggo: reloading configuration")
 	return c.Reload()
 }

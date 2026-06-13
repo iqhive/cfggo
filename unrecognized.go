@@ -26,7 +26,7 @@ func (c *Structure) CheckUnrecognizedItems(s interface{}) {
 	}
 
 	if v.Kind() != reflect.Struct {
-		Logger.Warnf("CheckUnrecognizedItems: expected struct, got %v", v.Kind())
+		c.logWarnf("CheckUnrecognizedItems: expected struct, got %v", v.Kind())
 		return
 	}
 
@@ -39,7 +39,7 @@ func (c *Structure) CheckUnrecognizedItems(s interface{}) {
 
 	for _, key := range allKeys {
 		if !recognizedKeys[key] {
-			Logger.Warnf("Warning: Unrecognized %s item '%s' found", c.name, key)
+			c.logWarnf("Warning: Unrecognized %s item '%s' found", c.name, key)
 		}
 	}
 }

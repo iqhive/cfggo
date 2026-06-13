@@ -6,7 +6,7 @@ import (
 
 func (c *Structure) loadFromEnv() {
 	if c.skipEnv {
-		Logger.Debug("loadFromEnv: skipping environment variables")
+		c.log().Debug("loadFromEnv: skipping environment variables")
 		return
 	}
 
@@ -42,10 +42,10 @@ func (c *Structure) loadFromEnv() {
 		// Set the value
 		if err := dv.Set(value); err != nil {
 			envVar := internalEnvLoader.KeyToEnvVar(key)
-			Logger.Infof("Error setting config from environment variable %s=(%v): %v", envVar, value, err)
+			c.logInfof("Error setting config from environment variable %s=(%v): %v", envVar, value, err)
 		} else {
 			envVar := internalEnvLoader.KeyToEnvVar(key)
-			Logger.Debugf("Set config %s from environment variable %s=(%v)", key, envVar, value)
+			c.logDebugf("Set config %s from environment variable %s=(%v)", key, envVar, value)
 			
 			// Mark that configuration has changed
 			configMutex.Lock()

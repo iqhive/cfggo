@@ -1,119 +1,74 @@
 package cfglogger
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 )
 
+// Logger is the minimal logging surface cfggo depends on.
+//
+// The method set is deliberately identical to the leveled methods of
+// *slog.Logger, so a *slog.Logger satisfies this interface directly with no
+// adapter:
+//
+//	cfg.Init(cfg, cfggo.WithLogger(slog.Default()))
+//
+// Following slog conventions, args are treated as alternating key/value
+// attribute pairs. cfggo's own internal log calls pass a single pre-formatted
+// message and no args, so any Logger that simply prints msg behaves correctly.
 type Logger interface {
-	Debug(msg string, args ...interface{})
-	Debugf(format string, args ...interface{})
-	Info(msg string, args ...interface{})
-	Infof(format string, args ...interface{})
-	Warn(msg string, args ...interface{})
-	Warnf(format string, args ...interface{})
-	Error(msg string, args ...interface{})
-	Errorf(format string, args ...interface{})
-	Fatal(msg string, args ...interface{})
-	Fatalf(format string, args ...interface{})
+	Debug(msg string, args ...any)
+	Info(msg string, args ...any)
+	Warn(msg string, args ...any)
+	Error(msg string, args ...any)
 }
 
-// DefaultLogger is the default implementation of ExtendedLogger
+// DefaultLogger is the default Logger implementation. It is backed by the
+// standard library's log/slog and, crucially, honours a configurable level: a
+// *slog.LevelVar drives the underlying handler so that raising the verbosity
+// (e.g. via cfggo.SetLogLevel(cfggo.LogLevelDebug)) actually surfaces Debug
+// output instead of being dropped by slog's default Info threshold.
 type DefaultLogger struct {
+	level  *slog.LevelVar
 	logger *slog.Logger
 }
 
-// NewDefaultLogger creates a new DefaultLogger that writes to os.Stderr.
+// NewDefaultLogger creates a DefaultLogger that writes to os.Stderr.
 func NewDefaultLogger() *DefaultLogger {
-	return &DefaultLogger{
-		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
-	}
+	return NewDefaultLoggerWithWriter(os.Stderr)
 }
 
 // NewDefaultLoggerWithWriter creates a DefaultLogger that writes to w.
 func NewDefaultLoggerWithWriter(w io.Writer) *DefaultLogger {
+	level := new(slog.LevelVar) // zero value == slog.LevelInfo
 	return &DefaultLogger{
-		logger: slog.New(slog.NewTextHandler(w, nil)),
+		level:  level,
+		logger: slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})),
 	}
 }
 
-// Debug logs a debug message
-func (dl *DefaultLogger) Debug(msg string, args ...interface{}) {
-	dl.logger.Debug(msg, args...)
-}
-func (dl *DefaultLogger) Debugf(format string, args ...interface{}) {
-	dl.logger.Debug(fmt.Sprintf(format, args...))
+// SetLevel adjusts the minimum level this logger emits. It is safe to call
+// concurrently with logging because it is backed by a *slog.LevelVar.
+func (dl *DefaultLogger) SetLevel(level slog.Level) {
+	dl.level.Set(level)
 }
 
-// Info logs an info message
-func (dl *DefaultLogger) Info(msg string, args ...interface{}) {
-	dl.logger.Info(msg, args...)
-}
-func (dl *DefaultLogger) Infof(format string, args ...interface{}) {
-	dl.logger.Info(fmt.Sprintf(format, args...))
+// Level returns the current minimum level this logger emits.
+func (dl *DefaultLogger) Level() slog.Level {
+	return dl.level.Level()
 }
 
-// Warn logs a warning message
-func (dl *DefaultLogger) Warn(msg string, args ...interface{}) {
-	dl.logger.Warn(msg, args...)
-}
-func (dl *DefaultLogger) Warnf(format string, args ...interface{}) {
-	dl.logger.Warn(fmt.Sprintf(format, args...))
-}
+func (dl *DefaultLogger) Debug(msg string, args ...any) { dl.logger.Debug(msg, args...) }
+func (dl *DefaultLogger) Info(msg string, args ...any)  { dl.logger.Info(msg, args...) }
+func (dl *DefaultLogger) Warn(msg string, args ...any)  { dl.logger.Warn(msg, args...) }
+func (dl *DefaultLogger) Error(msg string, args ...any) { dl.logger.Error(msg, args...) }
 
-// Error logs an error message
-func (dl *DefaultLogger) Error(msg string, args ...interface{}) {
-	dl.logger.Error(msg, args...)
-}
-func (dl *DefaultLogger) Errorf(format string, args ...interface{}) {
-	dl.logger.Error(fmt.Sprintf(format, args...))
-}
-
-// Fatal logs a fatal message and exits
-func (dl *DefaultLogger) Fatal(msg string, args ...interface{}) {
-	dl.logger.Error(msg, args...)
-	os.Exit(1)
-}
-func (dl *DefaultLogger) Fatalf(format string, args ...interface{}) {
-	dl.logger.Error(fmt.Sprintf(format, args...))
-	os.Exit(1)
-}
-
-// NoopLogger is a logger that does nothing
+// NoopLogger is a Logger that discards everything. Useful for silencing cfggo
+// entirely on a per-instance basis via WithLogger(&cfglogger.NoopLogger{}).
 type NoopLogger struct{}
 
-// Debug does nothing
-func (nl *NoopLogger) Debug(msg string, args ...interface{}) {}
-
-// Debugf does nothing
-func (nl *NoopLogger) Debugf(format string, args ...interface{}) {}
-
-// Info does nothing
-func (nl *NoopLogger) Info(msg string, args ...interface{}) {}
-
-// Infof does nothing
-func (nl *NoopLogger) Infof(format string, args ...interface{}) {}
-
-// Warn does nothing
-func (nl *NoopLogger) Warn(msg string, args ...interface{}) {}
-
-// Warnf does nothing
-func (nl *NoopLogger) Warnf(format string, args ...interface{}) {}
-
-// Error does nothing
-func (nl *NoopLogger) Error(msg string, args ...interface{}) {}
-
-// Errorf does nothing
-func (nl *NoopLogger) Errorf(format string, args ...interface{}) {}
-
-// Fatal does nothing
-func (nl *NoopLogger) Fatal(msg string, args ...interface{}) {
-	os.Exit(1)
-}
-
-// Fatalf does nothing
-func (nl *NoopLogger) Fatalf(format string, args ...interface{}) {
-	os.Exit(1)
-}
+func (nl *NoopLogger) Debug(msg string, args ...any) {}
+func (nl *NoopLogger) Info(msg string, args ...any)  {}
+func (nl *NoopLogger) Warn(msg string, args ...any)  {}
+func (nl *NoopLogger) Error(msg string, args ...any) {}

@@ -20,7 +20,7 @@ func (c *Structure) Reload() error {
 	// Attempt to reload configuration from file (loadConfig handles its own locking)
 	if c.configHandler != nil {
 		if err = c.loadConfig(false); err != nil {
-			Logger.Errorf("Failed to reload configuration from file: %v", err)
+			c.logErrorf("Failed to reload configuration from file: %v", err)
 
 			// Rollback to old configuration on error
 			configMutex.Lock()
@@ -52,7 +52,7 @@ func (c *Structure) Reload() error {
 
 	// Validate configuration after reloading
 	if err = c.Validate(); err != nil {
-		Logger.Warnf("Configuration validation failed after reload: %v", err)
+		c.logWarnf("Configuration validation failed after reload: %v", err)
 		// We don't return this error as it's just a warning
 	}
 

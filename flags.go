@@ -25,7 +25,7 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	}
 
 	if c.FlagSet.Lookup(configVarName) != nil {
-		Logger.Errorf("Flag (%s) is already set, skipping...\n", configVarName)
+		c.logErrorf("Flag (%s) is already set, skipping...\n", configVarName)
 		return
 	}
 
@@ -46,7 +46,7 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	}
 
 	if c.configData[configVarName] == nil {
-		Logger.Warnf("configData[%s] is not set, using default value for type", configVarName)
+		c.logWarnf("configData[%s] is not set, using default value for type", configVarName)
 		c.configData[configVarName] = defaultValue
 		dvar := &flags.ConfigVar{
 			Name:   configVarName,
@@ -90,7 +90,7 @@ func (c *Structure) waitForFlagParsed() {
 				return
 			}
 		case <-timeout:
-			Logger.Debug("Timeout waiting for flags to be parsed")
+			c.log().Debug("Timeout waiting for flags to be parsed")
 			return
 		}
 	}
@@ -101,7 +101,7 @@ func (c *Structure) parseFlags() {
 	defer configMutex.Unlock()
 
 	if c.FlagSet.Parsed() {
-		Logger.Infof("parseFlags: flags already parsed %s", c.name)
+		c.logInfof("parseFlags: flags already parsed %s", c.name)
 		return
 	}
 
@@ -128,7 +128,7 @@ func (c *Structure) parseFlags() {
 	configMutex.Unlock()
 	var parseErr error
 	if parseErr = c.FlagSet.Parse(args); parseErr != nil {
-		Logger.Errorf("error parsing flags: %v", parseErr)
+		c.logErrorf("error parsing flags: %v", parseErr)
 	}
 	configMutex.Lock()
 
@@ -136,7 +136,7 @@ func (c *Structure) parseFlags() {
 	// (boolean flags require the "--bool=value" form) or a stray argument.
 	if parseErr == nil {
 		if rest := c.FlagSet.Args(); len(rest) > 0 {
-			Logger.Warnf("cfggo: ignoring unexpected positional arguments after flag parsing: %v "+
+			c.logWarnf("cfggo: ignoring unexpected positional arguments after flag parsing: %v "+
 				"(note: boolean flags must use the --flag=value form to set an explicit value)", rest)
 		}
 	}
@@ -177,7 +177,7 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 
 		f := c.FlagSet.Lookup(name)
 		if f == nil {
-			Logger.Debugf("cfggo: ignoring unrecognized flag %q (not defined on this config)", arg)
+			c.logDebugf("cfggo: ignoring unrecognized flag %q (not defined on this config)", arg)
 			// For "--unknown value", also drop the following value token so it is
 			// not misread as a positional argument (which would stop parsing)
 			if !hasInlineValue && i+1 < len(args) {

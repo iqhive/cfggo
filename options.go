@@ -94,7 +94,7 @@ func WithFileConfigParamName(argName string) Option {
 	return func(c *Structure) error {
 		c.FlagSet.String(argName, "", "")
 		if err := wrap(c); err != nil {
-			Logger.Warnf("Failed to apply WithFileConfig: %v", err)
+			c.logWarnf("Failed to apply WithFileConfig: %v", err)
 		}
 		return nil
 	}

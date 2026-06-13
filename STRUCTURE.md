@@ -44,7 +44,7 @@ github.com/iqhive/cfggo/
   loadsave.go         # Load/save + JSON decode + GetHelpTag + shouldIgnoreField
   reload.go           # Hot reload (Reload + ReloadConfig)
   validate.go         # Validation methods on Structure + re-exported validators
-  logging.go          # Global Logger / ErrorWrapper vars + globalErrorWrapper
+  logging.go          # Global Logger / ErrorWrapper vars + per-instance log helpers
   api.go              # Init(), SetLogLevel, SetLogOutput, ParseLogLevel, LogLevel*
   dynamicvar.go       # String to typed-value adapter (uses internal/convert)
   convert.go          # Deprecated root-level ConvertValue (shim, to be removed)

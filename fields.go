@@ -68,7 +68,7 @@ func (c *Structure) setupConfigData() {
 	}
 
 	if v.Kind() != reflect.Struct {
-		Logger.Warnf("SetupConfigData: expected struct, got %v", v.Kind())
+		c.logWarnf("SetupConfigData: expected struct, got %v", v.Kind())
 		return
 	}
 
@@ -95,16 +95,16 @@ func (c *Structure) setupConfigData() {
 				processStruct(fieldValue, field.Type, fullKey)
 			} else if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
 				if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
-					Logger.Warnf("Failed to set default value for %s: %v", fullKey, err)
+					c.logWarnf("Failed to set default value for %s: %v", fullKey, err)
 				}
 			} else if fieldValue.Kind() == reflect.Func {
 				if fieldValue.CanInterface() {
 					if err := c.set(fullKey, fieldValue.Call(nil)[0].Interface()); err != nil {
-						Logger.Warnf("Failed to set value for %s: %v", fullKey, err)
+						c.logWarnf("Failed to set value for %s: %v", fullKey, err)
 					}
 				} else {
 					if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
-						Logger.Warnf("Failed to set default value for %s: %v", fullKey, err)
+						c.logWarnf("Failed to set default value for %s: %v", fullKey, err)
 					}
 				}
 			}
@@ -128,35 +128,55 @@ func (c *Structure) setDefaultsFromTags() {
 	}
 
 	if v.Kind() != reflect.Struct {
-		Logger.Warnf("SetDefaults: expected struct, got %v", v.Kind())
+		c.logWarnf("SetDefaults: expected struct, got %v", v.Kind())
 		return
 	}
 
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		fieldValue := v.Field(i)
-
-		configVarName := c.getConfigNameFromField(field)
-		if configVarName == "" || configVarName == "-" {
-			continue
-		}
-
-		if fieldValue.Kind() != reflect.Func || !fieldValue.IsNil() {
-			continue
-		}
-
-		if defaultStr, ok := field.Tag.Lookup("default"); ok && defaultStr != "" {
-			dv := &dynamicVar{
-				config: c,
-				name:   configVarName,
-				want:   fieldValue.Type().Out(0),
+	// Walk recursively so `default` tags on func fields inside nested
+	// (non-embedded) structs are honoured too, keyed by the same dotted keys
+	// that setupConfigData uses.
+	var processStruct func(reflect.Value, reflect.Type, string)
+	processStruct = func(v reflect.Value, t reflect.Type, prefix string) {
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
+				continue
 			}
+			fieldValue := v.Field(i)
+
+			configVarName := c.getConfigNameFromField(field)
+			if configVarName == "" || configVarName == "-" {
+				continue
+			}
+
+			fullKey := configVarName
+			if prefix != "" {
+				fullKey = prefix + "." + configVarName
+			}
+
+			if fieldValue.Kind() == reflect.Struct {
+				processStruct(fieldValue, field.Type, fullKey)
+				continue
+			}
+
+			if fieldValue.Kind() != reflect.Func || !fieldValue.IsNil() {
+				continue
+			}
+
+			if defaultStr, ok := field.Tag.Lookup("default"); ok && defaultStr != "" {
+				dv := &dynamicVar{
+					config: c,
+					name:   fullKey,
+					want:   fieldValue.Type().Out(0),
+				}
 			if err := dv.Set(defaultStr); err != nil {
-				Logger.Warnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
+				c.logWarnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
+			}
 			}
 		}
 	}
+
+	processStruct(v, v.Type(), "")
 }
 
 // replaceConfigFuncs wires each func field in the parent struct to read from
@@ -171,63 +191,83 @@ func (c *Structure) replaceConfigFuncs() {
 	v := reflect.ValueOf(c.parent)
 	for v.Kind() == reflect.Ptr {
 		if v.IsNil() {
-			Logger.Warn("ReplaceConfigFuncs: received nil pointer")
+			c.log().Warn("ReplaceConfigFuncs: received nil pointer")
 			return
 		}
 		v = v.Elem()
 	}
 
 	if v.Kind() != reflect.Struct {
-		Logger.Warnf("ReplaceConfigFuncs: expected struct or pointer to struct, got %v", v.Kind())
+		c.logWarnf("ReplaceConfigFuncs: expected struct or pointer to struct, got %v", v.Kind())
 		return
 	}
 
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		fieldValue := v.Field(i)
+	// Walk the struct recursively so func fields inside nested (non-embedded)
+	// structs are wired up too, using the same dotted keys that
+	// setupConfigData populated the config map with.
+	var processStruct func(reflect.Value, reflect.Type, string)
+	processStruct = func(v reflect.Value, t reflect.Type, prefix string) {
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
+				continue
+			}
+			fieldValue := v.Field(i)
 
-		if fieldValue.Kind() != reflect.Func {
-			continue
-		}
+			configVarName := c.getConfigNameFromField(field)
+			if configVarName == "" || configVarName == "-" {
+				continue
+			}
 
-		configVarName := c.getConfigNameFromField(field)
-		if configVarName == "" || configVarName == "-" {
-			continue
-		}
+			fullKey := configVarName
+			if prefix != "" {
+				fullKey = prefix + "." + configVarName
+			}
 
-		if _, exists := c.configData[configVarName]; !exists {
-			Logger.Errorf("Missing configData value for key %s", configVarName)
-			continue
-		}
+			if fieldValue.Kind() == reflect.Struct {
+				processStruct(fieldValue, field.Type, fullKey)
+				continue
+			}
 
-		if !fieldValue.CanSet() {
-			continue
-		}
+			if fieldValue.Kind() != reflect.Func {
+				continue
+			}
 
-		func(key string, outType reflect.Type) {
-			fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(_ []reflect.Value) []reflect.Value {
-				configMutex.RLock()
-				defer configMutex.RUnlock()
-				raw := c.configData[key]
-				// A nil value (eg an explicit JSON null, an unset interface{}
-				// field, or a failed conversion gives an invalid reflect.Value,
-				// so fall back to the typed zero value
-				if raw == nil {
-					return []reflect.Value{reflect.Zero(outType)}
-				}
-				rv := reflect.ValueOf(raw)
-				if !rv.Type().AssignableTo(outType) {
-					if rv.Type().ConvertibleTo(outType) {
-						rv = rv.Convert(outType)
-					} else {
+			if _, exists := c.configData[fullKey]; !exists {
+				c.logErrorf("Missing configData value for key %s", fullKey)
+				continue
+			}
+
+			if !fieldValue.CanSet() {
+				continue
+			}
+
+			func(key string, outType reflect.Type) {
+				fieldValue.Set(reflect.MakeFunc(fieldValue.Type(), func(_ []reflect.Value) []reflect.Value {
+					configMutex.RLock()
+					defer configMutex.RUnlock()
+					raw := c.configData[key]
+					// A nil value (eg an explicit JSON null, an unset interface{}
+					// field, or a failed conversion gives an invalid reflect.Value,
+					// so fall back to the typed zero value
+					if raw == nil {
 						return []reflect.Value{reflect.Zero(outType)}
 					}
-				}
-				return []reflect.Value{rv}
-			}))
-		}(configVarName, fieldValue.Type().Out(0))
+					rv := reflect.ValueOf(raw)
+					if !rv.Type().AssignableTo(outType) {
+						if rv.Type().ConvertibleTo(outType) {
+							rv = rv.Convert(outType)
+						} else {
+							return []reflect.Value{reflect.Zero(outType)}
+						}
+					}
+					return []reflect.Value{rv}
+				}))
+			}(fullKey, fieldValue.Type().Out(0))
+		}
 	}
+
+	processStruct(v, v.Type(), "")
 }
 
 // createFlags registers a flag for every key in the config map.

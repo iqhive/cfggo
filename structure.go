@@ -92,16 +92,16 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 		ptr := reflect.New(v.Type())
 		ptr.Elem().Set(v)
 		parent = ptr.Interface()
-		Logger.Warn("Structure: Init() must be called with a parent struct pointer, not a struct")
+		c.log().Warn("Structure: Init() must be called with a parent struct pointer, not a struct")
 	} else {
 		if v.Type().Elem().Kind() == reflect.Ptr {
-			Logger.Error("Structure: Init() parent must not be a pointer to a pointer")
+			c.log().Error("Structure: Init() parent must not be a pointer to a pointer")
 			os.Exit(1)
 		}
 	}
 
 	if c.parent != nil {
-		Logger.Warn("Structure: Init() called more than once")
+		c.log().Warn("Structure: Init() called more than once")
 		return
 	}
 	c.parent = parent
@@ -109,7 +109,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	for _, option := range options {
 		err := option(c)
 		if err != nil {
-			Logger.Errorf("Structure: Init() option returned error: %v", err)
+			c.logErrorf("Structure: Init() option returned error: %v", err)
 			os.Exit(1)
 		}
 	}
@@ -124,7 +124,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 
 	if c.configHandler != nil {
 		if err := c.loadConfig(false); err != nil {
-			Logger.Errorf("LoadConfig: %v", err)
+			c.logErrorf("LoadConfig: %v", err)
 			if c.configHandler != nil && !c.configHandler.IsDefault() {
 				os.Exit(1)
 			}
@@ -141,7 +141,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	}
 
 	if err := c.Validate(); err != nil {
-		Logger.Warnf("Configuration validation failed: %v", err)
+		c.logWarnf("Configuration validation failed: %v", err)
 	}
 }
 
@@ -212,7 +212,7 @@ func (c *Structure) InitMyParent(options ...Option) {
 		}
 	}
 
-	Logger.Error("InitNew(): Could not determine parent struct automatically")
+	c.log().Error("InitNew(): Could not determine parent struct automatically")
 	os.Exit(1)
 }
 
@@ -221,6 +221,6 @@ func (c *Structure) ReloadConfig() error {
 	if c.parent == nil {
 		c.InitSelf()
 	}
-	Logger.Infof("ReloadConfig %s", c.name)
+	c.logInfof("ReloadConfig %s", c.name)
 	return c.Reload()
 }

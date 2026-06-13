@@ -12,6 +12,7 @@ import (
 )
 
 var configsToSave []*Structure
+var configsToSaveMutex sync.Mutex
 var once sync.Once
 var signalChannel chan os.Signal
 var signalCleanupOnce sync.Once
@@ -33,13 +34,13 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 
 func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) error {
 	if len(data) == 0 {
-		Logger.Debug("loadJSONConfigFromBytes: empty or nil data provided")
+		c.log().Debug("loadJSONConfigFromBytes: empty or nil data provided")
 		return nil
 	}
 
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
-		Logger.Errorf("Failed to unmarshal JSON data: %v", err)
+		c.logErrorf("Failed to unmarshal JSON data: %v", err)
 		return nil
 	}
 
@@ -81,7 +82,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 
 			// All type coercion is handled by the unified converter inside c.set.
 			if err := c.set(fullKey, value); err != nil {
-				Logger.Warnf("Error setting config key %s: %v", fullKey, err)
+				c.logWarnf("Error setting config key %s: %v", fullKey, err)
 			}
 		}
 	}
@@ -91,31 +92,46 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 }
 
 func (c *Structure) setupConfigSaver() {
-	if c.autoSave {
-		configsToSave = append(configsToSave, c)
+	if !c.autoSave {
+		return
+	}
 
-		once.Do(func() {
-			signalChannel = make(chan os.Signal, 1)
-			signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
-			go func() {
-				defer func() {
-					signal.Stop(signalChannel)
-					close(signalChannel)
-				}()
+	configsToSaveMutex.Lock()
+	configsToSave = append(configsToSave, c)
+	configsToSaveMutex.Unlock()
 
-				<-signalChannel
-				for _, config := range configsToSave {
-					if config.changed {
-						Logger.Info("Saving config before exit...")
-						if err := config.saveConfig(); err != nil {
-							Logger.Errorf("Error saving configuration: %v", err)
-						}
+	once.Do(func() {
+		signalChannel = make(chan os.Signal, 1)
+		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			defer func() {
+				signal.Stop(signalChannel)
+				close(signalChannel)
+			}()
+
+			<-signalChannel
+
+			// Snapshot the slice under the lock so a concurrent Init that is
+			// still appending cannot race with this iteration.
+			configsToSaveMutex.Lock()
+			snapshot := make([]*Structure, len(configsToSave))
+			copy(snapshot, configsToSave)
+			configsToSaveMutex.Unlock()
+
+			for _, config := range snapshot {
+				configMutex.RLock()
+				changed := config.changed
+				configMutex.RUnlock()
+				if changed {
+					config.log().Info("Saving config before exit...")
+					if err := config.saveConfig(); err != nil {
+						config.logErrorf("Error saving configuration: %v", err)
 					}
 				}
-				os.Exit(0)
-			}()
-		})
-	}
+			}
+			os.Exit(0)
+		}()
+	})
 }
 
 // CleanupSignalHandler allows tests and applications to release the signal

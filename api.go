@@ -2,6 +2,7 @@ package cfggo
 
 import (
 	"io"
+	"log/slog"
 
 	"github.com/iqhive/cfggo/cfglogger"
 )
@@ -57,81 +58,47 @@ func ParseLogLevel(s string) (LogLevel, bool) {
 	return LogLevelInfo, false
 }
 
-// currentLevel tracks the level used by the global level-filter wrapper so
-// SetLogLevel and SetLogOutput can be combined without losing state.
+// slogLevel maps a cfggo LogLevel onto a slog.Level. Fatal sits just above
+// Error, and None uses a level high enough that nothing is ever emitted.
+func (l LogLevel) slogLevel() slog.Level {
+	switch l {
+	case LogLevelDebug:
+		return slog.LevelDebug
+	case LogLevelInfo:
+		return slog.LevelInfo
+	case LogLevelWarn:
+		return slog.LevelWarn
+	case LogLevelError:
+		return slog.LevelError
+	case LogLevelFatal:
+		return slog.LevelError + 4
+	case LogLevelNone:
+		return slog.Level(1 << 30)
+	}
+	return slog.LevelInfo
+}
+
+// currentLevel tracks the configured level so SetLogLevel and SetLogOutput can
+// be combined without losing state.
 var currentLevel = LogLevelInfo
 
-// SetLogLevel adjusts the verbosity of the global Logger.
-// Messages below the given level are silently discarded.
+// SetLogLevel adjusts the verbosity of the global Logger. Messages below the
+// given level are discarded by the underlying slog handler.
+//
+// This only affects the built-in DefaultLogger. If you supply your own logger
+// (via the global Logger variable or WithLogger), that logger controls its own
+// level and SetLogLevel is a no-op for it.
 func SetLogLevel(level LogLevel) {
 	currentLevel = level
-	if ll, ok := Logger.(*levelLogger); ok {
-		ll.level = level
-	} else {
-		Logger = &levelLogger{inner: Logger, level: level}
+	if dl, ok := Logger.(*cfglogger.DefaultLogger); ok {
+		dl.SetLevel(level.slogLevel())
 	}
 }
 
-// SetLogOutput redirects global log output to w.
+// SetLogOutput redirects global log output to w, preserving the current level.
+// Call this once at startup, before spawning goroutines that log.
 func SetLogOutput(w io.Writer) {
-	inner := cfglogger.NewDefaultLoggerWithWriter(w)
-	Logger = &levelLogger{inner: inner, level: currentLevel}
-}
-
-// levelLogger wraps a cfglogger.Logger and suppresses messages below a
-// threshold level.
-type levelLogger struct {
-	inner cfglogger.Logger
-	level LogLevel
-}
-
-func (l *levelLogger) Debug(msg string, args ...interface{}) {
-	if l.level <= LogLevelDebug {
-		l.inner.Debug(msg, args...)
-	}
-}
-func (l *levelLogger) Debugf(format string, args ...interface{}) {
-	if l.level <= LogLevelDebug {
-		l.inner.Debugf(format, args...)
-	}
-}
-func (l *levelLogger) Info(msg string, args ...interface{}) {
-	if l.level <= LogLevelInfo {
-		l.inner.Info(msg, args...)
-	}
-}
-func (l *levelLogger) Infof(format string, args ...interface{}) {
-	if l.level <= LogLevelInfo {
-		l.inner.Infof(format, args...)
-	}
-}
-func (l *levelLogger) Warn(msg string, args ...interface{}) {
-	if l.level <= LogLevelWarn {
-		l.inner.Warn(msg, args...)
-	}
-}
-func (l *levelLogger) Warnf(format string, args ...interface{}) {
-	if l.level <= LogLevelWarn {
-		l.inner.Warnf(format, args...)
-	}
-}
-func (l *levelLogger) Error(msg string, args ...interface{}) {
-	if l.level <= LogLevelError {
-		l.inner.Error(msg, args...)
-	}
-}
-func (l *levelLogger) Errorf(format string, args ...interface{}) {
-	if l.level <= LogLevelError {
-		l.inner.Errorf(format, args...)
-	}
-}
-func (l *levelLogger) Fatal(msg string, args ...interface{}) {
-	if l.level <= LogLevelFatal {
-		l.inner.Fatal(msg, args...)
-	}
-}
-func (l *levelLogger) Fatalf(format string, args ...interface{}) {
-	if l.level <= LogLevelFatal {
-		l.inner.Fatalf(format, args...)
-	}
+	dl := cfglogger.NewDefaultLoggerWithWriter(w)
+	dl.SetLevel(currentLevel.slogLevel())
+	Logger = dl
 }

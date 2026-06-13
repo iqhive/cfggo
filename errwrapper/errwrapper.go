@@ -1,59 +1,117 @@
 package errwrapper
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 )
 
-// Logger interface for error wrapper logging
+// Logger is the minimal logging surface used by the logging error wrapper.
+// It matches the Error method of cfglogger.Logger (and *slog.Logger), so those
+// loggers satisfy it directly.
 type Logger interface {
-	Error(msg string, args ...interface{})
-	Errorf(format string, args ...interface{})
+	Error(msg string, args ...any)
 }
 
-// ErrorWrapper wraps errors with optional error codes and messages
+// Error is the structured error produced by cfggo's default wrappers.
+//
+// It deliberately keeps the underlying cause reachable through the standard
+// errors.Is / errors.As / Unwrap machinery while still rendering a clean,
+// human-readable message. This is the best of both worlds for developers:
+// programmatic inspection of the cause and code, plus a readable string.
+type Error struct {
+	// Code is an optional, application-defined error code. Zero means "unset"
+	// and is omitted from the rendered message.
+	Code int
+	// Msg is a human-readable message. It may be empty when only an underlying
+	// cause is being wrapped.
+	Msg string
+	// Err is the underlying cause, if any. It is exposed via Unwrap.
+	Err error
+}
+
+// Error renders a clean, readable message of the form:
+//
+//	[code] message: cause
+//
+// where the code prefix is omitted when zero, and the message or cause are
+// omitted when absent.
+func (e *Error) Error() string {
+	var b strings.Builder
+	if e.Code != 0 {
+		fmt.Fprintf(&b, "[%d] ", e.Code)
+	}
+	switch {
+	case e.Msg != "" && e.Err != nil:
+		b.WriteString(e.Msg)
+		b.WriteString(": ")
+		b.WriteString(e.Err.Error())
+	case e.Msg != "":
+		b.WriteString(e.Msg)
+	case e.Err != nil:
+		b.WriteString(e.Err.Error())
+	default:
+		b.WriteString("unspecified error")
+	}
+	return b.String()
+}
+
+// Unwrap exposes the underlying cause so errors.Is and errors.As traverse the
+// chain.
+func (e *Error) Unwrap() error { return e.Err }
+
+// Code returns the application-defined error code carried by err, or 0 if err
+// is nil or does not wrap an *Error. It is a convenience for callers that want
+// to branch on the code without a manual errors.As.
+func Code(err error) int {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	return 0
+}
+
+// ErrorWrapper wraps errors with an optional error code and message.
 type ErrorWrapper func(err error, errorcode int, msg string, args ...interface{}) error
 
-// ErrorWrapperWithLogger wraps errors with logging capability
+// ErrorWrapperWithLogger wraps errors with an optional error code and message
+// and logs the result.
 type ErrorWrapperWithLogger func(logger Logger, err error, errorcode int, msg string, args ...interface{}) error
 
-// NewDefaultErrorWrapper creates a default error wrapper (backwards compatible)
+// NewDefaultErrorWrapper returns the default error wrapper, which produces
+// chain-preserving *Error values.
 func NewDefaultErrorWrapper() ErrorWrapper {
 	return defaultErrorWrapper
 }
 
-// NewDefaultErrorWrapperWithLogger creates a default error wrapper that logs errors
+// NewDefaultErrorWrapperWithLogger returns the default error wrapper that also
+// logs the resulting error.
 func NewDefaultErrorWrapperWithLogger() ErrorWrapperWithLogger {
 	return defaultErrorWrapperWithLogger
 }
 
-// defaultErrorWrapper is the backwards compatible error wrapper
-func defaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
-	if msg == "" {
-		return err
+// newError builds an *Error, applying fmt formatting to msg only when args are
+// supplied (so a message containing a literal % is never misinterpreted). It
+// returns a nil error when there is genuinely nothing to report.
+func newError(err error, errorcode int, msg string, args ...interface{}) error {
+	if err == nil && msg == "" && errorcode == 0 {
+		return nil
 	}
-	return fmt.Errorf(msg, args...)
+	formatted := msg
+	if msg != "" && len(args) > 0 {
+		formatted = fmt.Sprintf(msg, args...)
+	}
+	return &Error{Code: errorcode, Msg: formatted, Err: err}
 }
 
-// defaultErrorWrapperWithLogger wraps errors and logs them
+func defaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
+	return newError(err, errorcode, msg, args...)
+}
+
 func defaultErrorWrapperWithLogger(logger Logger, err error, errorcode int, msg string, args ...interface{}) error {
-	var finalErr error
-
-	if msg == "" {
-		finalErr = err
-	} else {
-		finalErr = fmt.Errorf(msg, args...)
-	}
-
-	// Log the error if we have a logger and an actual error occurred
+	finalErr := newError(err, errorcode, msg, args...)
 	if logger != nil && finalErr != nil {
-		if err != nil {
-			// Log with the underlying error context
-			logger.Errorf("Error (code %d): %v (underlying: %v)", errorcode, finalErr, err)
-		} else {
-			// Log just the wrapped error
-			logger.Errorf("Error (code %d): %v", errorcode, finalErr)
-		}
+		logger.Error(finalErr.Error())
 	}
-
 	return finalErr
 }

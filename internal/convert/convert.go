@@ -169,11 +169,13 @@ func convertStringToMap(s string, target reflect.Type, ew ErrorWrapper) (interfa
 	keyType := target.Key()
 	valType := target.Elem()
 
-	// JSON object.
+	// JSON object - A map made with reflect.MakeMap is not addressable, so
+	// unmarshal into a pointer to a fresh map value (reflect.New) instead
+	// then return the dereferenced map
 	if strings.HasPrefix(s, "{") {
-		m := reflect.MakeMap(target)
-		if err := json.Unmarshal([]byte(s), m.Addr().Interface()); err == nil {
-			return m.Interface(), nil
+		ptr := reflect.New(target)
+		if err := json.Unmarshal([]byte(s), ptr.Interface()); err == nil {
+			return ptr.Elem().Interface(), nil
 		}
 	}
 
@@ -197,10 +199,18 @@ func convertStringToMap(s string, target reflect.Type, ew ErrorWrapper) (interfa
 	return m.Interface(), nil
 }
 
-// ConvertValue coerces value (any Go type) to the target reflect.Type.
-// It is used by Structure.set() to normalise values arriving from JSON, env
-// vars, or command-line flags after they have already been parsed into a Go value.
+// ConvertValue coerces value (any) to the target reflect.Type
+// It is used by Structure.set() to normalise values arriving from JSON
+// env vars or command-line flags after they have already been parsed into a Go value
 func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
+	// A nil target means the destination has no known concrete type
+	// (eg an interface{} field whose current value is an untyped nil.
+	// There is nothing to convert to, so return the value unchanged
+	// instead of calling reflect methods that panic on a nil Type
+	if target == nil {
+		return value, nil
+	}
+
 	if value == nil {
 		return reflect.Zero(target).Interface(), nil
 	}

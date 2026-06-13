@@ -39,16 +39,23 @@ func (h *HandlerEnv) LoadConfig() (json.RawMessage, error) {
 		key := parts[0]
 		value := parts[1]
 
-		// Apply prefix filter if specified
-		if h.prefix != "" && !strings.HasPrefix(key, h.prefix) {
-			continue
+		// Apply prefix filter if specified, stripping the prefix from the raw
+		// environment variable name BEFORE converting "_" to "."
+		// Stripping after conversion fails because the prefix's own underscores
+		// would already have become dots (e.g. prefix "MYAPP_" never matches the
+		// converted "myapp.port"), leaving the prefix stuck on the key
+		if h.prefix != "" {
+			if !strings.HasPrefix(key, h.prefix) {
+				continue
+			}
+			key = strings.TrimPrefix(key, h.prefix)
 		}
 
 		// Convert environment variable name to config key
 		configKey := strings.ToLower(strings.ReplaceAll(key, "_", "."))
-		if h.prefix != "" {
-			configKey = strings.TrimPrefix(configKey, strings.ToLower(h.prefix)+".")
-		}
+		// A prefix without a trailing separator (e.g. "MYAPP") leaves a leading
+		// "_" that becomes a leading "."; drop it so keys line up with config
+		configKey = strings.TrimPrefix(configKey, ".")
 
 		// Try to parse as JSON first, fallback to string
 		var parsedValue interface{}

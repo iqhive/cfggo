@@ -7,7 +7,6 @@ import (
 	"os"
 	"reflect"
 	"sync"
-	"unsafe"
 
 	"github.com/iqhive/cfggo/cfglogger"
 	"github.com/iqhive/cfggo/errwrapper"
@@ -221,28 +220,6 @@ func (c *Structure) ensureInit() {
 			c.log().Error("cfggo: lazy initialisation failed: " + err.Error())
 		}
 	}
-}
-
-// InitMyParent discovers the enclosing struct via unsafe pointer arithmetic and
-// calls Init with it. The embedded Structure field must be anonymous. It
-// returns an error if the parent struct cannot be determined.
-func (c *Structure) InitMyParent(options ...Option) error {
-	structPtr := unsafe.Pointer(reflect.ValueOf(c).Pointer())
-
-	parentValue := reflect.ValueOf(c).Elem().Field(0)
-	parentType := parentValue.Type().Elem()
-
-	for i := 0; i < parentType.NumField(); i++ {
-		field := parentType.Field(i)
-		if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
-			offset := field.Offset
-			parentPtr := unsafe.Pointer(uintptr(structPtr) - offset)
-			parent := reflect.NewAt(parentType, parentPtr).Interface()
-			return c.Init(parent, options...)
-		}
-	}
-
-	return c.WrapError(nil, 0, "InitMyParent: could not determine parent struct automatically")
 }
 
 // ReloadConfig reloads the configuration from all sources.

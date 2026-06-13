@@ -13,6 +13,10 @@ func (c *Structure) Set(key string, value interface{}) error {
 	c.ensureInit()
 
 	c.configMutex.Lock()
+	if _, exists := c.configData[key]; !exists {
+		c.configMutex.Unlock()
+		return c.WrapError(ErrUnknownKey, 404, "Set: unknown configuration key %q", key)
+	}
 	err := c.set(key, value)
 	if err == nil {
 		c.changed = true
@@ -46,6 +50,13 @@ func (c *Structure) applyLoaded(key string, value interface{}, src Source) error
 func (c *Structure) set(key string, value interface{}) error {
 	if existing, exists := c.configData[key]; exists {
 		existingType := reflect.TypeOf(existing)
+		if existingType == nil {
+			// existing is an untyped nil, eg a func() interface{} field with no default
+			// There is no concrete type to convert to, so store the incoming value as-is
+			// rather than letting reflect panic on a nil Type
+			c.configData[key] = value
+			return nil
+		}
 
 		convertedValue, err := iconvert.ConvertValue(value, existingType, c)
 		if err != nil {

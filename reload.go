@@ -6,12 +6,19 @@ import "reflect"
 func (c *Structure) Reload() error {
 	// First, make a copy of the current configuration for potential rollback
 	var oldConfig map[string]interface{}
+	// oldProvenance lets us re-assert command-line flag precedence after the
+	// file/env layers below have been reloaded (see the restore step)
+	var oldProvenance map[string]Source
 
 	// Get a snapshot of the current configuration
 	c.configMutex.Lock()
 	oldConfig = make(map[string]interface{})
 	for k, v := range c.configData {
 		oldConfig[k] = v
+	}
+	oldProvenance = make(map[string]Source, len(c.provenance))
+	for k, v := range c.provenance {
+		oldProvenance[k] = v
 	}
 	// Reset the changed flag
 	c.changed = false
@@ -44,6 +51,23 @@ func (c *Structure) Reload() error {
 	// Reload from flags if they've been parsed
 	if flagsParsed {
 		c.parseFlags()
+	}
+
+	// Re-assert command-line flag precedence. The standard flag package will
+	// not re-run an already-parsed FlagSet (parseFlags above early-returns), so
+	// the file and environment layers reloaded above can otherwise clobber a
+	// value that the user supplied on the command line. Flags rank highest in
+	// the documented precedence order, so restore any value whose pre-reload
+	// provenance was SourceFlag.
+	for key, src := range oldProvenance {
+		if src != SourceFlag {
+			continue
+		}
+		if v, ok := oldConfig[key]; ok {
+			if err := c.applyLoaded(key, v, SourceFlag); err != nil {
+				c.logWarnf("Reload: could not restore flag value for %s: %v", key, err)
+			}
+		}
 	}
 
 	// The accessor closures installed during Init read c.configData live on

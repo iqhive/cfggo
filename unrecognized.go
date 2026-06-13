@@ -57,6 +57,12 @@ func (c *Structure) walkStructFieldsWithKeys(v reflect.Value, prefix string, rec
 		field := t.Field(i)
 		fieldValue := v.Field(i)
 
+		// Skip the embedded cfggo.Structure: it holds internal bookkeeping
+		// including a *flag.FlagSet, that must not be walked as config keys
+		if field.Anonymous && field.Type == reflect.TypeOf(Structure{}) {
+			continue
+		}
+
 		tag := field.Tag.Get("cfggo")
 		if tag == "" {
 			tag = field.Tag.Get("cfg")
@@ -75,12 +81,28 @@ func (c *Structure) walkStructFieldsWithKeys(v reflect.Value, prefix string, rec
 			tag = prefix + "." + tag
 		}
 
-		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+		// Resolve struct and pointer-to-struct fields to the struct value to
+		// recurse into. A nil pointer sub-struct is walked via a temporary zero
+		// value purely to collect its key names (no mutation of the input)
+		structValue := fieldValue
+		isStruct := false
+		if field.Type.Kind() == reflect.Ptr && field.Type.Elem().Kind() == reflect.Struct {
+			if fieldValue.IsNil() {
+				structValue = reflect.New(field.Type.Elem()).Elem()
+			} else {
+				structValue = fieldValue.Elem()
+			}
+			isStruct = true
+		} else if field.Type.Kind() == reflect.Struct {
+			isStruct = true
+		}
+
+		if field.Anonymous && isStruct {
 			// For embedded structs, continue walking without adding a prefix
-			c.walkStructFieldsWithKeys(fieldValue, prefix, recognizedKeys)
-		} else if fieldValue.Kind() == reflect.Struct {
+			c.walkStructFieldsWithKeys(structValue, prefix, recognizedKeys)
+		} else if isStruct {
 			// For non-embedded structs, continue walking with the current tag as prefix
-			c.walkStructFieldsWithKeys(fieldValue, tag, recognizedKeys)
+			c.walkStructFieldsWithKeys(structValue, tag, recognizedKeys)
 		} else {
 			recognizedKeys[tag] = true
 		}

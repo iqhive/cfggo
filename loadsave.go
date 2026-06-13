@@ -221,8 +221,8 @@ func (c *Structure) GetHelpTag(key string) string {
 				fullKey = prefix + "." + configVarName
 			}
 
-			if field.Type.Kind() == reflect.Struct {
-				if help, ok := walk(field.Type, fullKey); ok {
+			if st, ok := structTypeToRecurse(field); ok {
+				if help, ok := walk(st, fullKey); ok {
 					return help, true
 				}
 				continue
@@ -273,14 +273,15 @@ func (c *Structure) shouldIgnoreField(key string) bool {
 				continue
 			}
 
-			// Recurse into nested structs using the config-name prefix so the
-			// keys here line up with those produced by setupConfigData.
-			if field.Type.Kind() == reflect.Struct {
+			// Recurse into nested structs (including pointer sub-structs) using
+			// the config-name prefix so the keys here line up with those
+			// produced by setupConfigData.
+			if st, ok := structTypeToRecurse(field); ok {
 				nestedPrefix := configVarName
 				if prefix != "" {
 					nestedPrefix = prefix + "." + configVarName
 				}
-				if checkStruct(field.Type, nestedPrefix) {
+				if checkStruct(st, nestedPrefix) {
 					return true
 				}
 			}

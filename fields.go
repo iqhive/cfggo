@@ -55,6 +55,55 @@ func (c *Structure) getConfigNameFromField(field reflect.StructField) string {
 	return configVarName
 }
 
+// structToRecurse decides whether a struct field should be treated as a nested
+// config group and, if so, returns the struct Value to recurse into
+//
+// It accepts both struct fields (e.g. `DB Database`) and pointer-to-struct
+// fields (e.g. `DB *Database`). A nil pointer sub-struct is allocated in place
+// (when the field is settable) so the func-typed accessor fields it contains
+// can be wired up and read; this is why pointer sub-structs are non-nil after
+// Init. The embedded cfggo.Structure is never treated as a config group
+func structToRecurse(field reflect.StructField, fieldValue reflect.Value) (reflect.Value, bool) {
+	if field.Anonymous && field.Type == reflect.TypeOf(Structure{}) {
+		return reflect.Value{}, false
+	}
+
+	switch field.Type.Kind() {
+	case reflect.Struct:
+		return fieldValue, true
+	case reflect.Ptr:
+		elem := field.Type.Elem()
+		if elem.Kind() != reflect.Struct || elem == reflect.TypeOf(Structure{}) {
+			return reflect.Value{}, false
+		}
+		if fieldValue.IsNil() {
+			if !fieldValue.CanSet() {
+				return reflect.Value{}, false
+			}
+			fieldValue.Set(reflect.New(elem))
+		}
+		return fieldValue.Elem(), true
+	}
+	return reflect.Value{}, false
+}
+
+// structTypeToRecurse mirrors structToRecurse for type-only walks where there
+// is no value to allocate, returning the struct type to recurse into
+// This resolves pointer-to-struct fields to their element type
+func structTypeToRecurse(field reflect.StructField) (reflect.Type, bool) {
+	if field.Anonymous && field.Type == reflect.TypeOf(Structure{}) {
+		return nil, false
+	}
+	t := field.Type
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.Struct && t != reflect.TypeOf(Structure{}) {
+		return t, true
+	}
+	return nil, false
+}
+
 // setupConfigData walks the parent struct and populates c.configData with
 // zero/default values for each config field.
 func (c *Structure) setupConfigData() {
@@ -91,27 +140,41 @@ func (c *Structure) setupConfigData() {
 				fullKey = prefix + "." + configVarName
 			}
 
-			if fieldValue.Kind() == reflect.Struct {
-				processStruct(fieldValue, field.Type, fullKey)
-			} else if fieldValue.Kind() == reflect.Func && fieldValue.IsNil() {
+			if sv, ok := structToRecurse(field, fieldValue); ok {
+				processStruct(sv, sv.Type(), fullKey)
+				continue
+			}
+
+			// Only zero-arg+single-return funcs (func() T) are accessors
+			// skip anything else like a structs own func() field
+			if !isAccessorFunc(fieldValue) {
+				continue
+			}
+
+			if fieldValue.IsNil() || !fieldValue.CanInterface() {
 				if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
 					c.logWarnf("Failed to set default value for %s: %v", fullKey, err)
 				}
-			} else if fieldValue.Kind() == reflect.Func {
-				if fieldValue.CanInterface() {
-					if err := c.set(fullKey, fieldValue.Call(nil)[0].Interface()); err != nil {
-						c.logWarnf("Failed to set value for %s: %v", fullKey, err)
-					}
-				} else {
-					if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
-						c.logWarnf("Failed to set default value for %s: %v", fullKey, err)
-					}
-				}
+				continue
+			}
+
+			if err := c.set(fullKey, fieldValue.Call(nil)[0].Interface()); err != nil {
+				c.logWarnf("Failed to set value for %s: %v", fullKey, err)
 			}
 		}
 	}
 
 	processStruct(v, v.Type(), "")
+}
+
+// isAccessorFunc reports whether v is a cfggo config accessor: a func with no
+// parameters and exactly one return value - func() T)
+func isAccessorFunc(v reflect.Value) bool {
+	if v.Kind() != reflect.Func {
+		return false
+	}
+	ft := v.Type()
+	return ft.NumIn() == 0 && ft.NumOut() == 1
 }
 
 // setDefaultsFromTags reads `default:"..."` struct tags and applies them to
@@ -154,12 +217,12 @@ func (c *Structure) setDefaultsFromTags() {
 				fullKey = prefix + "." + configVarName
 			}
 
-			if fieldValue.Kind() == reflect.Struct {
-				processStruct(fieldValue, field.Type, fullKey)
+			if sv, ok := structToRecurse(field, fieldValue); ok {
+				processStruct(sv, sv.Type(), fullKey)
 				continue
 			}
 
-			if fieldValue.Kind() != reflect.Func || !fieldValue.IsNil() {
+			if !isAccessorFunc(fieldValue) || !fieldValue.IsNil() {
 				continue
 			}
 
@@ -169,9 +232,9 @@ func (c *Structure) setDefaultsFromTags() {
 					name:   fullKey,
 					want:   fieldValue.Type().Out(0),
 				}
-			if err := dv.Set(defaultStr); err != nil {
-				c.logWarnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
-			}
+				if err := dv.Set(defaultStr); err != nil {
+					c.logWarnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
+				}
 			}
 		}
 	}
@@ -224,12 +287,12 @@ func (c *Structure) replaceConfigFuncs() {
 				fullKey = prefix + "." + configVarName
 			}
 
-			if fieldValue.Kind() == reflect.Struct {
-				processStruct(fieldValue, field.Type, fullKey)
+			if sv, ok := structToRecurse(field, fieldValue); ok {
+				processStruct(sv, sv.Type(), fullKey)
 				continue
 			}
 
-			if fieldValue.Kind() != reflect.Func {
+			if !isAccessorFunc(fieldValue) {
 				continue
 			}
 

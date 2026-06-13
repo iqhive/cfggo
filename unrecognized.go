@@ -24,7 +24,7 @@ func (c *Structure) CheckUnrecognizedItems(s interface{}) {
 	}
 
 	if v.Kind() != reflect.Struct {
-		c.logWarnf("CheckUnrecognizedItems: expected struct, got %v", v.Kind())
+		c.log().Warn("cfggo: CheckUnrecognizedItems expected a struct", "kind", v.Kind().String())
 		return
 	}
 
@@ -37,7 +37,7 @@ func (c *Structure) CheckUnrecognizedItems(s interface{}) {
 
 	for _, key := range allKeys {
 		if !recognizedKeys[key] {
-			c.logWarnf("Warning: Unrecognized %s item '%s' found", c.name, key)
+			c.log().Warn("cfggo: unrecognized configuration key (no matching struct field)", "config", c.name, "key", key)
 		}
 	}
 }

@@ -61,7 +61,7 @@ github.com/iqhive/cfggo/
     env.go            #   HandlerEnv (wired via WithEnvConfig option)
   cfglogger/          # Logger interface + DefaultLogger + NoopLogger
     cfglogger.go
-  errwrapper/         # ErrorWrapper / ErrorWrapperWithLogger types + defaults
+  errwrapper/         # ErrorWrapper type + default chain-preserving wrapper
     errwrapper.go
   validcfg/           # Validator type + built-in validators + composites
     validation.go     #   Validator type, ValidationError, ValidationErrors, Custom
@@ -145,7 +145,7 @@ graph TD
 |---------|---------|
 | `sources` | `ConfigHandler` interface, `HandlerFile`, `HandlerHTTP`, `HandlerEnv` |
 | `cfglogger` | `Logger` interface, `DefaultLogger`, `NoopLogger` |
-| `errwrapper` | `ErrorWrapper`, `ErrorWrapperWithLogger`, defaults |
+| `errwrapper` | `ErrorWrapper`, default chain-preserving wrapper |
 | `validcfg` | `Validator` type, all built-in validators |
 
 ---

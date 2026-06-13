@@ -3,6 +3,7 @@ package cfggo
 import (
 	"io"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/iqhive/cfggo/cfglogger"
 )
@@ -35,7 +36,6 @@ const (
 	LogLevelInfo
 	LogLevelWarn
 	LogLevelError
-	LogLevelFatal
 	LogLevelNone
 )
 
@@ -51,16 +51,14 @@ func ParseLogLevel(s string) (LogLevel, bool) {
 		return LogLevelWarn, true
 	case "error", "ERROR":
 		return LogLevelError, true
-	case "fatal", "FATAL":
-		return LogLevelFatal, true
 	case "none", "NONE", "off", "OFF":
 		return LogLevelNone, true
 	}
 	return LogLevelInfo, false
 }
 
-// slogLevel maps a cfggo LogLevel onto a slog.Level. Fatal sits just above
-// Error, and None uses a level high enough that nothing is ever emitted.
+// slogLevel maps a cfggo LogLevel onto a slog.Level. None uses a level high
+// enough that nothing is ever emitted
 func (l LogLevel) slogLevel() slog.Level {
 	switch l {
 	case LogLevelDebug:
@@ -71,8 +69,6 @@ func (l LogLevel) slogLevel() slog.Level {
 		return slog.LevelWarn
 	case LogLevelError:
 		return slog.LevelError
-	case LogLevelFatal:
-		return slog.LevelError + 4
 	case LogLevelNone:
 		return slog.Level(1 << 30)
 	}
@@ -80,19 +76,23 @@ func (l LogLevel) slogLevel() slog.Level {
 }
 
 // currentLevel tracks the configured level so SetLogLevel and SetLogOutput can
-// be combined without losing state.
-var currentLevel = LogLevelInfo
+// be combined without losing state
+// Store atomically because both setters may be called from different goroutines
+var currentLevel atomic.Int32
 
-// SetLogLevel adjusts the verbosity of the global Logger. Messages below the
-// given level are discarded by the underlying slog handler.
+func init() { currentLevel.Store(int32(LogLevelInfo)) }
+
+// SetLogLevel adjusts the verbosity of the global logger. Messages below the
+// given level are discarded by the underlying handler.
 //
-// This only affects the built-in DefaultLogger. If you supply your own logger
-// (via the global Logger variable or WithLogger), that logger controls its own
-// level and SetLogLevel is a no-op for it.
+// SetLogLevel forwards the level to any global logger that implements
+// cfglogger.LevelSetter (the built-in DefaultLogger does). If you supply a
+// custom logger that does not implement LevelSetter, that logger controls its
+// own level and SetLogLevel only records the level for a later SetLogOutput
 func SetLogLevel(level LogLevel) {
-	currentLevel = level
-	if dl, ok := Logger.(*cfglogger.DefaultLogger); ok {
-		dl.SetLevel(level.slogLevel())
+	currentLevel.Store(int32(level))
+	if ls, ok := GlobalLogger().(cfglogger.LevelSetter); ok {
+		ls.SetLevel(level.slogLevel())
 	}
 }
 
@@ -100,6 +100,6 @@ func SetLogLevel(level LogLevel) {
 // Call this once at startup, before spawning goroutines that log.
 func SetLogOutput(w io.Writer) {
 	dl := cfglogger.NewDefaultLoggerWithWriter(w)
-	dl.SetLevel(currentLevel.slogLevel())
-	Logger = dl
+	dl.SetLevel(LogLevel(currentLevel.Load()).slogLevel())
+	SetGlobalLogger(dl)
 }

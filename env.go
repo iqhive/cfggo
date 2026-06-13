@@ -27,7 +27,7 @@ func (c *Structure) loadFromEnv() {
 		c.configMutex.RLock()
 		existing, exists := c.configData[key]
 		c.configMutex.RUnlock()
-		
+
 		if !exists {
 			continue
 		}
@@ -42,12 +42,11 @@ func (c *Structure) loadFromEnv() {
 		}
 
 		// Set the value
+		envVar := internalEnvLoader.KeyToEnvVar(key)
 		if err := dv.Set(value); err != nil {
-			envVar := internalEnvLoader.KeyToEnvVar(key)
-			c.logInfof("Error setting config from environment variable %s=(%v): %v", envVar, value, err)
+			c.log().Info("cfggo: error setting config from environment variable", "key", key, "env", envVar, "value", value, "err", err)
 		} else {
-			envVar := internalEnvLoader.KeyToEnvVar(key)
-			c.logDebugf("Set config %s from environment variable %s=(%v)", key, envVar, value)
+			c.log().Debug("cfggo: set config from environment variable", "key", key, "env", envVar, "value", value)
 		}
 	}
 }

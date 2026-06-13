@@ -6,13 +6,6 @@ import (
 	"strings"
 )
 
-// Logger is the minimal logging surface used by the logging error wrapper.
-// It matches the Error method of cfglogger.Logger (and *slog.Logger), so those
-// loggers satisfy it directly.
-type Logger interface {
-	Error(msg string, args ...any)
-}
-
 // Error is the structured error produced by cfggo's default wrappers.
 //
 // It deliberately keeps the underlying cause reachable through the standard
@@ -74,20 +67,10 @@ func Code(err error) int {
 // ErrorWrapper wraps errors with an optional error code and message.
 type ErrorWrapper func(err error, errorcode int, msg string, args ...interface{}) error
 
-// ErrorWrapperWithLogger wraps errors with an optional error code and message
-// and logs the result.
-type ErrorWrapperWithLogger func(logger Logger, err error, errorcode int, msg string, args ...interface{}) error
-
 // NewDefaultErrorWrapper returns the default error wrapper, which produces
 // chain-preserving *Error values.
 func NewDefaultErrorWrapper() ErrorWrapper {
 	return defaultErrorWrapper
-}
-
-// NewDefaultErrorWrapperWithLogger returns the default error wrapper that also
-// logs the resulting error.
-func NewDefaultErrorWrapperWithLogger() ErrorWrapperWithLogger {
-	return defaultErrorWrapperWithLogger
 }
 
 // newError builds an *Error, applying fmt formatting to msg only when args are
@@ -106,12 +89,4 @@ func newError(err error, errorcode int, msg string, args ...interface{}) error {
 
 func defaultErrorWrapper(err error, errorcode int, msg string, args ...interface{}) error {
 	return newError(err, errorcode, msg, args...)
-}
-
-func defaultErrorWrapperWithLogger(logger Logger, err error, errorcode int, msg string, args ...interface{}) error {
-	finalErr := newError(err, errorcode, msg, args...)
-	if logger != nil && finalErr != nil {
-		logger.Error(finalErr.Error())
-	}
-	return finalErr
 }

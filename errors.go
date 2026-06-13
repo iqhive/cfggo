@@ -32,6 +32,24 @@ var (
 	ErrValidation = validcfg.ErrValidation
 )
 
+// Error codes carried by the *errwrapper.Error values cfggo produces. They are
+// surfaced via ErrorCode and exist so call sites use named, self-documenting
+// values instead of bare integer literals. The numeric values intentionally
+// mirror common HTTP-style semantics (bad request / not found / internal) for
+// readers who find that familiar, but callers should branch on the constants
+// (or the sentinel errors above), not the raw numbers
+const (
+	// ErrCodeNone means no specific code was attached.
+	ErrCodeNone = 0
+	// ErrCodeInvalidArgument indicates a caller-supplied argument or option was
+	// invalid (e.g. a nil flag set, a pointer-to-pointer parent).
+	ErrCodeInvalidArgument = 400
+	// ErrCodeNotFound indicates a referenced configuration key does not exist.
+	ErrCodeNotFound = 404
+	// ErrCodeInternal indicates an unexpected internal failure.
+	ErrCodeInternal = 500
+)
+
 // ErrorCode returns the application-defined error code carried by err, or 0 if
 // err is nil or carries no code. It is a thin re-export of errwrapper.Code so
 // callers do not need to import the errwrapper package.

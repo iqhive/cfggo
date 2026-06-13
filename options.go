@@ -45,12 +45,12 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 	if _, err := os.Stat(filename); err != nil {
 		if os.IsNotExist(err) {
 			if !defaultConfig {
-				Logger.Warn("filename (" + filename + ") does not exist")
+				GlobalLogger().Warn("cfggo: configuration file does not exist", "filename", filename)
 			}
 			return withNoop()
 		}
 
-		Logger.Warn("error loading filename (" + filename + "): " + err.Error())
+		GlobalLogger().Warn("cfggo: error checking configuration file", "filename", filename, "err", err)
 		return withNoop()
 	}
 	return func(c *Structure) error {
@@ -59,7 +59,7 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 				return nil
 			}
 			if !c.configHandler.IsDefault() {
-				return c.WrapError(nil, 400, "configHandler is already set, ignoring "+funcName)
+				return c.WrapError(nil, ErrCodeInvalidArgument, "configHandler is already set, ignoring "+funcName)
 			}
 		}
 		handler := sources.NewHandlerFile(filename, defaultConfig)
@@ -85,7 +85,7 @@ func WithFileConfigParamName(argName string) Option {
 		}
 	}
 	if filename == "" {
-		Logger.Debug("no filename found for argument (" + argName + ")")
+		GlobalLogger().Debug("cfggo: no filename found for config argument", "arg", argName)
 		return func(c *Structure) error {
 			c.FlagSet.String(argName, "", "")
 			return nil
@@ -95,7 +95,7 @@ func WithFileConfigParamName(argName string) Option {
 	return func(c *Structure) error {
 		c.FlagSet.String(argName, "", "")
 		if err := wrap(c); err != nil {
-			c.logWarnf("Failed to apply WithFileConfig: %v", err)
+			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
 		}
 		return nil
 	}
@@ -105,12 +105,12 @@ func WithFileConfigParamName(argName string) Option {
 func WithHTTPConfig(httpLoader *http.Request, httpSaver *http.Request) Option {
 	if httpLoader == nil && httpSaver == nil {
 		return func(c *Structure) error {
-			return c.WrapError(nil, 400, "httpLoader and httpSaver cannot both be nil")
+			return c.WrapError(nil, ErrCodeInvalidArgument, "httpLoader and httpSaver cannot both be nil")
 		}
 	}
 	return func(c *Structure) error {
 		if c.configHandler != nil {
-			return c.WrapError(nil, 400, "configHandler is already set, ignoring WithHTTPConfig")
+			return c.WrapError(nil, ErrCodeInvalidArgument, "configHandler is already set, ignoring WithHTTPConfig")
 		}
 		handler := sources.NewHandlerHTTP(httpLoader, httpSaver, false)
 		c.configHandler = handler
@@ -162,7 +162,7 @@ func WithAutoSave(ctx context.Context) Option {
 func WithFlagSet(fs *flag.FlagSet) Option {
 	return func(c *Structure) error {
 		if fs == nil {
-			return c.WrapError(nil, 400, "WithFlagSet: flag set must not be nil")
+			return c.WrapError(nil, ErrCodeInvalidArgument, "WithFlagSet: flag set must not be nil")
 		}
 		c.FlagSet = fs
 		c.externalFlagSet = true
@@ -215,7 +215,7 @@ func WithValidation(key string, validator validcfg.Validator) Option {
 func WithEnvConfig(prefix string) Option {
 	return func(c *Structure) error {
 		if c.configHandler != nil {
-			return c.WrapError(nil, 400, "configHandler is already set, ignoring WithEnvConfig")
+			return c.WrapError(nil, ErrCodeInvalidArgument, "configHandler is already set, ignoring WithEnvConfig")
 		}
 		c.configHandler = sources.NewHandlerEnv(prefix, true)
 		return nil
@@ -246,13 +246,29 @@ func WithErrorWrapper(wrapper errwrapper.ErrorWrapper) Option {
 	}
 }
 
-// WithErrorWrapperWithLogger sets a custom error wrapper with logging for this configuration instance
+// WithLenientLoad makes configuration load and validation failures during Init
+// non-fatal: instead of returning an error, Init logs a warning and continues
+// with whatever values it could resolve.
 //
-// Deprecated: prefer WithErrorWrapper and log returned errors yourself. See
-// Structure.WrapErrorWithLogging.
-func WithErrorWrapperWithLogger(wrapper errwrapper.ErrorWrapperWithLogger) Option {
+// By default cfggo is strict — a malformed configuration file (invalid JSON) or
+// a value that fails a registered validator causes Init to return an error, so
+// misconfiguration is surfaced loudly at startup rather than silently ignored.
+// Use this option when you deliberately want best-effort loading (eg a
+// long-running service that should start with defaults even if its config file
+// is temporarily broken)
+func WithLenientLoad() Option {
 	return func(c *Structure) error {
-		c.errorWrapperWithLogger = wrapper
+		c.lenient = true
+		return nil
+	}
+}
+
+// WithStrictKeys makes Init return an error when a loaded configuration key has
+// no matching struct field (typically a typo in a config file or environment
+// variable). By default such keys are only logged as warnings.
+func WithStrictKeys() Option {
+	return func(c *Structure) error {
+		c.strictKeys = true
 		return nil
 	}
 }

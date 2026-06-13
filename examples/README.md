@@ -29,7 +29,7 @@ Demonstrates:
 - Implementing a fully custom `cfglogger.Logger`.
 - Custom `errwrapper.ErrorWrapper` for rich error formatting.
 - Running multiple independent service configs in one process.
-- `WrapErrorWithLogging` for error wrapping that also logs.
+- `WrapError` for error wrapping, then logging the returned error explicitly.
 
 ```sh
 cd advanced && go run main.go

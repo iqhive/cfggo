@@ -153,7 +153,7 @@ func (c *Structure) setupConfigData() {
 
 			if fieldValue.IsNil() || !fieldValue.CanInterface() {
 				if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
-					c.logWarnf("Failed to set default value for %s: %v", fullKey, err)
+					c.log().Warn("cfggo: failed to set default value", "key", fullKey, "err", err)
 					continue
 				}
 				c.recordSourceLocked(fullKey, SourceDefault)
@@ -161,7 +161,7 @@ func (c *Structure) setupConfigData() {
 			}
 
 			if err := c.set(fullKey, fieldValue.Call(nil)[0].Interface()); err != nil {
-				c.logWarnf("Failed to set value for %s: %v", fullKey, err)
+				c.log().Warn("cfggo: failed to set value", "key", fullKey, "err", err)
 				continue
 			}
 			c.recordSourceLocked(fullKey, SourceDefault)
@@ -238,7 +238,7 @@ func (c *Structure) setDefaultsFromTags() {
 					source: SourceDefault,
 				}
 				if err := dv.Set(defaultStr); err != nil {
-					c.logWarnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)
+					c.log().Warn("cfggo: could not parse default value", "field", field.Name, "key", fullKey, "err", err)
 				}
 			}
 		}
@@ -302,7 +302,7 @@ func (c *Structure) replaceConfigFuncs() {
 			}
 
 			if _, exists := c.configData[fullKey]; !exists {
-				c.logErrorf("Missing configData value for key %s", fullKey)
+				c.log().Error("cfggo: missing config value for key during func wiring", "key", fullKey)
 				continue
 			}
 

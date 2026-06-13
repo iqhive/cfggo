@@ -24,6 +24,16 @@ type Logger interface {
 	Error(msg string, args ...any)
 }
 
+// LevelSetter is an optional interface a Logger may implement to participate in
+// cfggo.SetLogLevel. When a Logger implements it, SetLogLevel forwards the
+// requested level (mapped onto slog.Level) so custom loggers can opt in to
+// cfggo's level control instead of SetLogLevel silently doing nothing
+//
+// The built-in DefaultLogger implements this interface
+type LevelSetter interface {
+	SetLevel(level slog.Level)
+}
+
 // DefaultLogger is the default Logger implementation. It is backed by the
 // standard library's log/slog and, crucially, honours a configurable level: a
 // *slog.LevelVar drives the underlying handler so that raising the verbosity

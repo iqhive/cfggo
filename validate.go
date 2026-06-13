@@ -59,7 +59,8 @@ func (c *Structure) Validate() error {
 	for key, value := range c.configData {
 		if validator, exists := validators[key]; exists {
 			if err := validator(value); err != nil {
-				errs = append(errs, validcfg.ValidationError{Key: key, Err: err})
+				ve := validcfg.ValidationError{Key: key, Err: err}
+				errs = append(errs, ve.WithProvenance(value, c.provenance[key].String()))
 			}
 		}
 	}
@@ -81,7 +82,7 @@ func (c *Structure) ValidateKey(key string) error {
 
 	value, exists := c.configData[key]
 	if !exists {
-		return c.WrapError(ErrUnknownKey, 404, "key %q not found", key)
+		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found", key)
 	}
 
 	validators, exists := c.validationMap[c.name]
@@ -96,8 +97,10 @@ func (c *Structure) ValidateKey(key string) error {
 
 	if err := validator(value); err != nil {
 		// Wrap as a ValidationError so the result matches both ErrValidation
-		// (via errors.Is) and the underlying validator error.
-		return c.WrapError(validcfg.ValidationError{Key: key, Err: err}, 0, "")
+		// (via errors.Is) and the underlying validator error. Provenance is
+		// attached so the message points at the source of the bad value.
+		ve := validcfg.ValidationError{Key: key, Err: err}.WithProvenance(value, c.provenance[key].String())
+		return c.WrapError(ve, ErrCodeNone, "")
 	}
 
 	return nil

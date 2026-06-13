@@ -130,5 +130,5 @@ func main() {
 	}
 
 	fmt.Printf("Legacy config service name: %s\n", legacyConfig.ServiceName())
-	fmt.Printf("Legacy config uses global logger: %t\n", legacyConfig.GetLogger() == cfggo.Logger)
+	fmt.Printf("Legacy config uses global logger: %t\n", legacyConfig.GetLogger() == cfggo.GlobalLogger())
 }

@@ -16,14 +16,45 @@ var ErrValidation = errors.New("validation failed")
 // Validator is a function that validates a configuration value
 type Validator func(interface{}) error
 
-// ValidationError represents an error that occurred during validation
+// ValidationError represents an error that occurred during validation.
+//
+// Value and Source are optional provenance fields. When populated (cfggo sets
+// them automatically), the rendered message names the offending value and where
+// it came from — e.g. "validation failed for 'port' (value=99999, from flag):
+// value must be between 1 and 65535" — which answers the first question a
+// developer asks: which source set the bad value?
 type ValidationError struct {
 	Key string
 	Err error
+	// Value is the configuration value that failed validation, if known
+	Value interface{}
+	// Source is a human-readable provenance label (e.g. "flag", "env",
+	// "file", "default"), if known.
+	Source string
+	// hasValue distinguishes a deliberately-set nil/zero Value from an unset one so
+	// the message only includes value/source detail when provenance was actually supplied
+	hasValue bool
+}
+
+// WithProvenance returns a copy of the ValidationError annotated with the value
+// that failed and a human-readable source label. It is used by cfggo to enrich
+// validator output with provenance
+func (v ValidationError) WithProvenance(value interface{}, source string) ValidationError {
+	v.Value = value
+	v.Source = source
+	v.hasValue = true
+	return v
 }
 
 // Error implements the error interface
 func (v ValidationError) Error() string {
+	if v.hasValue {
+		src := v.Source
+		if src == "" {
+			src = "unknown"
+		}
+		return fmt.Sprintf("validation failed for '%s' (value=%v, from %s): %v", v.Key, v.Value, src, v.Err)
+	}
 	return fmt.Sprintf("validation failed for '%s': %v", v.Key, v.Err)
 }
 

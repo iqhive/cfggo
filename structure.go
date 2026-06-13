@@ -42,9 +42,27 @@ type Structure struct {
 	// behaviour of exiting on unknown flags
 	ignoreUnknownVars bool
 
-	logger                 cfglogger.Logger
-	errorWrapper           errwrapper.ErrorWrapper
-	errorWrapperWithLogger errwrapper.ErrorWrapperWithLogger
+	// lenient, when true (via WithLenientLoad), downgrades configuration load
+	// and validation failures during Init from hard errors to logged warnings.
+	// The default (false) makes Init() return these errors so misconfiguration is
+	// surfaced loudly instead of silently ignored
+	lenient bool
+
+	// strictKeys, when true (via WithStrictKeys), makes Init() return an error
+	// when a loaded configuration key is not backed by a struct field. The
+	// default (false) only logs a warning for such keys
+	strictKeys bool
+
+	logger       cfglogger.Logger
+	errorWrapper errwrapper.ErrorWrapper
+
+	// fields holds precomputed metadata for every leaf (non-struct) config
+	// field, keyed by its dotted config key. It is built once during Init so
+	// help-tag lookups, the config reference, and key-recognition checks do not
+	// repeatedly walk the parent struct via reflection. ignoredFields records
+	// the dotted keys of fields tagged `cfggo:"-"`
+	fields        map[string]fieldInfo
+	ignoredFields map[string]bool
 
 	// configMutex guards this instance's configData, provenance, and flag/func
 	// wiring. It is per-instance so independent Structure values never contend
@@ -91,13 +109,10 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 	}
 
 	if c.logger == nil {
-		c.logger = Logger
+		c.logger = GlobalLogger()
 	}
 	if c.errorWrapper == nil {
-		c.errorWrapper = ErrorWrapper
-	}
-	if c.errorWrapperWithLogger == nil {
-		c.errorWrapperWithLogger = errwrapper.NewDefaultErrorWrapperWithLogger()
+		c.errorWrapper = GlobalErrorWrapper()
 	}
 
 	v := reflect.ValueOf(parent)
@@ -107,7 +122,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 		parent = ptr.Interface()
 		c.log().Warn("Structure: Init() must be called with a parent struct pointer, not a struct")
 	} else if v.Type().Elem().Kind() == reflect.Ptr {
-		return c.WrapError(nil, 400, "Init: parent must be a pointer to a struct, not a pointer to a pointer")
+		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must be a pointer to a struct, not a pointer to a pointer")
 	}
 
 	if c.parent != nil {
@@ -116,28 +131,34 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 	}
 	c.parent = parent
 
-	for _, option := range options {
-		if err := option(c); err != nil {
-			return c.WrapError(err, 0, "Init: option returned error")
-		}
-	}
-
+	// Establish the default name before running options. Options such as
+	// WithValidation register validators keyed by c.name, so the name must be
+	// settled first or those validators would be stored under "" and never run
+	// (WithName, if supplied, still overrides this default during the loop)
 	if c.name == "" {
 		c.name = reflect.TypeOf(c.parent).Elem().Name()
 	}
 
+	for _, option := range options {
+		if err := option(c); err != nil {
+			return c.WrapError(err, ErrCodeNone, "Init: option returned error")
+		}
+	}
+
+	c.buildFieldMeta()
 	c.setupConfigData()
 	c.setDefaultsFromTags()
 	c.replaceConfigFuncs()
 
 	if c.configHandler != nil {
 		if err := c.loadConfig(false); err != nil {
-			c.logErrorf("LoadConfig: %v", err)
 			// A non-default source that fails to load is fatal to Init; a
 			// default source (WithDefaultFileConfig) is allowed to be absent.
 			if !c.configHandler.IsDefault() {
+				c.log().Error("cfggo: failed to load configuration source", "err", err)
 				return err
 			}
+			c.log().Warn("cfggo: optional configuration source could not be loaded", "err", err)
 		}
 	}
 
@@ -150,8 +171,25 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 		c.parseFlags()
 	}
 
+	// Surface configuration keys that are not backed by a struct field. These
+	// are almost always typos (e.g. "portt" in a JSON file) that would
+	// otherwise be silently ignored. WithStrictKeys upgrades this to an error
+	if unrecognized := c.unrecognizedKeys(); len(unrecognized) > 0 {
+		for _, key := range unrecognized {
+			c.log().Warn("cfggo: unrecognized configuration key (no matching struct field)", "config", c.name, "key", key)
+		}
+		if c.strictKeys {
+			return c.WrapError(wrapKind(ErrUnknownKey, fmt.Errorf("%v", unrecognized)), ErrCodeNotFound,
+				"unrecognized configuration keys")
+		}
+	}
+
 	if err := c.Validate(); err != nil {
-		c.logWarnf("Configuration validation failed: %v", err)
+		if !c.lenient {
+			c.log().Error("cfggo: configuration validation failed", "err", err)
+			return err
+		}
+		c.log().Warn("cfggo: configuration validation failed", "err", err)
 	}
 
 	c.startAutoSave()
@@ -161,25 +199,9 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 // WrapError wraps an error using the instance's error wrapper.
 func (c *Structure) WrapError(err error, errorcode int, msg string, args ...interface{}) error {
 	if c.errorWrapper == nil {
-		c.errorWrapper = ErrorWrapper
+		c.errorWrapper = GlobalErrorWrapper()
 	}
 	return c.errorWrapper(err, errorcode, msg, args...)
-}
-
-// WrapErrorWithLogging wraps an error and logs it using the instance's logger.
-//
-// Deprecated: prefer WrapError and log the returned error yourself (e.g.
-// c.GetLogger().Error(err.Error())). Having two wrapping entry points is a
-// frequent source of "which do I use?" confusion; this variant will be removed
-// in a future version.
-func (c *Structure) WrapErrorWithLogging(err error, errorcode int, msg string, args ...interface{}) error {
-	if c.errorWrapperWithLogger == nil {
-		c.errorWrapperWithLogger = errwrapper.NewDefaultErrorWrapperWithLogger()
-	}
-	if c.logger == nil {
-		c.logger = Logger
-	}
-	return c.errorWrapperWithLogger(c.logger, err, errorcode, msg, args...)
 }
 
 // SetLogger sets the instance-specific logger.
@@ -192,15 +214,10 @@ func (c *Structure) SetErrorWrapper(wrapper errwrapper.ErrorWrapper) {
 	c.errorWrapper = wrapper
 }
 
-// SetErrorWrapperWithLogger sets the instance-specific error wrapper with logging.
-func (c *Structure) SetErrorWrapperWithLogger(wrapper errwrapper.ErrorWrapperWithLogger) {
-	c.errorWrapperWithLogger = wrapper
-}
-
-// GetLogger returns the instance's logger, falling back to the global Logger.
+// GetLogger returns the instance's logger, falling back to the global logger
 func (c *Structure) GetLogger() cfglogger.Logger {
 	if c.logger == nil {
-		return Logger
+		return GlobalLogger()
 	}
 	return c.logger
 }
@@ -225,6 +242,6 @@ func (c *Structure) ensureInit() {
 // ReloadConfig reloads the configuration from all sources.
 func (c *Structure) ReloadConfig() error {
 	c.ensureInit()
-	c.logInfof("ReloadConfig %s", c.name)
+	c.log().Info("cfggo: reloading configuration", "config", c.name)
 	return c.Reload()
 }

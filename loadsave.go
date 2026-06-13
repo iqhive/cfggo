@@ -2,8 +2,10 @@ package cfggo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -22,14 +24,20 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 
 func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) error {
 	if len(data) == 0 {
-		c.log().Debug("loadJSONConfigFromBytes: empty or nil data provided")
+		c.log().Debug("cfggo: empty or nil config data provided")
 		return nil
 	}
 
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
-		c.logErrorf("Failed to unmarshal JSON data: %v", err)
-		return nil
+		// A malformed config file is a hard error by default: starting with
+		// silently-ignored config is usually worse than failing loudly.
+		// Callers that want best-effort loading opt in via WithLenientLoad
+		if c.lenient {
+			c.log().Warn("cfggo: ignoring malformed configuration JSON", "err", err)
+			return nil
+		}
+		return c.WrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument, "failed to parse configuration JSON")
 	}
 
 	if !alreadyLocked {
@@ -39,6 +47,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 
 	src := c.handlerSource()
 
+	var setErrs []error
 	var processMap func(map[string]interface{}, string)
 	processMap = func(m map[string]interface{}, prefix string) {
 		for key, value := range m {
@@ -73,7 +82,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 
 			// All type coercion is handled by the unified converter inside c.set.
 			if err := c.set(fullKey, value); err != nil {
-				c.logWarnf("Error setting config key %s: %v", fullKey, err)
+				c.log().Warn("cfggo: error setting config key from source", "key", fullKey, "source", src, "err", err)
+				setErrs = append(setErrs, fmt.Errorf("%s: %w", fullKey, err))
 				continue
 			}
 			c.recordSourceLocked(fullKey, src)
@@ -81,6 +91,14 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 	}
 
 	processMap(rawConfig, "")
+
+	// Type-coercion failures (eg a string where an int is expected) are also
+	// surfaced as a load error in strict mode so callers learn their config
+	// file does not match the struct
+	if len(setErrs) > 0 && !c.lenient {
+		return c.WrapError(wrapKind(ErrSource, errors.Join(setErrs...)), ErrCodeInvalidArgument,
+			"failed to apply configuration values")
+	}
 	return nil
 }
 
@@ -98,7 +116,7 @@ func (c *Structure) startAutoSave() {
 	go func() {
 		<-ctx.Done()
 		if err := c.SaveIfChanged(); err != nil {
-			c.logErrorf("cfggo: auto-save on context cancellation failed: %v", err)
+			c.log().Error("cfggo: auto-save on context cancellation failed", "err", err)
 		}
 	}()
 }
@@ -159,8 +177,10 @@ func (c *Structure) String() string {
 	maxValueLen := 0
 
 	c.configMutex.RLock()
+	keys := make([]string, 0, len(c.configData))
 	values := make(map[string]string, len(c.configData))
 	for key, value := range c.configData {
+		keys = append(keys, key)
 		if len(key) > maxKeyLen {
 			maxKeyLen = len(key)
 		}
@@ -172,7 +192,11 @@ func (c *Structure) String() string {
 	}
 	c.configMutex.RUnlock()
 
-	for key, valueStr := range values {
+	// Sort keys so the output is deterministic (handy for diffs and bug reports)
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		valueStr := values[key]
 		helpSpacer := strings.Repeat(" ", maxValueLen-len(valueStr))
 		helpTag := c.GetHelpTag(key)
 		if helpTag != "" {
@@ -184,107 +208,22 @@ func (c *Structure) String() string {
 	return sb.String()
 }
 
+// GetHelpTag returns the `help` struct tag for the field backing key, or "" if
+// the key is unknown or has no help tag. It reads from the metadata computed
+// once during Init rather than re-walking the struct on every call
 func (c *Structure) GetHelpTag(key string) string {
 	c.ensureInit()
-
-	v := reflect.ValueOf(c.parent)
-	for v.Kind() == reflect.Ptr {
-		v = v.Elem()
+	if info, ok := c.fields[key]; ok {
+		return info.Help
 	}
-	if v.Kind() != reflect.Struct {
-		return ""
-	}
-
-	// Walk recursively so `help` tags on func fields inside nested
-	// (non-embedded) structs resolve against the same dotted keys that
-	// setupConfigData/createFlags use
-	var walk func(reflect.Type, string) (string, bool)
-	walk = func(t reflect.Type, prefix string) (string, bool) {
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
-			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
-				continue
-			}
-
-			configVarName := c.getConfigNameFromField(field)
-			if configVarName == "" || configVarName == "-" {
-				continue
-			}
-
-			fullKey := configVarName
-			if prefix != "" {
-				fullKey = prefix + "." + configVarName
-			}
-
-			if st, ok := structTypeToRecurse(field); ok {
-				if help, ok := walk(st, fullKey); ok {
-					return help, true
-				}
-				continue
-			}
-
-			if fullKey == key {
-				return field.Tag.Get("help"), true
-			}
-		}
-		return "", false
-	}
-
-	help, _ := walk(v.Type(), "")
-	return help
+	return ""
 }
 
 // shouldIgnoreField returns true when a config key corresponds to a struct
-// field tagged with `cfggo:"-"` (or its aliases).
+// field tagged with `cfggo:"-"` (or its aliases). It reads from the metadata
+// computed once during Init()
 func (c *Structure) shouldIgnoreField(key string) bool {
-	v := reflect.ValueOf(c.parent)
-	for v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return false
-	}
-
-	var checkStruct func(reflect.Type, string) bool
-	checkStruct = func(t reflect.Type, prefix string) bool {
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
-			if field.Type == reflect.TypeOf(Structure{}) && field.Anonymous {
-				continue
-			}
-			configVarName := c.getConfigNameFromField(field)
-
-			// A field tagged "-" has no config name, so match the explicit key
-			// a caller would use for it (its Go field name) under the dotted
-			// prefix built from the ancestor structs' config names.
-			if configVarName == "-" {
-				fieldName := field.Name
-				if prefix != "" {
-					fieldName = prefix + "." + fieldName
-				}
-				if key == fieldName {
-					return true
-				}
-				continue
-			}
-
-			// Recurse into nested structs (including pointer sub-structs) using
-			// the config-name prefix so the keys here line up with those
-			// produced by setupConfigData.
-			if st, ok := structTypeToRecurse(field); ok {
-				nestedPrefix := configVarName
-				if prefix != "" {
-					nestedPrefix = prefix + "." + configVarName
-				}
-				if checkStruct(st, nestedPrefix) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-
-	return checkStruct(v.Type(), "")
+	return c.ignoredFields[key]
 }
 
 func (c *Structure) saveConfig() error {

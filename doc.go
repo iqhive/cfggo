@@ -40,9 +40,28 @@
 // After a reload every subsequent call to an accessor function returns the
 // updated value. All accessors are safe for concurrent use.
 //
+// # Strictness
+//
+// By default Init is strict: a malformed configuration file, a value that
+// cannot be coerced to its field type, or a value that fails a registered
+// validator causes Init to return an error instead of silently starting with
+// partial or default values. Use [WithLenientLoad] for best-effort loading
+// (failures become logged warnings), and [WithStrictKeys] to turn unrecognized
+// configuration keys (typos) into errors rather than warnings.
+//
+// # Debugging
+//
+//   - [Structure.Explain]: human-readable, source-annotated dump of all values.
+//   - [Structure.Diagnose]: structured snapshot (value, source, type, validation)
+//     for building a "--config-check" command.
+//   - [Structure.ConfigReference]: reference table of every field (key, type,
+//     env var, default, help) generated from the struct definition.
+//
 // # Extension points
 //
-//   - [WithLogger] / [SetLogLevel] / [SetLogOutput]: control logging.
+//   - [WithLogger] / [SetLogLevel] / [SetLogOutput]: control logging. The global
+//     logger and error wrapper are accessed via the race-safe [GlobalLogger] /
+//     [SetGlobalLogger] and [GlobalErrorWrapper] / [SetGlobalErrorWrapper].
 //   - [WithErrorWrapper]: customise error formatting.
 //   - [WithValidation] / [AddValidator]: attach validators to individual keys.
 //   - [WithConfigHandler]: plug in a custom [sources.ConfigHandler].

@@ -22,7 +22,7 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	}
 
 	if c.FlagSet.Lookup(configVarName) != nil {
-		c.logErrorf("Flag (%s) is already set, skipping...\n", configVarName)
+		c.log().Error("cfggo: flag already registered, skipping", "flag", configVarName)
 		return
 	}
 
@@ -108,7 +108,7 @@ func (c *Structure) parseFlags() {
 	c.configMutex.Unlock()
 	var parseErr error
 	if parseErr = c.FlagSet.Parse(args); parseErr != nil {
-		c.logErrorf("error parsing flags: %v", parseErr)
+		c.log().Error("cfggo: error parsing flags", "err", parseErr)
 	}
 	c.configMutex.Lock()
 
@@ -116,8 +116,8 @@ func (c *Structure) parseFlags() {
 	// (boolean flags require the "--bool=value" form) or a stray argument.
 	if parseErr == nil {
 		if rest := c.FlagSet.Args(); len(rest) > 0 {
-			c.logWarnf("cfggo: ignoring unexpected positional arguments after flag parsing: %v "+
-				"(note: boolean flags must use the --flag=value form to set an explicit value)", rest)
+			c.log().Warn("cfggo: ignoring unexpected positional arguments after flag parsing "+
+				"(boolean flags must use the --flag=value form to set an explicit value)", "args", rest)
 		}
 	}
 
@@ -157,7 +157,7 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 
 		f := c.FlagSet.Lookup(name)
 		if f == nil {
-			c.logDebugf("cfggo: ignoring unrecognized flag %q (not defined on this config)", arg)
+			c.log().Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
 			// For "--unknown value", also drop the following value token so it is
 			// not misread as a positional argument (which would stop parsing)
 			if !hasInlineValue && i+1 < len(args) {

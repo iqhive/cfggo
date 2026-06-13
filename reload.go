@@ -29,7 +29,7 @@ func (c *Structure) Reload() error {
 	// Attempt to reload configuration from file (loadConfig handles its own locking)
 	if c.configHandler != nil {
 		if err = c.loadConfig(false); err != nil {
-			c.logErrorf("Failed to reload configuration from file: %v", err)
+			c.log().Error("cfggo: failed to reload configuration source", "err", err)
 
 			// Rollback to old configuration on error
 			c.configMutex.Lock()
@@ -65,7 +65,7 @@ func (c *Structure) Reload() error {
 		}
 		if v, ok := oldConfig[key]; ok {
 			if err := c.applyLoaded(key, v, SourceFlag); err != nil {
-				c.logWarnf("Reload: could not restore flag value for %s: %v", key, err)
+				c.log().Warn("cfggo: could not restore flag value during reload", "key", key, "err", err)
 			}
 		}
 	}
@@ -77,9 +77,12 @@ func (c *Structure) Reload() error {
 	// accessor (and with a concurrent reload)
 
 	// Validate configuration after reloading
+	// This stays a warning (rather than an error) so a transient bad value
+	// never tears down a running service mid-reload; the validation error now
+	// carries each value's provenance so the log line points straight at the
+	// offending source
 	if err = c.Validate(); err != nil {
-		c.logWarnf("Configuration validation failed after reload: %v", err)
-		// We don't return this error as it's just a warning
+		c.log().Warn("cfggo: configuration validation failed after reload", "err", err)
 	}
 
 	// Notify OnChange listeners with the aggregate set of keys whose values

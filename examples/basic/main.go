@@ -49,7 +49,7 @@ func main() {
 		fmt.Printf("Error (with custom logger): %v\n", err)
 	}
 
-	// Example 3: Using WrapErrorWithLogging to demonstrate logging
+	// Example 3: Using WrapError, then logging the returned error explicitly
 	fmt.Println("\n=== Example 3: Error wrapping with logging ===")
 
 	config3 := &MyConfig{}

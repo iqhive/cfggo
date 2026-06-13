@@ -572,6 +572,34 @@ if src, ok := config.Source("server_port"); ok {
 }
 ```
 
+For a one-stop, programmatic snapshot (ideal for a `--config-check` command),
+use `Diagnose()`. It returns structured data — every key with its value,
+source, type, help text, validation result, plus any unrecognized keys — and
+has a `String()` for pretty printing:
+
+```go
+d := config.Diagnose()
+if !d.Valid {
+    fmt.Println(d) // aligned table of keys, values, sources, and statuses
+    os.Exit(1)
+}
+```
+
+`ConfigReference()` prints a reference table of every field (key, type,
+environment variable, default, help) generated from the struct definition —
+handy for documentation or a `--help`-style listing:
+
+```go
+fmt.Println(config.ConfigReference())
+```
+
+Validation errors include provenance, so the message names the offending value
+and where it came from, e.g.:
+
+```
+validation failed for 'port' (value=99999, from flag): value must be between 1 and 65535
+```
+
 Turn up logging to trace loading decisions:
 
 ```go
@@ -701,14 +729,27 @@ cfggo.SetLogOutput(file)
 ```
 
 Available log levels: `LogLevelDebug`, `LogLevelInfo`, `LogLevelWarn`,
-`LogLevelError`, `LogLevelFatal`, `LogLevelNone`.
+`LogLevelError`, `LogLevelNone`.
 
-`SetLogLevel` and `SetLogOutput` configure the built-in global logger. To give a
-single configuration instance its own logger, implement `cfglogger.Logger` and
-supply it with `WithLogger` (or `config.SetLogger(...)`):
+`SetLogLevel` and `SetLogOutput` configure the built-in global logger. cfggo's
+internal log calls emit structured slog attributes (e.g. `key`, `source`,
+`err`), so output stays queryable behind a JSON/slog handler.
+
+The process-wide logger and error wrapper are accessed through race-safe
+functions (`cfggo.GlobalLogger()` / `cfggo.SetGlobalLogger()` and
+`cfggo.GlobalErrorWrapper()` / `cfggo.SetGlobalErrorWrapper()`), so they can be
+swapped safely even while other goroutines are logging.
+
+`SetLogLevel` forwards the level to any logger implementing
+`cfglogger.LevelSetter` (`SetLevel(slog.Level)`); the built-in `DefaultLogger`
+does. A custom logger that does not implement it manages its own level.
+
+To give a single configuration instance its own logger, implement
+`cfglogger.Logger` (its method set matches `*slog.Logger`, so a `*slog.Logger`
+works directly) and supply it with `WithLogger` (or `config.SetLogger(...)`):
 
 ```go
-err := cfggo.Init(config, cfggo.WithLogger(myLogger))
+err := cfggo.Init(config, cfggo.WithLogger(slog.Default()))
 ```
 
 `WithErrorWrapper` lets you customise how cfggo formats the errors it returns
@@ -763,10 +804,24 @@ err = cfggo.Init(config, cfggo.WithIgnoreUnknownVars())
 // Add a validator during initialization.
 err = cfggo.Init(config, cfggo.WithValidation("server_port", portValidator))
 
+// Best-effort loading: downgrade malformed-config and validation failures
+// during Init from errors to logged warnings (strict is the default).
+err = cfggo.Init(config, cfggo.WithLenientLoad())
+
+// Treat configuration keys with no matching struct field (typos) as errors.
+err = cfggo.Init(config, cfggo.WithStrictKeys())
+
 // Use a custom logger or error wrapper for this instance.
 err = cfggo.Init(config, cfggo.WithLogger(myLogger))
 err = cfggo.Init(config, cfggo.WithErrorWrapper(myWrapper))
 ```
+
+By default `Init` is **strict**: a malformed configuration file (invalid JSON),
+a value that cannot be coerced to its field type, or a value that fails a
+registered validator causes `Init` to return an error rather than silently
+starting with partial/default values. Use `WithLenientLoad()` to opt into
+best-effort loading (errors become warnings). Unrecognized configuration keys
+are logged as warnings by default and become errors under `WithStrictKeys()`.
 
 > **Note:** Options can be combined in a single `Init` call, e.g.
 > `cfggo.Init(config, cfggo.WithName("api"), cfggo.WithFileConfig("config.json"), cfggo.WithAutoSave(ctx))`.
@@ -781,8 +836,16 @@ future major version. Prefer the replacements:
 |---|---|
 | `InitE` / `InitSelfE` | `Init` / `InitSelf` now return the error directly |
 | `CleanupSignalHandler()` (now a no-op) | `WithAutoSave(ctx)` or call `Save`/`SaveIfChanged` from your own shutdown path |
-| `WithErrorWrapperWithLogger` / `WrapErrorWithLogging` | `WithErrorWrapper` and log the returned error yourself |
 | `convert.ConvertValue` / `cfggo.ConvertValue` | `config.Set(key, value)` |
+
+### Removed
+
+The error-wrapper-with-logging path has been removed (it inverted control by
+logging on your behalf). Use `WithErrorWrapper` / `config.WrapError(...)` and log
+the returned error yourself. The exported `Logger` / `ErrorWrapper` package
+variables are replaced by the race-safe accessors `GlobalLogger()` /
+`SetGlobalLogger()` and `GlobalErrorWrapper()` / `SetGlobalErrorWrapper()`. The
+unused `LogLevelFatal` level was removed.
 
 ## Thread Safety
 

@@ -247,6 +247,9 @@ func WithErrorWrapper(wrapper errwrapper.ErrorWrapper) Option {
 }
 
 // WithErrorWrapperWithLogger sets a custom error wrapper with logging for this configuration instance
+//
+// Deprecated: prefer WithErrorWrapper and log returned errors yourself. See
+// Structure.WrapErrorWithLogging.
 func WithErrorWrapperWithLogger(wrapper errwrapper.ErrorWrapperWithLogger) Option {
 	return func(c *Structure) error {
 		c.errorWrapperWithLogger = wrapper

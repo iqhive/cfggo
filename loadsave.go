@@ -9,12 +9,12 @@ import (
 
 func (c *Structure) loadConfig(alreadyLocked bool) error {
 	if c.configHandler == nil {
-		return c.WrapError(nil, 400, "configSource is nil")
+		return c.WrapError(ErrNoHandler, 400, "")
 	}
 
 	data, err := c.configHandler.LoadConfig()
 	if err != nil {
-		return c.WrapError(err, 0, "")
+		return c.WrapError(wrapKind(ErrSource, err), 0, "")
 	}
 
 	return c.loadJSONConfigFromBytes(data, alreadyLocked)
@@ -36,6 +36,8 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
 	}
+
+	src := c.handlerSource()
 
 	var processMap func(map[string]interface{}, string)
 	processMap = func(m map[string]interface{}, prefix string) {
@@ -65,13 +67,16 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 				} else {
 					c.configData[fullKey] = nil
 				}
+				c.recordSourceLocked(fullKey, src)
 				continue
 			}
 
 			// All type coercion is handled by the unified converter inside c.set.
 			if err := c.set(fullKey, value); err != nil {
 				c.logWarnf("Error setting config key %s: %v", fullKey, err)
+				continue
 			}
+			c.recordSourceLocked(fullKey, src)
 		}
 	}
 
@@ -101,9 +106,7 @@ func (c *Structure) startAutoSave() {
 // Save writes the current configuration through the configured ConfigHandler
 // It is a no-op (returning nil) when no handler is configured
 func (c *Structure) Save() error {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 	return c.saveConfig()
 }
 
@@ -111,9 +114,7 @@ func (c *Structure) Save() error {
 // was last loaded or saved, clearing the dirty flag on a successful save
 // It is the building block applications should call from their own shutdown path
 func (c *Structure) SaveIfChanged() error {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.configMutex.RLock()
 	changed := c.changed
@@ -141,9 +142,7 @@ func (c *Structure) SaveIfChanged() error {
 func CleanupSignalHandler() {}
 
 func (c *Structure) GetJSONBytes() []byte {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.configMutex.RLock()
 	defer c.configMutex.RUnlock()
@@ -152,9 +151,7 @@ func (c *Structure) GetJSONBytes() []byte {
 }
 
 func (c *Structure) String() string {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	var sb strings.Builder
 	sb.WriteString(c.name + ":\n")
@@ -188,9 +185,7 @@ func (c *Structure) String() string {
 }
 
 func (c *Structure) GetHelpTag(key string) string {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	v := reflect.ValueOf(c.parent)
 	for v.Kind() == reflect.Ptr {
@@ -301,11 +296,11 @@ func (c *Structure) saveConfig() error {
 	data, err := json.Marshal(c.configData)
 	c.configMutex.RUnlock()
 	if err != nil {
-		return c.WrapError(err, 0, "")
+		return c.WrapError(wrapKind(ErrSource, err), 0, "")
 	}
 
 	if err := c.configHandler.SaveConfig(data); err != nil {
-		return c.WrapError(err, 0, "")
+		return c.WrapError(wrapKind(ErrSource, err), 0, "")
 	}
 
 	return nil

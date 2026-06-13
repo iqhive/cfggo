@@ -1,5 +1,7 @@
 package cfggo
 
+import "reflect"
+
 // Reload reloads the configuration from all sources
 func (c *Structure) Reload() error {
 	// First, make a copy of the current configuration for potential rollback
@@ -56,5 +58,24 @@ func (c *Structure) Reload() error {
 		// We don't return this error as it's just a warning
 	}
 
+	// Notify OnChange listeners with the aggregate set of keys whose values
+	// differ from the pre-reload snapshot.
+	c.notifyChange(c.changedKeys(oldConfig))
+
 	return nil
+}
+
+// changedKeys compares the current configData against a previous snapshot and
+// returns the keys whose values changed or were added.
+func (c *Structure) changedKeys(old map[string]interface{}) []string {
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
+
+	var keys []string
+	for k, newVal := range c.configData {
+		if oldVal, ok := old[k]; !ok || !reflect.DeepEqual(oldVal, newVal) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }

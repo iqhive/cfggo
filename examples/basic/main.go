@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/iqhive/cfggo"
 	"github.com/iqhive/cfggo/cfglogger"
@@ -22,7 +23,9 @@ func main() {
 	fmt.Println("=== Example 1: Basic usage (backwards compatible) ===")
 
 	config1 := &MyConfig{}
-	config1.Init(config1)
+	if err := config1.Init(config1); err != nil {
+		log.Fatalf("init config1: %v", err)
+	}
 
 	fmt.Printf("App Name: %s\n", config1.AppName())
 	fmt.Printf("Port: %d\n", config1.Port())
@@ -36,7 +39,9 @@ func main() {
 	customLogger := cfglogger.NewDefaultLogger()
 
 	config2 := &MyConfig{}
-	config2.Init(config2, cfggo.WithLogger(customLogger))
+	if err := config2.Init(config2, cfggo.WithLogger(customLogger)); err != nil {
+		log.Fatalf("init config2: %v", err)
+	}
 
 	// Test error handling with custom logger
 	err := config2.Set("port", "invalid-port")
@@ -48,11 +53,14 @@ func main() {
 	fmt.Println("\n=== Example 3: Error wrapping with logging ===")
 
 	config3 := &MyConfig{}
-	config3.Init(config3)
+	if err := config3.Init(config3); err != nil {
+		log.Fatalf("init config3: %v", err)
+	}
 
-	// This will trigger error logging
-	err = config3.WrapErrorWithLogging(nil, 500, "This is a test error message")
+	// Wrap an error and log it explicitly.
+	err = config3.WrapError(nil, 500, "This is a test error message")
 	if err != nil {
+		config3.GetLogger().Error(err.Error())
 		fmt.Printf("Wrapped error: %v\n", err)
 	}
 
@@ -60,10 +68,14 @@ func main() {
 
 	// Create multiple configurations with different loggers
 	config4a := &MyConfig{}
-	config4a.Init(config4a, cfggo.WithName("service-a"))
+	if err := config4a.Init(config4a, cfggo.WithName("service-a")); err != nil {
+		log.Fatalf("init config4a: %v", err)
+	}
 
 	config4b := &MyConfig{}
-	config4b.Init(config4b, cfggo.WithName("service-b"), cfggo.WithLogger(&cfglogger.NoopLogger{}))
+	if err := config4b.Init(config4b, cfggo.WithName("service-b"), cfggo.WithLogger(&cfglogger.NoopLogger{})); err != nil {
+		log.Fatalf("init config4b: %v", err)
+	}
 
 	// Set different values for each
 	config4a.Set("app_name", "service-a")

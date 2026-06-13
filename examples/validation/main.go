@@ -46,7 +46,9 @@ func main() {
 	))
 
 	// Load from the bundled config.json (values override defaults).
-	cfg.Init(cfg, cfggo.WithDefaultFileConfig("config.json"))
+	if err := cfg.Init(cfg, cfggo.WithDefaultFileConfig("config.json")); err != nil {
+		log.Fatalf("init config: %v", err)
+	}
 
 	// --- Run validation explicitly. ---
 	// (Init also runs Validate, but here we show calling it manually.)

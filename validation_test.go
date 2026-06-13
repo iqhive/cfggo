@@ -44,7 +44,7 @@ func TestValidation(t *testing.T) {
 		}
 
 		// Initialize the config with the validator
-		config.Init(config, WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFlagSet(testFlagSet))
 
 		// Register validator after initialization
 		config.RegisterValidator("age", ageValidator)
@@ -73,7 +73,7 @@ func TestValidation(t *testing.T) {
 		}
 
 		// Initialize the config first
-		config.Init(config, WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFlagSet(testFlagSet))
 
 		// Add validators after initialization
 		ageValidator := func(value interface{}) error {

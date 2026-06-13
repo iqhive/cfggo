@@ -60,7 +60,7 @@ func TestJSONLoadingTagHierarchy(t *testing.T) {
 
 	// Use WithFlagSet option to provide a dedicated FlagSet for this test
 	testFlagSet := flag.NewFlagSet("test_hierarchy", flag.ContinueOnError)
-	config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+	_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 	// Verify values
 	expected := map[string]interface{}{
@@ -115,7 +115,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 		// Use WithFlagSet option to provide a dedicated FlagSet for this test
 		testFlagSet := flag.NewFlagSet("test_hyphen", flag.ContinueOnError)
-		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		// Verify the field was ignored by checking if it exists in configData
 		if _, exists := config.configData["IgnoredField"]; exists {
@@ -171,7 +171,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 		// Use WithFlagSet option to provide a dedicated FlagSet for this test
 		testFlagSet := flag.NewFlagSet("test_complex", flag.ContinueOnError)
-		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		// Verify using configData
 		expected := map[string]interface{}{
@@ -226,7 +226,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 		// Use WithFlagSet option to provide a dedicated FlagSet for this test
 		testFlagSet := flag.NewFlagSet("test_types", flag.ContinueOnError)
-		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		// Verify type conversions using configData
 		if got, want := config.configData["int_field"], 42.0; got != want {
@@ -285,7 +285,7 @@ func TestJSONLoadingEdgeCases(t *testing.T) {
 
 		// Use WithFlagSet option to provide a dedicated FlagSet for this test
 		testFlagSet := flag.NewFlagSet("test_durations", flag.ContinueOnError)
-		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		// Expected durations
 		expected := map[string]time.Duration{
@@ -364,7 +364,7 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 		testFlagSet := flag.NewFlagSet("test_invalid_json", flag.ContinueOnError)
 
 		// Should not panic on invalid JSON
-		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		// Verify the default value was retained
 		if got := config.Field(); got != "default" {
@@ -408,7 +408,7 @@ func TestJSONLoadingErrorHandling(t *testing.T) {
 		testFlagSet := flag.NewFlagSet("test_type_mismatch", flag.ContinueOnError)
 
 		// Should not panic on type mismatch
-		config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+		_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 		// Verify the default value was retained
 		if got := config.Number(); got != 0 {
@@ -437,7 +437,7 @@ func TestAutoSaveDisabledByDefault(t *testing.T) {
 
 	// Use WithFlagSet option to provide a dedicated FlagSet for this test
 	testFlagSet := flag.NewFlagSet("test_auto_save", flag.ContinueOnError)
-	config.Init(config, WithFlagSet(testFlagSet))
+	_ = config.Init(config, WithFlagSet(testFlagSet))
 
 	// Verify autoSave is false by default
 	if config.autoSave {

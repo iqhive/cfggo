@@ -11,9 +11,7 @@ func IgnoreFlags(flags ...string) {
 }
 
 func (c *Structure) CheckUnrecognizedItems(s interface{}) {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	allKeys := c.getAllKeys()
 	recognizedKeys := make(map[string]bool)

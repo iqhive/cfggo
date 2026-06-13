@@ -154,13 +154,17 @@ func (c *Structure) setupConfigData() {
 			if fieldValue.IsNil() || !fieldValue.CanInterface() {
 				if err := c.set(fullKey, reflect.Zero(fieldValue.Type().Out(0)).Interface()); err != nil {
 					c.logWarnf("Failed to set default value for %s: %v", fullKey, err)
+					continue
 				}
+				c.recordSourceLocked(fullKey, SourceDefault)
 				continue
 			}
 
 			if err := c.set(fullKey, fieldValue.Call(nil)[0].Interface()); err != nil {
 				c.logWarnf("Failed to set value for %s: %v", fullKey, err)
+				continue
 			}
+			c.recordSourceLocked(fullKey, SourceDefault)
 		}
 	}
 
@@ -231,6 +235,7 @@ func (c *Structure) setDefaultsFromTags() {
 					config: c,
 					name:   fullKey,
 					want:   fieldValue.Type().Out(0),
+					source: SourceDefault,
 				}
 				if err := dv.Set(defaultStr); err != nil {
 					c.logWarnf("SetDefaults: could not parse default value for field %s: %v", field.Name, err)

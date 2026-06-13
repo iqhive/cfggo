@@ -20,7 +20,7 @@ func TestNewFlagSpace(t *testing.T) {
 		StringField: func() string { return "default_struct_value" },
 	}
 	os.Args = []string{"cmd", "--string_field=flag_value"}
-	config.Init(config)
+	_ = config.Init(config)
 	os.Args = []string{"cmd"}
 
 	if config.configData["string_field"] != "flag_value" {
@@ -43,7 +43,7 @@ func TestNewFlagEquals(t *testing.T) {
 		StringField: func() string { return "default_struct_value" },
 	}
 	os.Args = []string{"cmd", "--string_field", "flag_value_space"}
-	config.Init(config)
+	_ = config.Init(config)
 	os.Args = []string{"cmd"}
 
 	if config.configData["string_field"] != "flag_value_space" {
@@ -65,7 +65,7 @@ func TestAutoParse_NoManual(t *testing.T) {
 		StringField: func() string { return "default" },
 	}
 
-	cfg.Init(cfg) // This should auto-parse flags internally
+	_ = cfg.Init(cfg) // This should auto-parse flags internally
 	os.Args = []string{"cmd"}
 
 	if val := cfg.StringField(); val != "auto_value" {
@@ -86,7 +86,7 @@ func TestAutoParse_ManualBefore(t *testing.T) {
 		StringField: func() string { return "default" },
 	}
 
-	cfg.Init(cfg) // Auto-parse should see it's already parsed and do nothing
+	_ = cfg.Init(cfg) // Auto-parse should see it's already parsed and do nothing
 	os.Args = []string{"cmd"}
 
 	if val := cfg.StringField(); val != "manual_before" {
@@ -108,11 +108,11 @@ func TestAutoParse_ManualAfter(t *testing.T) {
 	}
 
 	// Do the init (this will parse flags)
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	// Manually parse again, changing the arguments
 	os.Args = []string{"cmd", "--string_field=manual_after"}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 	os.Args = []string{"cmd"}
 
 	// The "StringField" won't automatically pick up changes from a second parse
@@ -142,7 +142,7 @@ func TestBoolFlagWithValue(t *testing.T) {
 	}
 
 	// Initialize config which should parse flags
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	// Verify debug mode was enabled
 	if cfg.BoolField() != true {
@@ -170,7 +170,7 @@ func TestBoolFlagValueDoesNotSwallowLaterFlags(t *testing.T) {
 		StringField: func() string { return "default" },
 	}
 
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 	os.Args = []string{"cmd"}
 
 	if !cfg.BoolField() {
@@ -228,7 +228,7 @@ func TestBoolFlagSpaceSupportedValues(t *testing.T) {
 			BoolField:   func() bool { return !tt.want }, // default to the opposite of want, safety is #1 priority
 			StringField: func() string { return "default" },
 		}
-		cfg.Init(cfg)
+		_ = cfg.Init(cfg)
 
 		if got := cfg.BoolField(); got != tt.want {
 			t.Errorf("value %q: BoolField() = %v, want %v", tt.value, got, tt.want)
@@ -257,7 +257,7 @@ func TestBoolFlagInvalidValueTreatedAsPositional(t *testing.T) {
 		BoolField func() bool `json:"boolfield"`
 	}
 	cfg := &TestConfig{BoolField: func() bool { return false }}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	// bare boolean flag defaults to true when no valid value follows it
 	if !cfg.BoolField() {
@@ -289,7 +289,7 @@ func TestBoolFlagEquals(t *testing.T) {
 	} {
 		os.Args = []string{"cmd", tt.arg}
 		cfg := &TestConfig{BoolField: func() bool { return false }}
-		cfg.Init(cfg)
+		_ = cfg.Init(cfg)
 		os.Args = []string{"cmd"}
 
 		if got := cfg.BoolField(); got != tt.want {
@@ -314,7 +314,7 @@ func TestIgnoreUnknownVars(t *testing.T) {
 	} {
 		os.Args = args
 		cfg := &TestConfig{StringField: func() string { return "default" }}
-		cfg.Init(cfg, WithIgnoreUnknownVars())
+		_ = cfg.Init(cfg, WithIgnoreUnknownVars())
 		os.Args = []string{"cmd"}
 
 		if got := cfg.StringField(); got != "keep" {
@@ -349,7 +349,7 @@ func TestWithStandardFlags(t *testing.T) {
 		StringField: func() string { return "default" },
 		BoolField:   func() bool { return false },
 	}
-	cfg.Init(cfg, WithStandardFlags())
+	_ = cfg.Init(cfg, WithStandardFlags())
 
 	// The host performs the single canonical parse.
 	flag.Parse()
@@ -379,7 +379,7 @@ func TestWithFlagSetSkipsAutoParse(t *testing.T) {
 		StringField func() string `json:"string_field"`
 	}
 	cfg := &TestConfig{StringField: func() string { return "default" }}
-	cfg.Init(cfg, WithFlagSet(fs))
+	_ = cfg.Init(cfg, WithFlagSet(fs))
 
 	if fs.Parsed() {
 		t.Fatal("external flag set should not be parsed during Init")
@@ -412,7 +412,7 @@ func TestBoolFlagStandalone(t *testing.T) {
 	}
 
 	// Initialize config which should parse flags
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	// Verify debug mode was enabled
 	if cfg.BoolField() != true {

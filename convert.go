@@ -3,7 +3,7 @@ package cfggo
 import (
 	"reflect"
 
-	"github.com/iqhive/cfggo/convert"
+	iconvert "github.com/iqhive/cfggo/internal/convert"
 )
 
 // ConvertValue converts a value to targetType.
@@ -12,5 +12,5 @@ import (
 // compatibility. Use cfggo.Structure.Set to update configuration values.
 // This symbol will be removed in the next minor version.
 func ConvertValue(value interface{}, targetType reflect.Type) (interface{}, error) {
-	return convert.ConvertValue(value, targetType, nil)
+	return iconvert.ConvertValue(value, targetType, nil)
 }

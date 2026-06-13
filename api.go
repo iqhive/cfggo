@@ -15,13 +15,14 @@ import (
 // instead of the equivalent method call:
 //
 //	config.Init(config, cfggo.WithFileConfig("config.json"))
-func Init(parent interface{}, options ...Option) {
+func Init(parent interface{}, options ...Option) error {
 	type initer interface {
-		Init(interface{}, ...Option)
+		Init(interface{}, ...Option) error
 	}
 	if i, ok := parent.(initer); ok {
-		i.Init(parent, options...)
+		return i.Init(parent, options...)
 	}
+	return nil
 }
 
 // --- Logging helpers ----------------------------------------------------------

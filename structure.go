@@ -47,13 +47,22 @@ type Structure struct {
 	errorWrapper           errwrapper.ErrorWrapper
 	errorWrapperWithLogger errwrapper.ErrorWrapperWithLogger
 
-	// configMutex guards this instance's configData and flag/func wiring.
-	// It is per-instance so independent Structure values never contend on a
-	// single shared lock.
+	// configMutex guards this instance's configData, provenance, and flag/func
+	// wiring. It is per-instance so independent Structure values never contend
+	// on a single shared lock.
 	configMutex sync.RWMutex
+
+	// provenance records, per key, where the current value came from. Guarded
+	// by configMutex.
+	provenance map[string]Source
 
 	validationMap   map[string]map[string]validcfg.Validator
 	validationMutex sync.RWMutex
+
+	// changeCallbacks holds OnChange listeners, guarded by callbackMutex.
+	callbackMutex   sync.Mutex
+	changeCallbacks []changeCallback
+	nextCallbackID  int
 }
 
 // DefaultValue returns a function that always returns x, satisfying the
@@ -64,9 +73,9 @@ func DefaultValue[T any](x T) func() T {
 	}
 }
 
-// Init initialises the configuration. parent must be a pointer to the struct
-// that embeds Structure.
-func (c *Structure) Init(parent interface{}, options ...Option) {
+// Init initialises the configuration and returns an error on failure
+// parent must be a pointer to the struct that embeds Structure
+func (c *Structure) Init(parent interface{}, options ...Option) error {
 	if c.FlagSet == nil {
 		// Default behaviour: an unrecognized flag terminates the process with
 		// usage output (flag.ExitOnError). Use WithIgnoreUnknownVars to instead
@@ -98,24 +107,19 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 		ptr.Elem().Set(v)
 		parent = ptr.Interface()
 		c.log().Warn("Structure: Init() must be called with a parent struct pointer, not a struct")
-	} else {
-		if v.Type().Elem().Kind() == reflect.Ptr {
-			c.log().Error("Structure: Init() parent must not be a pointer to a pointer")
-			os.Exit(1)
-		}
+	} else if v.Type().Elem().Kind() == reflect.Ptr {
+		return c.WrapError(nil, 400, "Init: parent must be a pointer to a struct, not a pointer to a pointer")
 	}
 
 	if c.parent != nil {
 		c.log().Warn("Structure: Init() called more than once")
-		return
+		return nil
 	}
 	c.parent = parent
 
 	for _, option := range options {
-		err := option(c)
-		if err != nil {
-			c.logErrorf("Structure: Init() option returned error: %v", err)
-			os.Exit(1)
+		if err := option(c); err != nil {
+			return c.WrapError(err, 0, "Init: option returned error")
 		}
 	}
 
@@ -130,8 +134,10 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	if c.configHandler != nil {
 		if err := c.loadConfig(false); err != nil {
 			c.logErrorf("LoadConfig: %v", err)
-			if c.configHandler != nil && !c.configHandler.IsDefault() {
-				os.Exit(1)
+			// A non-default source that fails to load is fatal to Init; a
+			// default source (WithDefaultFileConfig) is allowed to be absent.
+			if !c.configHandler.IsDefault() {
+				return err
 			}
 		}
 	}
@@ -150,6 +156,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) {
 	}
 
 	c.startAutoSave()
+	return nil
 }
 
 // WrapError wraps an error using the instance's error wrapper.
@@ -161,6 +168,11 @@ func (c *Structure) WrapError(err error, errorcode int, msg string, args ...inte
 }
 
 // WrapErrorWithLogging wraps an error and logs it using the instance's logger.
+//
+// Deprecated: prefer WrapError and log the returned error yourself (e.g.
+// c.GetLogger().Error(err.Error())). Having two wrapping entry points is a
+// frequent source of "which do I use?" confusion; this variant will be removed
+// in a future version.
 func (c *Structure) WrapErrorWithLogging(err error, errorcode int, msg string, args ...interface{}) error {
 	if c.errorWrapperWithLogger == nil {
 		c.errorWrapperWithLogger = errwrapper.NewDefaultErrorWrapperWithLogger()
@@ -196,13 +208,25 @@ func (c *Structure) GetLogger() cfglogger.Logger {
 
 // InitSelf is a convenience variant of Init for when the struct initialises
 // itself (i.e. parent == c).
-func (c *Structure) InitSelf(options ...Option) {
-	c.Init(c, options...)
+func (c *Structure) InitSelf(options ...Option) error {
+	return c.Init(c, options...)
+}
+
+// ensureInit lazily initialises the configuration via InitSelf when a method is
+// called before Init. The initialisation error is logged because the calling
+// method has no way to return it; call Init explicitly to handle errors.
+func (c *Structure) ensureInit() {
+	if c.parent == nil {
+		if err := c.InitSelf(); err != nil {
+			c.log().Error("cfggo: lazy initialisation failed: " + err.Error())
+		}
+	}
 }
 
 // InitMyParent discovers the enclosing struct via unsafe pointer arithmetic and
-// calls Init with it. The embedded Structure field must be anonymous.
-func (c *Structure) InitMyParent(options ...Option) {
+// calls Init with it. The embedded Structure field must be anonymous. It
+// returns an error if the parent struct cannot be determined.
+func (c *Structure) InitMyParent(options ...Option) error {
 	structPtr := unsafe.Pointer(reflect.ValueOf(c).Pointer())
 
 	parentValue := reflect.ValueOf(c).Elem().Field(0)
@@ -214,20 +238,16 @@ func (c *Structure) InitMyParent(options ...Option) {
 			offset := field.Offset
 			parentPtr := unsafe.Pointer(uintptr(structPtr) - offset)
 			parent := reflect.NewAt(parentType, parentPtr).Interface()
-			c.Init(parent, options...)
-			return
+			return c.Init(parent, options...)
 		}
 	}
 
-	c.log().Error("InitNew(): Could not determine parent struct automatically")
-	os.Exit(1)
+	return c.WrapError(nil, 0, "InitMyParent: could not determine parent struct automatically")
 }
 
 // ReloadConfig reloads the configuration from all sources.
 func (c *Structure) ReloadConfig() error {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 	c.logInfof("ReloadConfig %s", c.name)
 	return c.Reload()
 }

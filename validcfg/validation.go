@@ -1,9 +1,17 @@
 package validcfg
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrValidation is a sentinel that all validation failures match via
+// errors.Is, so callers can branch on validation errors without depending on
+// the concrete ValidationError / ValidationErrors types:
+//
+//	if errors.Is(err, validcfg.ErrValidation) { ... }
+var ErrValidation = errors.New("validation failed")
 
 // Validator is a function that validates a configuration value
 type Validator func(interface{}) error
@@ -24,8 +32,19 @@ func (v ValidationError) Unwrap() error {
 	return v.Err
 }
 
+// Is reports that a ValidationError matches ErrValidation, while still
+// unwrapping to the underlying cause for more specific matches.
+func (v ValidationError) Is(target error) bool {
+	return target == ErrValidation
+}
+
 // ValidationErrors represents multiple validation errors
 type ValidationErrors []ValidationError
+
+// Is reports that a ValidationErrors matches ErrValidation.
+func (v ValidationErrors) Is(target error) bool {
+	return target == ErrValidation
+}
 
 // Error implements the error interface
 func (v ValidationErrors) Error() string {

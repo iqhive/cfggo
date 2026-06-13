@@ -12,9 +12,7 @@ import (
 
 // NewFlag creates a new configuration item, using the type of the defaultValue
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
@@ -69,8 +67,12 @@ func (c *Structure) createSetter(key string) func(interface{}) error {
 	return func(value interface{}) error {
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
+		if err := c.set(key, value); err != nil {
+			return err
+		}
 		c.changed = true
-		return c.set(key, value)
+		c.recordSourceLocked(key, SourceFlag)
+		return nil
 	}
 }
 
@@ -252,8 +254,6 @@ func isBoolFlag(f *flag.Flag) bool {
 // GetFlagSet returns the FlagSet used by this configuration, initialising it
 // via InitSelf if necessary.
 func (c *Structure) GetFlagSet() *flag.FlagSet {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 	return c.FlagSet
 }

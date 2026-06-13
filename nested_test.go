@@ -40,7 +40,7 @@ func TestPtrNestedDefaultsAndAccessors(t *testing.T) {
 	// Server (and its nested *Database via the value field) is left nil
 	// Init must allocate it so the accessors are usable
 	cfg := &PtrNestedConfig{}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	if cfg.Server == nil {
 		t.Fatal("Server pointer sub-struct was not allocated by Init")
@@ -71,7 +71,7 @@ func TestPtrNestedFileEnvFlagHelpReload(t *testing.T) {
 	}
 
 	cfg := &PtrNestedConfig{}
-	cfg.Init(cfg, WithFileConfig(file))
+	_ = cfg.Init(cfg, WithFileConfig(file))
 
 	// File value through a pointer sub-struct
 	if got := cfg.Server.DB.Host(); got != "db1" {
@@ -113,7 +113,7 @@ func TestPtrNestedPreallocatedOverride(t *testing.T) {
 			Listen: DefaultValue(":7000"),
 		},
 	}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	if got := cfg.Server.Listen(); got != ":7000" {
 		t.Errorf("Server.Listen = %q, want %q", got, ":7000")
@@ -130,7 +130,7 @@ func TestNestedStructDefaultsAndAccessors(t *testing.T) {
 	os.Args = []string{"cmd"}
 
 	cfg := &NestedConfig{}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	if got := cfg.Name(); got != "svc" {
 		t.Errorf("Name = %q, want %q", got, "svc")
@@ -158,7 +158,7 @@ func TestNestedStructFileOverrideAndReload(t *testing.T) {
 	}
 
 	cfg := &NestedConfig{}
-	cfg.Init(cfg, WithFileConfig(file))
+	_ = cfg.Init(cfg, WithFileConfig(file))
 
 	if got := cfg.Server.DB.Host(); got != "db1" {
 		t.Errorf("Server.DB.Host = %q, want %q", got, "db1")
@@ -195,7 +195,7 @@ func TestNestedStructEnvOverride(t *testing.T) {
 	defer os.Unsetenv("SERVER_DB_HOST")
 
 	cfg := &NestedConfig{}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	if got := cfg.Server.DB.Host(); got != "env-db" {
 		t.Errorf("Server.DB.Host = %q, want %q", got, "env-db")
@@ -208,7 +208,7 @@ func TestNestedStructHelpTag(t *testing.T) {
 	os.Args = []string{"cmd"}
 
 	cfg := &NestedConfig{}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	if got := cfg.GetHelpTag("server.db.host"); got != "database host" {
 		t.Errorf("GetHelpTag(server.db.host) = %q, want %q", got, "database host")
@@ -225,7 +225,7 @@ func TestNestedIgnoredFieldNotManaged(t *testing.T) {
 	os.Args = []string{"cmd"}
 
 	cfg := &NestedConfig{}
-	cfg.Init(cfg)
+	_ = cfg.Init(cfg)
 
 	// A field tagged cfggo:"-" is never added to the managed config map,
 	// at any nesting depth

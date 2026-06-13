@@ -43,7 +43,7 @@ func TestReload(t *testing.T) {
 		Name:    DefaultValue("default"),
 		Version: DefaultValue(0),
 	}
-	config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
+	_ = config.Init(config, WithFileConfig(tempFileName), WithFlagSet(testFlagSet))
 
 	// Verify initial values
 	if got, want := config.Name(), "initial"; got != want {

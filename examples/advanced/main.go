@@ -16,44 +16,23 @@ func NewCustomLogger(prefix string) *CustomLogger {
 	return &CustomLogger{prefix: prefix}
 }
 
+// CustomLogger implements the slimmed-down cfglogger.Logger interface, whose
+// four methods match the leveled methods of *slog.Logger. args follow slog's
+// key/value convention.
 func (cl *CustomLogger) Debug(msg string, args ...interface{}) {
-	log.Printf("[%s DEBUG] "+msg, append([]interface{}{cl.prefix}, args...)...)
-}
-
-func (cl *CustomLogger) Debugf(format string, args ...interface{}) {
-	log.Printf("[%s DEBUG] "+format, append([]interface{}{cl.prefix}, args...)...)
+	log.Printf("[%s DEBUG] %s %v", cl.prefix, msg, args)
 }
 
 func (cl *CustomLogger) Info(msg string, args ...interface{}) {
-	log.Printf("[%s INFO] "+msg, append([]interface{}{cl.prefix}, args...)...)
-}
-
-func (cl *CustomLogger) Infof(format string, args ...interface{}) {
-	log.Printf("[%s INFO] "+format, append([]interface{}{cl.prefix}, args...)...)
+	log.Printf("[%s INFO] %s %v", cl.prefix, msg, args)
 }
 
 func (cl *CustomLogger) Warn(msg string, args ...interface{}) {
-	log.Printf("[%s WARN] "+msg, append([]interface{}{cl.prefix}, args...)...)
-}
-
-func (cl *CustomLogger) Warnf(format string, args ...interface{}) {
-	log.Printf("[%s WARN] "+format, append([]interface{}{cl.prefix}, args...)...)
+	log.Printf("[%s WARN] %s %v", cl.prefix, msg, args)
 }
 
 func (cl *CustomLogger) Error(msg string, args ...interface{}) {
-	log.Printf("[%s ERROR] "+msg, append([]interface{}{cl.prefix}, args...)...)
-}
-
-func (cl *CustomLogger) Errorf(format string, args ...interface{}) {
-	log.Printf("[%s ERROR] "+format, append([]interface{}{cl.prefix}, args...)...)
-}
-
-func (cl *CustomLogger) Fatal(msg string, args ...interface{}) {
-	log.Printf("[%s FATAL] "+msg, append([]interface{}{cl.prefix}, args...)...)
-}
-
-func (cl *CustomLogger) Fatalf(format string, args ...interface{}) {
-	log.Printf("[%s FATAL] "+format, append([]interface{}{cl.prefix}, args...)...)
+	log.Printf("[%s ERROR] %s %v", cl.prefix, msg, args)
 }
 
 // CustomErrorWrapper demonstrates a custom error wrapper
@@ -84,24 +63,29 @@ func main() {
 	serviceBLogger := NewCustomLogger("SERVICE-B")
 
 	configA := &AdvancedConfig{}
-	configA.Init(configA,
+	if err := configA.Init(configA,
 		cfggo.WithName("service-a"),
 		cfggo.WithLogger(serviceALogger),
-	)
+	); err != nil {
+		log.Fatalf("init configA: %v", err)
+	}
 
 	configB := &AdvancedConfig{}
-	configB.Init(configB,
+	if err := configB.Init(configB,
 		cfggo.WithName("service-b"),
 		cfggo.WithLogger(serviceBLogger),
 		cfggo.WithErrorWrapper(CustomErrorWrapper),
-	)
+	); err != nil {
+		log.Fatalf("init configB: %v", err)
+	}
 
 	// Demonstrate logging through error wrapper
 	fmt.Println("\nTesting error handling:")
 
-	// Service A will use default error wrapper with custom logger
-	err := configA.WrapErrorWithLogging(nil, 404, "Resource not found in service A")
+	// Service A wraps an error and logs it explicitly via its custom logger.
+	err := configA.WrapError(nil, 404, "Resource not found in service A")
 	if err != nil {
+		configA.GetLogger().Error(err.Error())
 		fmt.Printf("Service A error: %v\n", err)
 	}
 
@@ -141,7 +125,9 @@ func main() {
 
 	// This should work exactly like before the refactoring
 	legacyConfig := &AdvancedConfig{}
-	legacyConfig.Init(legacyConfig) // No custom options, uses globals
+	if err := legacyConfig.Init(legacyConfig); err != nil { // No custom options, uses globals
+		log.Fatalf("init legacyConfig: %v", err)
+	}
 
 	fmt.Printf("Legacy config service name: %s\n", legacyConfig.ServiceName())
 	fmt.Printf("Legacy config uses global logger: %t\n", legacyConfig.GetLogger() == cfggo.Logger)

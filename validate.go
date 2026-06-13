@@ -8,9 +8,7 @@ import (
 
 // RegisterValidator registers a validator for key on this configuration instance.
 func (c *Structure) RegisterValidator(key string, validator validcfg.Validator) {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.validationMutex.Lock()
 	defer c.validationMutex.Unlock()
@@ -27,9 +25,7 @@ func (c *Structure) RegisterValidator(key string, validator validcfg.Validator) 
 
 // AddValidator is an alias for RegisterValidator.
 func (c *Structure) AddValidator(key string, validator validcfg.Validator) {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.validationMutex.Lock()
 	defer c.validationMutex.Unlock()
@@ -46,9 +42,7 @@ func (c *Structure) AddValidator(key string, validator validcfg.Validator) {
 
 // Validate runs all registered validators for this configuration instance.
 func (c *Structure) Validate() error {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.configMutex.RLock()
 	c.validationMutex.RLock()
@@ -78,23 +72,21 @@ func (c *Structure) Validate() error {
 
 // ValidateKey runs the registered validator (if any) for a single key.
 func (c *Structure) ValidateKey(key string) error {
-	if c.parent == nil {
-		c.InitSelf()
-	}
+	c.ensureInit()
 
 	c.configMutex.RLock()
 	c.validationMutex.RLock()
 	defer c.configMutex.RUnlock()
 	defer c.validationMutex.RUnlock()
 
+	value, exists := c.configData[key]
+	if !exists {
+		return c.WrapError(ErrUnknownKey, 404, "key %q not found", key)
+	}
+
 	validators, exists := c.validationMap[c.name]
 	if !exists {
 		return nil
-	}
-
-	value, exists := c.configData[key]
-	if !exists {
-		return c.WrapError(nil, 404, "Configuration key %s not found", key)
 	}
 
 	validator, exists := validators[key]
@@ -103,7 +95,9 @@ func (c *Structure) ValidateKey(key string) error {
 	}
 
 	if err := validator(value); err != nil {
-		return c.WrapError(err, 0, "Validation failed for key %s", key)
+		// Wrap as a ValidationError so the result matches both ErrValidation
+		// (via errors.Is) and the underlying validator error.
+		return c.WrapError(validcfg.ValidationError{Key: key, Err: err}, 0, "")
 	}
 
 	return nil

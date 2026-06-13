@@ -32,11 +32,13 @@ func (c *Structure) loadFromEnv() {
 			continue
 		}
 
-		// Create a dynamic var to handle the conversion
+		// Create a dynamic var to handle the conversion. applyLoaded (called by
+		// dv.Set) records SourceEnv provenance and marks the config changed.
 		dv := &dynamicVar{
 			config: c,
 			name:   key,
 			want:   reflect.TypeOf(existing),
+			source: SourceEnv,
 		}
 
 		// Set the value
@@ -46,11 +48,6 @@ func (c *Structure) loadFromEnv() {
 		} else {
 			envVar := internalEnvLoader.KeyToEnvVar(key)
 			c.logDebugf("Set config %s from environment variable %s=(%v)", key, envVar, value)
-			
-			// Mark that configuration has changed
-			c.configMutex.Lock()
-			c.changed = true
-			c.configMutex.Unlock()
 		}
 	}
 }

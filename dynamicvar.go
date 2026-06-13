@@ -11,6 +11,10 @@ type dynamicVar struct {
 	config *Structure
 	name   string
 	want   reflect.Type
+	// source is the provenance recorded when this var applies a value. Defaults
+	// to SourceSet when unset (zero value would be SourceUnknown, so callers
+	// that care set this explicitly).
+	source Source
 }
 
 func (d *dynamicVar) Set(s string) error {
@@ -25,7 +29,11 @@ func (d *dynamicVar) Set(s string) error {
 	if err != nil {
 		return err
 	}
-	return d.config.Set(d.name, value)
+	src := d.source
+	if src == SourceUnknown {
+		src = SourceSet
+	}
+	return d.config.applyLoaded(d.name, value, src)
 }
 
 func (d *dynamicVar) String() string {

@@ -160,7 +160,7 @@ func TestInit(t *testing.T) {
 	timeNow = time.Now()
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config)
+	_ = config.Init(config)
 
 	if config.name != "TestConfig" {
 		t.Errorf("Expected name to be 'TestConfig', but got %v", config.name)
@@ -218,7 +218,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	defer RestoreFlagValues()
 
 	// Use WithAutoSave to enable automatic saving for this test
-	config.Init(config, WithFileConfig("testdata/test.json"), WithAutoSave(context.Background()))
+	_ = config.Init(config, WithFileConfig("testdata/test.json"), WithAutoSave(context.Background()))
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")
@@ -232,7 +232,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	// Create a new config instance to load the saved data
 	newConfig := NewTestConfig()
 	defer RestoreFlagValues()
-	newConfig.Init(newConfig, WithFileConfig("testdata/test.json"))
+	_ = newConfig.Init(newConfig, WithFileConfig("testdata/test.json"))
 
 	// Verify the loaded value
 	if newConfig.StringField() != "test_value" {
@@ -249,7 +249,7 @@ func TestEnvironmentVariables(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("testdata/test.json"))
+	_ = config.Init(config, WithFileConfig("testdata/test.json"))
 
 	if config.StringField() != "env_value" {
 		t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -262,7 +262,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("testdata/test.json"))
+	_ = config.Init(config, WithFileConfig("testdata/test.json"))
 
 	// Modify the TestEnvironmentVariables test
 	t.Run("TestEnvironmentVariables", func(t *testing.T) {
@@ -271,7 +271,7 @@ func TestCommandLineFlags(t *testing.T) {
 
 		config := NewTestConfig()
 		defer RestoreFlagValues()
-		config.Init(config, WithFileConfig("testdata/test.json"))
+		_ = config.Init(config, WithFileConfig("testdata/test.json"))
 
 		if config.StringField() != "env_value" {
 			t.Errorf("Expected 'env_value', but got %v", config.StringField())
@@ -323,7 +323,7 @@ func TestCommandLineFlags1(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("testdata/test.json"))
+	_ = config.Init(config, WithFileConfig("testdata/test.json"))
 	os.Args = []string{"cmd"}
 
 	if config.StringField() != "flag_value" {
@@ -340,7 +340,7 @@ func TestCommandLineFlags2(t *testing.T) {
 
 	config := NewTestConfig()
 	defer RestoreFlagValues()
-	config.Init(config, WithFileConfig("testdata/test.json"))
+	_ = config.Init(config, WithFileConfig("testdata/test.json"))
 	os.Args = []string{"cmd"}
 
 	if config.StringField() != "flag_value" {
@@ -381,7 +381,7 @@ func TestValuePrecedence(t *testing.T) {
 		os.Unsetenv(envKey)
 
 		config := &PrecedenceConfig{}
-		config.Init(config)
+		_ = config.Init(config)
 		os.Args = []string{"cmd"}
 		if got := config.Field(); got != "tag_value" {
 			t.Errorf("expected 'tag_value' from default tag, got %q", got)
@@ -396,7 +396,7 @@ func TestValuePrecedence(t *testing.T) {
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
-		config.Init(config)
+		_ = config.Init(config)
 		os.Args = []string{"cmd"}
 		if got := config.Field(); got != "function_value" {
 			t.Errorf("expected 'function_value' to override 'tag_value', got %q", got)
@@ -411,7 +411,7 @@ func TestValuePrecedence(t *testing.T) {
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		_ = config.Init(config, WithFileConfig(tempFileName))
 		os.Args = []string{"cmd"}
 		if got := config.Field(); got != "file_value" {
 			t.Errorf("expected 'file_value' to override 'function_value', got %q", got)
@@ -429,7 +429,7 @@ func TestValuePrecedence(t *testing.T) {
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		_ = config.Init(config, WithFileConfig(tempFileName))
 		os.Args = []string{"cmd"}
 		if got := config.Field(); got != envVal {
 			t.Errorf("expected %q to override 'file_value', got %q", envVal, got)
@@ -448,7 +448,7 @@ func TestValuePrecedence(t *testing.T) {
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		_ = config.Init(config, WithFileConfig(tempFileName))
 
 		// Store original args and restore them after test
 		originalArgs := os.Args
@@ -475,7 +475,7 @@ func TestValuePrecedence(t *testing.T) {
 		config := &PrecedenceConfig{
 			Field: DefaultValue("function_value"),
 		}
-		config.Init(config, WithFileConfig(tempFileName))
+		_ = config.Init(config, WithFileConfig(tempFileName))
 		os.Args = []string{"cmd"}
 
 		got := config.Field()
@@ -522,7 +522,7 @@ func TestStringSliceCommandLineFormats(t *testing.T) {
 
 			// Create a config with a string slice field
 			config := NewTestConfig()
-			config.Init(config)
+			_ = config.Init(config)
 
 			// Verify the result
 			result := config.StringSlice()
@@ -571,7 +571,7 @@ func TestIntSliceCommandLineFormats(t *testing.T) {
 
 			// Create a config with a int slice field
 			config := NewTestConfig()
-			config.Init(config)
+			_ = config.Init(config)
 
 			// Verify the result
 			result := config.IntSlice()
@@ -618,7 +618,7 @@ func TestBoolSliceCommandLineFormats(t *testing.T) {
 
 			// Create a config with a bool slice field
 			config := NewTestConfig()
-			config.Init(config)
+			_ = config.Init(config)
 
 			// Verify the result
 			result := config.BoolSlice()
@@ -666,7 +666,7 @@ func TestFloat32SliceCommandLineFormats(t *testing.T) {
 
 			// Create a config with a float32 slice field
 			config := NewTestConfig()
-			config.Init(config)
+			_ = config.Init(config)
 
 			// Verify the result
 			result := config.Float32Slice()
@@ -714,7 +714,7 @@ func TestFloat64SliceCommandLineFormats(t *testing.T) {
 
 			// Create a config with a float64 slice field
 			config := NewTestConfig()
-			config.Init(config)
+			_ = config.Init(config)
 
 			// Verify the result
 			result := config.Float64Slice()

@@ -75,7 +75,7 @@ func (c *Structure) createSetter(key string) func(interface{}) error {
 		if err := c.set(key, value); err != nil {
 			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, SourceFlag)
 		}
-		c.changed = true
+		c.markChangedLocked()
 		c.recordSourceLocked(key, SourceFlag)
 		return nil
 	}
@@ -127,7 +127,7 @@ func (c *Structure) parseFlags() {
 	}
 
 	if parseErr == nil {
-		c.changed = true
+		c.markChangedLocked()
 	}
 }
 

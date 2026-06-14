@@ -21,7 +21,7 @@ func (c *Structure) Set(key string, value interface{}) error {
 	err := c.set(key, value)
 	var newVal interface{}
 	if err == nil {
-		c.changed = true
+		c.markChangedLocked()
 		c.recordSourceLocked(key, SourceSet)
 		newVal = c.configData[key]
 	}
@@ -48,9 +48,14 @@ func (c *Structure) applyLoaded(key string, value interface{}, src Source) error
 	if err := c.set(key, value); err != nil {
 		return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, src)
 	}
-	c.changed = true
+	c.markChangedLocked()
 	c.recordSourceLocked(key, src)
 	return nil
+}
+
+func (c *Structure) markChangedLocked() {
+	c.changed = true
+	c.changeVersion++
 }
 
 // set is the internal, non-locking version of Set.
@@ -104,6 +109,11 @@ func Value[T any](c *Structure, key string) (T, bool) {
 		return zero, false
 	}
 	if v, ok := raw.(T); ok {
+		if raw != nil {
+			if cloned, ok := cloneMutableReflectValue(reflect.ValueOf(raw)).Interface().(T); ok {
+				return cloned, true
+			}
+		}
 		return v, true
 	}
 	if raw == nil {
@@ -112,7 +122,8 @@ func Value[T any](c *Structure, key string) (T, bool) {
 	rv := reflect.ValueOf(raw)
 	tt := reflect.TypeOf(&zero).Elem()
 	if rv.Type().ConvertibleTo(tt) {
-		if cv, ok := rv.Convert(tt).Interface().(T); ok {
+		cv := cloneMutableReflectValue(rv.Convert(tt))
+		if cv, ok := cv.Interface().(T); ok {
 			return cv, true
 		}
 	}

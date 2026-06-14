@@ -10,8 +10,8 @@ import (
 
 // HandlerHTTP implements ConfigHandler for HTTP-based configuration
 type HandlerHTTP struct {
-	source        http.Request
-	dest          http.Request
+	source        *http.Request
+	dest          *http.Request
 	defaultConfig bool
 }
 
@@ -21,10 +21,10 @@ func NewHandlerHTTP(source, dest *http.Request, defaultConfig bool) *HandlerHTTP
 		defaultConfig: defaultConfig,
 	}
 	if source != nil {
-		handler.source = *source
+		handler.source = source.Clone(source.Context())
 	}
 	if dest != nil {
-		handler.dest = *dest
+		handler.dest = dest.Clone(dest.Context())
 	}
 	return handler
 }
@@ -36,7 +36,10 @@ func (h *HandlerHTTP) IsDefault() bool {
 
 // LoadConfig loads configuration from the HTTP source
 func (h *HandlerHTTP) LoadConfig() (json.RawMessage, error) {
-	if h.source.URL.String() == "" {
+	if h.source == nil {
+		return nil, nil
+	}
+	if h.source.URL == nil || h.source.URL.String() == "" {
 		return nil, fmt.Errorf("source URL is empty")
 	}
 
@@ -44,7 +47,7 @@ func (h *HandlerHTTP) LoadConfig() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header = h.source.Header
+	req.Header = h.source.Header.Clone()
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -69,7 +72,10 @@ func (h *HandlerHTTP) LoadConfig() (json.RawMessage, error) {
 
 // SaveConfig saves configuration to the HTTP destination
 func (h *HandlerHTTP) SaveConfig(data json.RawMessage) error {
-	if h.dest.URL.String() == "" {
+	if h.dest == nil {
+		return nil
+	}
+	if h.dest.URL == nil || h.dest.URL.String() == "" {
 		return fmt.Errorf("destination URL is empty")
 	}
 
@@ -78,7 +84,7 @@ func (h *HandlerHTTP) SaveConfig(data json.RawMessage) error {
 		return err
 	}
 	req.ContentLength = int64(len(data))
-	req.Header = h.dest.Header
+	req.Header = h.dest.Header.Clone()
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)

@@ -444,8 +444,33 @@ func (c *Structure) makeAccessor(leaf *planLeaf) reflect.Value {
 					return []reflect.Value{reflect.Zero(outType)}
 				}
 			}
+			rv = cloneMutableReflectValue(rv)
 			return []reflect.Value{rv}
 		})
+	}
+}
+
+func cloneMutableReflectValue(v reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		cp := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			cp.SetMapIndex(iter.Key(), iter.Value())
+		}
+		return cp
+	case reflect.Slice:
+		if v.IsNil() {
+			return v
+		}
+		cp := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		reflect.Copy(cp, v)
+		return cp
+	default:
+		return v
 	}
 }
 

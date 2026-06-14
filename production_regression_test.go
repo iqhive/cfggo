@@ -2,6 +2,7 @@ package cfggo
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -41,6 +42,47 @@ func TestMapLeafLoadsFromJSONObject(t *testing.T) {
 	}
 	if _, ok := cfg.Get("labels.env"); ok {
 		t.Fatal("JSON object leaf was flattened into labels.env")
+	}
+}
+
+type mutableAccessorRegressionConfig struct {
+	Structure
+	Labels func() map[string]string `cfggo:"labels"`
+	Names  func() []string          `cfggo:"names"`
+}
+
+func TestMutableAccessorsReturnCopies(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &mutableAccessorRegressionConfig{
+		Labels: DefaultValue(map[string]string{"env": "prod"}),
+		Names:  DefaultValue([]string{"api"}),
+	}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	labels := cfg.Labels()
+	labels["env"] = "dev"
+	if got := cfg.Labels()["env"]; got != "prod" {
+		t.Fatalf("Labels()[env] = %q after mutating accessor result, want prod", got)
+	}
+
+	names := cfg.Names()
+	names[0] = "worker"
+	if got := cfg.Names()[0]; got != "api" {
+		t.Fatalf("Names()[0] = %q after mutating accessor result, want api", got)
+	}
+
+	labelsValue, ok := Value[map[string]string](&cfg.Structure, "labels")
+	if !ok {
+		t.Fatal("Value[map[string]string](labels) returned ok=false")
+	}
+	labelsValue["env"] = "qa"
+	if got := cfg.Labels()["env"]; got != "prod" {
+		t.Fatalf("Labels()[env] = %q after mutating typed Value result, want prod", got)
 	}
 }
 
@@ -165,5 +207,131 @@ func TestLoadConversionErrorIncludesKeyAndSource(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error %q does not contain %q", msg, want)
 		}
+	}
+}
+
+type blockingSaveHandler struct {
+	data        json.RawMessage
+	saveStarted chan struct{}
+	releaseSave chan struct{}
+	mu          sync.Mutex
+	saves       int
+}
+
+func (h *blockingSaveHandler) IsDefault() bool { return false }
+
+func (h *blockingSaveHandler) LoadConfig() (json.RawMessage, error) {
+	return h.data, nil
+}
+
+func (h *blockingSaveHandler) SaveConfig(data json.RawMessage) error {
+	select {
+	case h.saveStarted <- struct{}{}:
+	default:
+	}
+	<-h.releaseSave
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.data = data
+	h.saves++
+	return nil
+}
+
+func (h *blockingSaveHandler) saveCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.saves
+}
+
+func TestSaveIfChangedPreservesConcurrentSet(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	handler := &blockingSaveHandler{
+		data:        json.RawMessage(`{}`),
+		saveStarted: make(chan struct{}, 2),
+		releaseSave: make(chan struct{}),
+	}
+	cfg := &reloadDefaultsRegressionConfig{}
+	if err := cfg.Init(cfg, WithConfigHandler(handler), WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := cfg.Set("host", "first"); err != nil {
+		t.Fatalf("Set first: %v", err)
+	}
+
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- cfg.SaveIfChanged() }()
+	<-handler.saveStarted
+
+	if err := cfg.Set("host", "second"); err != nil {
+		t.Fatalf("Set second: %v", err)
+	}
+	close(handler.releaseSave)
+	if err := <-saveDone; err != nil {
+		t.Fatalf("SaveIfChanged: %v", err)
+	}
+	if err := cfg.SaveIfChanged(); err != nil {
+		t.Fatalf("second SaveIfChanged: %v", err)
+	}
+	if got := handler.saveCount(); got != 2 {
+		t.Fatalf("SaveConfig calls = %d, want 2", got)
+	}
+}
+
+type failingReloadHandler struct {
+	data  json.RawMessage
+	fail  bool
+	mu    sync.Mutex
+	saves int
+}
+
+func (h *failingReloadHandler) IsDefault() bool { return false }
+
+func (h *failingReloadHandler) LoadConfig() (json.RawMessage, error) {
+	if h.fail {
+		return nil, errors.New("reload failed")
+	}
+	return h.data, nil
+}
+
+func (h *failingReloadHandler) SaveConfig(data json.RawMessage) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.data = data
+	h.saves++
+	return nil
+}
+
+func (h *failingReloadHandler) saveCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.saves
+}
+
+func TestFailedReloadPreservesDirtyState(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	handler := &failingReloadHandler{data: json.RawMessage(`{"host":"fromfile"}`)}
+	cfg := &reloadDefaultsRegressionConfig{}
+	if err := cfg.Init(cfg, WithConfigHandler(handler), WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := cfg.Set("host", "runtime"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	handler.fail = true
+	if err := cfg.Reload(); err == nil {
+		t.Fatal("Reload: expected error, got nil")
+	}
+	if err := cfg.SaveIfChanged(); err != nil {
+		t.Fatalf("SaveIfChanged: %v", err)
+	}
+	if got := handler.saveCount(); got != 1 {
+		t.Fatalf("SaveConfig calls = %d, want 1", got)
 	}
 }

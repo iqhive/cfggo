@@ -12,9 +12,13 @@ func (c *Structure) Reload() error {
 	// file/env layers below have been reloaded (see the restore step)
 	var oldProvenance map[string]Source
 	var oldTrail map[string][]Source
+	var oldChanged bool
+	var oldChangeVersion uint64
 
 	// Get a snapshot of the current configuration
 	c.configMutex.Lock()
+	oldChanged = c.changed
+	oldChangeVersion = c.changeVersion
 	oldConfig = make(map[string]interface{})
 	for k, v := range c.configData {
 		oldConfig[k] = v
@@ -47,6 +51,8 @@ func (c *Structure) Reload() error {
 			c.configData = oldConfig
 			c.provenance = oldProvenance
 			c.provenanceTrail = oldTrail
+			c.changed = oldChanged
+			c.changeVersion = oldChangeVersion
 			c.configMutex.Unlock()
 			return err
 		}

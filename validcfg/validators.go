@@ -35,6 +35,9 @@ func Required() Validator {
 // MinLength returns a validator that checks if a string or slice has at least min elements
 func MinLength(min int) Validator {
 	return func(value interface{}) error {
+		if value == nil {
+			return errors.New("value is required")
+		}
 		v := reflect.ValueOf(value)
 
 		switch v.Kind() {
@@ -57,6 +60,9 @@ func MinLength(min int) Validator {
 // MaxLength returns a validator that checks if a string or slice has at most max elements
 func MaxLength(max int) Validator {
 	return func(value interface{}) error {
+		if value == nil {
+			return errors.New("value is required")
+		}
 		v := reflect.ValueOf(value)
 
 		switch v.Kind() {
@@ -79,6 +85,9 @@ func MaxLength(max int) Validator {
 // Range returns a validator that checks if a number is within a range
 func Range(min, max float64) Validator {
 	return func(value interface{}) error {
+		if value == nil {
+			return errors.New("value is required")
+		}
 		var val float64
 
 		v := reflect.ValueOf(value)

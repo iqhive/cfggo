@@ -138,6 +138,7 @@ func (c *Structure) SaveIfChanged() error {
 
 	c.configMutex.RLock()
 	changed := c.changed
+	version := c.changeVersion
 	c.configMutex.RUnlock()
 	if !changed {
 		return nil
@@ -149,7 +150,9 @@ func (c *Structure) SaveIfChanged() error {
 	}
 
 	c.configMutex.Lock()
-	c.changed = false
+	if c.changeVersion == version {
+		c.changed = false
+	}
 	c.configMutex.Unlock()
 	return nil
 }

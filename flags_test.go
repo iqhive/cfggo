@@ -446,6 +446,33 @@ func TestWithFlagSetSkipsAutoParse(t *testing.T) {
 	}
 }
 
+func TestWithFlagSetParseRunsValidators(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	os.Args = []string{"cmd", "--port=70000"}
+
+	type TestConfig struct {
+		Structure
+		Port func() int `cfggo:"port" default:"8080"`
+	}
+	cfg := &TestConfig{}
+	if err := cfg.Init(cfg, WithFlagSet(fs), WithValidation("port", Range(1, 65535))); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	if err := fs.Parse(os.Args[1:]); err == nil {
+		t.Fatal("Parse: expected validation error, got nil")
+	}
+	if got := cfg.Port(); got != 8080 {
+		t.Fatalf("after failed Parse Port() = %d, want default 8080", got)
+	}
+	if src, _ := cfg.Source("port"); src != SourceDefault {
+		t.Fatalf("after failed Parse source = %s, want default", src)
+	}
+}
+
 // TestBoolFlagStandalone tests that the --debug flag enables debug mode
 func TestBoolFlagStandalone(t *testing.T) {
 	// Save original debug state to restore after test

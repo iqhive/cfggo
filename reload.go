@@ -100,6 +100,18 @@ func (c *Structure) Reload() error {
 		}
 	}
 
+	if err = c.checkUnrecognizedKeys(); err != nil {
+		c.log().Warn("cfggo: unrecognized configuration keys after reload; keeping previous values", "err", err)
+		c.configMutex.Lock()
+		c.configData = oldConfig
+		c.provenance = oldProvenance
+		c.provenanceTrail = oldTrail
+		c.changed = oldChanged
+		c.changeVersion = oldChangeVersion
+		c.configMutex.Unlock()
+		return err
+	}
+
 	// The accessor closures installed during Init read c.configData live on
 	// every call, so the reloaded values are already visible without
 	// reinstalling them. Re-running replaceConfigFuncs here would rewrite the

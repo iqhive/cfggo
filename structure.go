@@ -180,11 +180,9 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	}
 	v := reflect.ValueOf(parent)
 	if v.Kind() != reflect.Ptr {
-		ptr := reflect.New(v.Type())
-		ptr.Elem().Set(v)
-		parent = ptr.Interface()
-		c.log().Warn("Structure: Init() must be called with a parent struct pointer, not a struct")
-	} else if v.Type().Elem().Kind() == reflect.Ptr {
+		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must be a pointer to a struct, got %s", v.Kind())
+	}
+	if v.Type().Elem().Kind() == reflect.Ptr {
 		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must be a pointer to a struct, not a pointer to a pointer")
 	}
 
@@ -275,9 +273,27 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 		}
 	}
 
-	// Surface configuration keys that are not backed by a struct field. These
-	// are almost always typos (e.g. "portt" in a JSON file) that would
-	// otherwise be silently ignored. WithStrictKeys upgrades this to an error
+	if err := c.checkUnrecognizedKeys(); err != nil {
+		return err
+	}
+
+	if err := c.validate(); err != nil {
+		if !c.lenient {
+			c.log().Error("cfggo: configuration validation failed", "err", err)
+			return err
+		}
+		c.log().Warn("cfggo: configuration validation failed", "err", err)
+	}
+
+	c.startAutoSave()
+	return nil
+}
+
+// checkUnrecognizedKeys surfaces configuration keys that are not backed by a
+// struct field. These are almost always typos (e.g. "portt" in a JSON file)
+// that would otherwise be silently ignored. WithStrictKeys upgrades this to an
+// error.
+func (c *Structure) checkUnrecognizedKeys() error {
 	if unrecognized := c.unrecognizedKeys(); len(unrecognized) > 0 {
 		for _, key := range unrecognized {
 			attrs := []any{"key", key}
@@ -291,16 +307,6 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 				"unrecognized configuration keys")
 		}
 	}
-
-	if err := c.validate(); err != nil {
-		if !c.lenient {
-			c.log().Error("cfggo: configuration validation failed", "err", err)
-			return err
-		}
-		c.log().Warn("cfggo: configuration validation failed", "err", err)
-	}
-
-	c.startAutoSave()
 	return nil
 }
 

@@ -278,6 +278,30 @@ func TestReloadEnvConversionFailureKeepsPreviousValues(t *testing.T) {
 	}
 }
 
+func TestReloadStrictKeysRejectsNewUnknownKeys(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	handler := &memHandler{data: json.RawMessage(`{"port":9090}`)}
+	cfg := &validatedReloadRegressionConfig{}
+	if err := cfg.Init(cfg, WithConfigHandler(handler), WithoutFlags(), WithStrictKeys()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	handler.data = json.RawMessage(`{"port":9091,"prot":1234}`)
+	err := cfg.Reload()
+	if !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("Reload error = %v, want ErrUnknownKey", err)
+	}
+	if got := cfg.Port(); got != 9090 {
+		t.Fatalf("after strict-key reload failure Port() = %d, want previous value 9090", got)
+	}
+	if _, ok := cfg.Get("prot"); ok {
+		t.Fatal("unknown key prot remained live after failed reload")
+	}
+}
+
 type lazyInitRegressionConfig struct {
 	Structure
 	Port func() int `cfggo:"port" default:"8080"`
@@ -419,6 +443,16 @@ func TestInitRejectsNilParent(t *testing.T) {
 	var typedNil *lazyInitRegressionConfig
 	if err := cfg.Init(typedNil); err == nil {
 		t.Fatal("Init((*Config)(nil)): expected error, got nil")
+	}
+}
+
+func TestInitRejectsNonPointerParent(t *testing.T) {
+	var cfg Structure
+	parent := struct {
+		Port func() int `cfggo:"port"`
+	}{}
+	if err := cfg.Init(parent); err == nil {
+		t.Fatal("Init(struct{}): expected error, got nil")
 	}
 }
 

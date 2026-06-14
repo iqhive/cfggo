@@ -1,18 +1,49 @@
 package cfggo
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/iqhive/cfggo/cfgerror"
+	"github.com/iqhive/cfggo/cfglogger"
+	"github.com/iqhive/cfggo/errwrapper"
 )
 
 type mapLeafRegressionConfig struct {
 	Structure
 	Labels   func() map[string]string `cfggo:"labels"`
 	Metadata func() map[string]int    `cfggo:"metadata"`
+}
+
+type loadFailureRegressionConfig struct {
+	Structure
+	Port func() int `cfggo:"port" default:"8080"`
+}
+
+type printfStyleRegressionLogger struct {
+	out *bytes.Buffer
+}
+
+func (l *printfStyleRegressionLogger) Debug(msg string, args ...any) {
+	fmt.Fprintf(l.out, msg, args...)
+}
+
+func (l *printfStyleRegressionLogger) Info(msg string, args ...any) {
+	fmt.Fprintf(l.out, msg, args...)
+}
+
+func (l *printfStyleRegressionLogger) Warn(msg string, args ...any) {
+	fmt.Fprintf(l.out, msg, args...)
+}
+
+func (l *printfStyleRegressionLogger) Error(msg string, args ...any) {
+	fmt.Fprintf(l.out, msg, args...)
 }
 
 func TestMapLeafLoadsFromJSONObject(t *testing.T) {
@@ -207,6 +238,104 @@ func TestLoadConversionErrorIncludesKeyAndSource(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error %q does not contain %q", msg, want)
 		}
+	}
+}
+
+func TestInitLoadErrorLoggingAvoidsRepeatedSourceContext(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	var logs bytes.Buffer
+	cfg := &loadFailureRegressionConfig{}
+	err := cfg.Init(cfg,
+		WithFileConfig(t.TempDir()),
+		WithLogger(cfglogger.NewDefaultLoggerWithWriter(&logs)),
+		WithoutFlags(),
+	)
+	if err == nil {
+		t.Fatal("Init: expected directory read error, got nil")
+	}
+	if !errors.Is(err, ErrSource) {
+		t.Fatalf("Init error does not match ErrSource: %v", err)
+	}
+
+	msg := err.Error()
+	for _, repeated := range []string{"cfggo: configuration source error", "failed to load configuration source"} {
+		if strings.Contains(msg, repeated) {
+			t.Fatalf("error %q contains repeated context %q", msg, repeated)
+		}
+	}
+	for _, want := range []string{"failed to load configuration from file source", "is a directory"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
+
+	logLine := logs.String()
+	if !strings.Contains(logLine, `msg="cfggo: Init failed"`) {
+		t.Fatalf("log line %q does not contain concise init failure message", logLine)
+	}
+	if strings.Contains(logLine, "failed to load configuration source") ||
+		strings.Contains(logLine, "cfggo: configuration source error") {
+		t.Fatalf("log line %q repeats source context", logLine)
+	}
+	if strings.Count(logLine, "failed to load configuration from file source") != 1 {
+		t.Fatalf("log line %q should include detailed load context exactly once", logLine)
+	}
+}
+
+func TestInitLoadErrorWithPrintfStyleLoggerAdapter(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	var logs bytes.Buffer
+	cfg := &loadFailureRegressionConfig{}
+	err := cfg.Init(cfg,
+		WithFileConfig(t.TempDir()),
+		WithLogger(cfglogger.Plain(&printfStyleRegressionLogger{out: &logs})),
+		WithoutFlags(),
+	)
+	if err == nil {
+		t.Fatal("Init: expected directory read error, got nil")
+	}
+
+	logLine := logs.String()
+	if strings.Contains(logLine, "%!(EXTRA") {
+		t.Fatalf("printf-style logger output contains fmt EXTRA noise: %q", logLine)
+	}
+	for _, want := range []string{
+		"cfggo: Init failed",
+		"config=loadFailureRegressionConfig",
+		`err="[400] failed to load configuration from file source:`,
+		"is a directory",
+	} {
+		if !strings.Contains(logLine, want) {
+			t.Fatalf("log line %q does not contain %q", logLine, want)
+		}
+	}
+	if strings.Count(logLine, "failed to load configuration from file source") != 1 {
+		t.Fatalf("log line %q should include detailed load context exactly once", logLine)
+	}
+}
+
+func TestErrwrapperPackageAliasesCfgerror(t *testing.T) {
+	err := GlobalErrorWrapper()(errors.New("cause"), ErrCodeInvalidArgument, "wrapped")
+
+	var modern *cfgerror.Error
+	if !errors.As(err, &modern) {
+		t.Fatalf("errors.As(*cfgerror.Error) = false for %T: %v", err, err)
+	}
+	var legacy *errwrapper.Error
+	if !errors.As(err, &legacy) {
+		t.Fatalf("errors.As(*errwrapper.Error) = false for %T: %v", err, err)
+	}
+	if modern != legacy {
+		t.Fatalf("cfgerror and errwrapper aliases resolved to different errors: %p vs %p", modern, legacy)
+	}
+	if got, want := errwrapper.Code(err), cfgerror.Code(err); got != want {
+		t.Fatalf("errwrapper.Code = %d, cfgerror.Code = %d", got, want)
 	}
 }
 

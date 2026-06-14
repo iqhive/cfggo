@@ -9,8 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/cfglogger"
-	"github.com/iqhive/cfggo/errwrapper"
 	"github.com/iqhive/cfggo/internal/env"
 	"github.com/iqhive/cfggo/sources"
 	"github.com/iqhive/cfggo/validcfg"
@@ -63,7 +63,7 @@ type Structure struct {
 	strictKeys bool
 
 	logger       cfglogger.Logger
-	errorWrapper errwrapper.ErrorWrapper
+	errorWrapper cfgerror.Wrapper
 
 	// plan is the cached, reflection-free blueprint for the parent struct's
 	// type: every leaf field's dotted key, help/default tags, accessor type,
@@ -199,7 +199,7 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 			// A non-default source that fails to load is fatal to Init; a
 			// default source (WithDefaultFileConfig) is allowed to be absent.
 			if !c.configHandler.IsDefault() {
-				c.log().Error("cfggo: failed to load configuration source", "err", err)
+				c.log().Error("cfggo: Init failed", "err", err)
 				return err
 			}
 			c.log().Warn("cfggo: optional configuration source could not be loaded", "err", err)
@@ -270,7 +270,7 @@ func (c *Structure) SetLogger(logger cfglogger.Logger) {
 }
 
 // SetErrorWrapper sets the instance-specific error wrapper.
-func (c *Structure) SetErrorWrapper(wrapper errwrapper.ErrorWrapper) {
+func (c *Structure) SetErrorWrapper(wrapper cfgerror.Wrapper) {
 	c.errorWrapper = wrapper
 }
 

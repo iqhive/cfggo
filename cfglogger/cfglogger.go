@@ -1,9 +1,12 @@
 package cfglogger
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // Logger is the minimal logging surface cfggo depends on.
@@ -14,9 +17,10 @@ import (
 //
 //	cfg.Init(cfg, cfggo.WithLogger(slog.Default()))
 //
-// Following slog conventions, args are treated as alternating key/value
-// attribute pairs. cfggo's own internal log calls pass a single pre-formatted
-// message and no args, so any Logger that simply prints msg behaves correctly.
+// Following slog conventions, args are treated as attributes: either alternating
+// key/value pairs or slog.Attr values. Loggers that forward msg and args to a
+// printf-style API should wrap themselves with Plain first so attributes are
+// rendered into msg instead of being treated as printf arguments.
 type Logger interface {
 	Debug(msg string, args ...any)
 	Info(msg string, args ...any)
@@ -45,6 +49,162 @@ type LevelSetter interface {
 // already satisfies Logger)
 type WithAttrer interface {
 	With(args ...any) Logger
+}
+
+// FormatMessage renders a slog-style log message and attributes as a single
+// human-readable line. It is intended for adapters around printf/plain loggers;
+// structured loggers should keep receiving msg and args separately.
+func FormatMessage(msg string, args ...any) string {
+	if len(args) == 0 {
+		return msg
+	}
+
+	var b strings.Builder
+	b.WriteString(msg)
+	for i := 0; i < len(args); {
+		if attr, ok := args[i].(slog.Attr); ok {
+			appendAttr(&b, attr)
+			i++
+			continue
+		}
+
+		key, ok := args[i].(string)
+		if !ok {
+			appendKeyValue(&b, "!BADKEY", args[i])
+			i++
+			continue
+		}
+		if i+1 >= len(args) {
+			appendKeyValue(&b, "!MISSING", key)
+			i++
+			continue
+		}
+		appendKeyValue(&b, key, args[i+1])
+		i += 2
+	}
+	return b.String()
+}
+
+func appendAttr(b *strings.Builder, attr slog.Attr) {
+	if attr.Key == "" {
+		return
+	}
+	appendKeyValue(b, attr.Key, attr.Value)
+}
+
+func appendKeyValue(b *strings.Builder, key string, value any) {
+	b.WriteByte(' ')
+	b.WriteString(key)
+	b.WriteByte('=')
+	b.WriteString(formatValue(value))
+}
+
+func formatValue(value any) string {
+	if value == nil {
+		return "<nil>"
+	}
+	if slogValue, ok := value.(slog.Value); ok {
+		slogValue = slogValue.Resolve()
+		if slogValue.Kind() == slog.KindAny {
+			value = slogValue.Any()
+		} else {
+			value = slogValue.String()
+		}
+	}
+
+	text := fmt.Sprint(value)
+	if text == "" || strings.ContainsAny(text, " \t\r\n\"=") {
+		return strconv.Quote(text)
+	}
+	return text
+}
+
+// Plain wraps a Logger so it receives a single formatted message and no attrs.
+// Use it for custom loggers backed by fmt.Printf/log.Printf-style APIs.
+func Plain(logger Logger) Logger {
+	if logger == nil {
+		return &NoopLogger{}
+	}
+	if _, ok := logger.(*plainLogger); ok {
+		return logger
+	}
+	return &plainLogger{logger: logger}
+}
+
+type plainLogger struct {
+	logger Logger
+	attrs  []any
+}
+
+func (pl *plainLogger) Debug(msg string, args ...any) {
+	pl.logger.Debug(FormatMessage(msg, mergeAttrs(pl.attrs, args)...))
+}
+func (pl *plainLogger) Info(msg string, args ...any) {
+	pl.logger.Info(FormatMessage(msg, mergeAttrs(pl.attrs, args)...))
+}
+func (pl *plainLogger) Warn(msg string, args ...any) {
+	pl.logger.Warn(FormatMessage(msg, mergeAttrs(pl.attrs, args)...))
+}
+func (pl *plainLogger) Error(msg string, args ...any) {
+	pl.logger.Error(FormatMessage(msg, mergeAttrs(pl.attrs, args)...))
+}
+
+func (pl *plainLogger) With(args ...any) Logger {
+	return &plainLogger{logger: pl.logger, attrs: mergeAttrs(pl.attrs, args)}
+}
+
+// PrintfFunc is the shape of fmt.Printf/log.Printf-style logging functions.
+type PrintfFunc func(format string, args ...any)
+
+// NewPrintfLogger adapts printf-style functions to Logger. Pass nil for levels
+// that should be discarded.
+func NewPrintfLogger(debugf, infof, warnf, errorf PrintfFunc) Logger {
+	return &printfLogger{
+		debugf: debugf,
+		infof:  infof,
+		warnf:  warnf,
+		errorf: errorf,
+	}
+}
+
+type printfLogger struct {
+	debugf PrintfFunc
+	infof  PrintfFunc
+	warnf  PrintfFunc
+	errorf PrintfFunc
+	attrs  []any
+}
+
+func (pl *printfLogger) Debug(msg string, args ...any) { pl.printf(pl.debugf, msg, args...) }
+func (pl *printfLogger) Info(msg string, args ...any)  { pl.printf(pl.infof, msg, args...) }
+func (pl *printfLogger) Warn(msg string, args ...any)  { pl.printf(pl.warnf, msg, args...) }
+func (pl *printfLogger) Error(msg string, args ...any) { pl.printf(pl.errorf, msg, args...) }
+
+func (pl *printfLogger) printf(printf PrintfFunc, msg string, args ...any) {
+	if printf == nil {
+		return
+	}
+	printf("%s", FormatMessage(msg, mergeAttrs(pl.attrs, args)...))
+}
+
+func (pl *printfLogger) With(args ...any) Logger {
+	return &printfLogger{
+		debugf: pl.debugf,
+		infof:  pl.infof,
+		warnf:  pl.warnf,
+		errorf: pl.errorf,
+		attrs:  mergeAttrs(pl.attrs, args),
+	}
+}
+
+func mergeAttrs(prefix, args []any) []any {
+	if len(prefix) == 0 {
+		return args
+	}
+	merged := make([]any, 0, len(prefix)+len(args))
+	merged = append(merged, prefix...)
+	merged = append(merged, args...)
+	return merged
 }
 
 // DefaultLogger is the default Logger implementation. It is backed by the

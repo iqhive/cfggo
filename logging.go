@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 
+	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/cfglogger"
-	"github.com/iqhive/cfggo/errwrapper"
 )
 
 // globalLogger and globalErrorWrapper hold the process-wide defaults used to
@@ -19,12 +19,12 @@ import (
 // variables could not be mutated safely once goroutines were logging)
 var (
 	globalLogger       atomic.Pointer[cfglogger.Logger]
-	globalErrorWrapper atomic.Pointer[errwrapper.ErrorWrapper]
+	globalErrorWrapper atomic.Pointer[cfgerror.Wrapper]
 )
 
 func init() {
 	SetGlobalLogger(cfglogger.NewDefaultLogger())
-	SetGlobalErrorWrapper(errwrapper.NewDefaultErrorWrapper())
+	SetGlobalErrorWrapper(cfgerror.NewDefaultWrapper())
 }
 
 // GlobalLogger returns the process-wide logger used to seed new Structure
@@ -53,16 +53,16 @@ func SetGlobalLogger(l cfglogger.Logger) {
 
 // GlobalErrorWrapper returns the process-wide error wrapper used to seed new
 // Structure instances. NB: this never returns nil
-func GlobalErrorWrapper() errwrapper.ErrorWrapper {
+func GlobalErrorWrapper() cfgerror.Wrapper {
 	if p := globalErrorWrapper.Load(); p != nil {
 		return *p
 	}
-	return errwrapper.NewDefaultErrorWrapper()
+	return cfgerror.NewDefaultWrapper()
 }
 
 // SetGlobalErrorWrapper replaces the process-wide error wrapper. It is safe to
 // call concurrently. NB:nil wrappers are ignored
-func SetGlobalErrorWrapper(w errwrapper.ErrorWrapper) {
+func SetGlobalErrorWrapper(w cfgerror.Wrapper) {
 	if w == nil {
 		return
 	}

@@ -889,8 +889,21 @@ works directly) and supply it with `WithLogger` (or `config.SetLogger(...)`):
 err := cfggo.Init(config, cfggo.WithLogger(slog.Default()))
 ```
 
+If your custom logger is backed by `fmt.Printf`, `log.Printf`, or another
+printf-style API, wrap it with `cfglogger.Plain(...)` or build it with
+`cfglogger.NewPrintfLogger(...)`. cfggo passes slog-style key/value attributes;
+the adapter renders those attributes into one message so printf loggers do not
+emit `%!(EXTRA ...)` noise:
+
+```go
+logger := cfglogger.NewPrintfLogger(nil, nil, log.Printf, log.Printf)
+err := cfggo.Init(config, cfggo.WithLogger(logger))
+```
+
 `WithErrorWrapper` lets you customise how cfggo formats the errors it returns
-(for example, to attach your own error codes or context).
+(for example, to attach your own error codes or context). New code should use
+the `cfgerror.Wrapper` type; the older `errwrapper` package remains as a
+backward-compatible alias.
 
 ### Configuration Options
 
@@ -983,6 +996,7 @@ future major version. Prefer the replacements:
 | `InitE` / `InitSelfE` | `Init` / `InitSelf` now return the error directly |
 | `CleanupSignalHandler()` (now a no-op) | `WithAutoSave(ctx)` or call `Save`/`SaveIfChanged` from your own shutdown path |
 | `convert.ConvertValue` / `cfggo.ConvertValue` | `config.Set(key, value)` |
+| `errwrapper` package | `cfgerror` package |
 
 ### Removed
 

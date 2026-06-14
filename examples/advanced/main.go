@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/iqhive/cfggo"
+	"github.com/iqhive/cfggo/cfglogger"
 )
 
 // CustomLogger demonstrates a custom logger implementation
@@ -18,21 +19,22 @@ func NewCustomLogger(prefix string) *CustomLogger {
 
 // CustomLogger implements the slimmed-down cfglogger.Logger interface, whose
 // four methods match the leveled methods of *slog.Logger. args follow slog's
-// key/value convention.
+// key/value convention. Because this logger is backed by log.Printf, callers
+// should pass it through cfglogger.Plain before giving it to cfggo.
 func (cl *CustomLogger) Debug(msg string, args ...interface{}) {
-	log.Printf("[%s DEBUG] %s %v", cl.prefix, msg, args)
+	log.Printf("[%s DEBUG] %s", cl.prefix, msg)
 }
 
 func (cl *CustomLogger) Info(msg string, args ...interface{}) {
-	log.Printf("[%s INFO] %s %v", cl.prefix, msg, args)
+	log.Printf("[%s INFO] %s", cl.prefix, msg)
 }
 
 func (cl *CustomLogger) Warn(msg string, args ...interface{}) {
-	log.Printf("[%s WARN] %s %v", cl.prefix, msg, args)
+	log.Printf("[%s WARN] %s", cl.prefix, msg)
 }
 
 func (cl *CustomLogger) Error(msg string, args ...interface{}) {
-	log.Printf("[%s ERROR] %s %v", cl.prefix, msg, args)
+	log.Printf("[%s ERROR] %s", cl.prefix, msg)
 }
 
 // CustomErrorWrapper demonstrates a custom error wrapper
@@ -59,8 +61,8 @@ func main() {
 	// Example 1: Custom logger with different prefixes for different services
 	fmt.Println("\n--- Example 1: Multiple services with custom loggers ---")
 
-	serviceALogger := NewCustomLogger("SERVICE-A")
-	serviceBLogger := NewCustomLogger("SERVICE-B")
+	serviceALogger := cfglogger.Plain(NewCustomLogger("SERVICE-A"))
+	serviceBLogger := cfglogger.Plain(NewCustomLogger("SERVICE-B"))
 
 	configA := &AdvancedConfig{}
 	if err := configA.Init(configA,

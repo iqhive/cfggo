@@ -3,7 +3,7 @@ package cfggo
 import (
 	"errors"
 
-	"github.com/iqhive/cfggo/errwrapper"
+	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/validcfg"
 )
 
@@ -32,7 +32,7 @@ var (
 	ErrValidation = validcfg.ErrValidation
 )
 
-// Error codes carried by the *errwrapper.Error values cfggo produces. They are
+// Error codes carried by the *cfgerror.Error values cfggo produces. They are
 // surfaced via ErrorCode and exist so call sites use named, self-documenting
 // values instead of bare integer literals. The numeric values intentionally
 // mirror common HTTP-style semantics (bad request / not found / internal) for
@@ -51,10 +51,10 @@ const (
 )
 
 // ErrorCode returns the application-defined error code carried by err, or 0 if
-// err is nil or carries no code. It is a thin re-export of errwrapper.Code so
-// callers do not need to import the errwrapper package.
+// err is nil or carries no code. It is a thin re-export of cfgerror.Code so
+// callers do not need to import the cfgerror package.
 func ErrorCode(err error) int {
-	return errwrapper.Code(err)
+	return cfgerror.Code(err)
 }
 
 // kindError tags a concrete cause with a sentinel "kind" while keeping a clean,
@@ -66,7 +66,7 @@ type kindError struct {
 }
 
 func (e *kindError) Error() string {
-	return e.kind.Error() + ": " + e.cause.Error()
+	return e.cause.Error()
 }
 
 func (e *kindError) Unwrap() []error {

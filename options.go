@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/cfglogger"
-	"github.com/iqhive/cfggo/errwrapper"
 	"github.com/iqhive/cfggo/sources"
 	"github.com/iqhive/cfggo/validcfg"
 )
@@ -279,7 +279,9 @@ func WithConfigHandler(handler sources.ConfigHandler) Option {
 // During Init cfggo binds the configuration's name onto the logger as a
 // "config" attribute when the logger supports it (the built-in DefaultLogger
 // and a raw *slog.Logger both do), so every line is attributable to the
-// instance
+// instance. Custom loggers backed by fmt.Printf/log.Printf-style APIs should be
+// wrapped with cfglogger.Plain so slog-style attrs are rendered into msg before
+// the printf logger sees them.
 //
 // Note: SetLogLevel adjusts only the global logger.
 // An instance logger supplied here controls its own verbosity;
@@ -291,8 +293,8 @@ func WithLogger(logger cfglogger.Logger) Option {
 	}
 }
 
-// WithErrorWrapper sets a custom error wrapper for this configuration instance
-func WithErrorWrapper(wrapper errwrapper.ErrorWrapper) Option {
+// WithErrorWrapper sets a custom error wrapper for this configuration instance.
+func WithErrorWrapper(wrapper cfgerror.Wrapper) Option {
 	return func(c *Structure) error {
 		c.errorWrapper = wrapper
 		return nil

@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Pacific/Auckland
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: Pacific/Auckland
+    labels:
+      - dependencies
+      - go
+
+  - package-ecosystem: gomod
+    directory: /benchmarks/comparison
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Pacific/Auckland
+    labels:
+      - dependencies
+      - benchmarks

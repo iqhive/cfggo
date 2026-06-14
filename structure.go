@@ -175,6 +175,9 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 		c.errorWrapper = GlobalErrorWrapper()
 	}
 
+	if parent == nil {
+		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must not be nil")
+	}
 	v := reflect.ValueOf(parent)
 	if v.Kind() != reflect.Ptr {
 		ptr := reflect.New(v.Type())
@@ -219,7 +222,9 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 		c.log().Warn("cfggo: field has a cfggo tag but is not a func() T accessor; "+
 			"it will be ignored (did you mean func() "+s.Type+"?)", "key", s.Key, "type", s.Type)
 	}
-	c.applyPlan()
+	if err := c.applyPlan(); err != nil {
+		return err
+	}
 
 	if err := c.validateConfigShape(); err != nil {
 		return err
@@ -237,7 +242,13 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 		}
 	}
 
-	c.loadFromEnv()
+	if err := c.loadFromEnv(); err != nil {
+		if !c.lenient {
+			c.log().Error("cfggo: environment configuration failed", "err", err)
+			return err
+		}
+		c.log().Warn("cfggo: environment configuration failed", "err", err)
+	}
 
 	// Flag handling. When the caller supplied the flag set (e.g.
 	// flag.CommandLine) they own the single canonical Parse() call, so cfggo

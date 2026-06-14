@@ -219,6 +219,65 @@ func TestReloadPreservesProgrammaticSetOverride(t *testing.T) {
 	}
 }
 
+type validatedReloadRegressionConfig struct {
+	Structure
+	Port func() int `cfggo:"port" default:"8080"`
+}
+
+func TestReloadValidationFailureKeepsPreviousValues(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	handler := &memHandler{data: json.RawMessage(`{"port":9090}`)}
+	cfg := &validatedReloadRegressionConfig{}
+	if err := cfg.Init(cfg, WithConfigHandler(handler), WithoutFlags(), WithValidation("port", Range(1, 65535))); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := cfg.Port(); got != 9090 {
+		t.Fatalf("initial Port() = %d, want 9090", got)
+	}
+
+	handler.data = json.RawMessage(`{"port":70000}`)
+	if err := cfg.Reload(); err == nil {
+		t.Fatal("Reload: expected validation error, got nil")
+	}
+	if got := cfg.Port(); got != 9090 {
+		t.Fatalf("after failed reload Port() = %d, want previous valid value 9090", got)
+	}
+	if src, _ := cfg.Source("port"); src != SourceFile {
+		t.Fatalf("after failed reload source = %s, want previous file source", src)
+	}
+}
+
+func TestReloadEnvConversionFailureKeepsPreviousValues(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+	t.Setenv("PORT", "9090")
+
+	cfg := &validatedReloadRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := cfg.Port(); got != 9090 {
+		t.Fatalf("initial Port() = %d, want 9090", got)
+	}
+
+	if err := os.Setenv("PORT", "not-a-number"); err != nil {
+		t.Fatalf("Setenv: %v", err)
+	}
+	if err := cfg.Reload(); err == nil {
+		t.Fatal("Reload: expected env conversion error, got nil")
+	}
+	if got := cfg.Port(); got != 9090 {
+		t.Fatalf("after failed env reload Port() = %d, want previous env value 9090", got)
+	}
+	if src, _ := cfg.Source("port"); src != SourceEnv {
+		t.Fatalf("after failed env reload source = %s, want previous env source", src)
+	}
+}
+
 type lazyInitRegressionConfig struct {
 	Structure
 	Port func() int `cfggo:"port" default:"8080"`
@@ -309,6 +368,57 @@ func TestLoadConversionErrorIncludesKeyAndSource(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error %q does not contain %q", msg, want)
 		}
+	}
+}
+
+func TestInitRejectsInvalidEnvValue(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+	t.Setenv("PORT", "not-a-number")
+
+	cfg := &strictNumericRegressionConfig{}
+	err := cfg.Init(cfg, WithoutFlags())
+	if err == nil {
+		t.Fatal("Init: expected env conversion error, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{`key "port"`, "from env PORT"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
+}
+
+type invalidDefaultRegressionConfig struct {
+	Structure
+	Port func() int `cfggo:"port" default:"not-a-number"`
+}
+
+func TestInitRejectsInvalidDefaultTag(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &invalidDefaultRegressionConfig{}
+	err := cfg.Init(cfg, WithoutFlags())
+	if err == nil {
+		t.Fatal("Init: expected invalid default tag error, got nil")
+	}
+	if !strings.Contains(err.Error(), `invalid default value for key "port"`) {
+		t.Fatalf("Init error = %q, want invalid default key context", err.Error())
+	}
+}
+
+func TestInitRejectsNilParent(t *testing.T) {
+	var cfg Structure
+	if err := cfg.Init(nil); err == nil {
+		t.Fatal("Init(nil): expected error, got nil")
+	}
+
+	var typedNil *lazyInitRegressionConfig
+	if err := cfg.Init(typedNil); err == nil {
+		t.Fatal("Init((*Config)(nil)): expected error, got nil")
 	}
 }
 

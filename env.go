@@ -1,14 +1,16 @@
 package cfggo
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"reflect"
 )
 
-func (c *Structure) loadFromEnv() {
+func (c *Structure) loadFromEnv() error {
 	if c.skipEnv {
 		c.log().Debug("loadFromEnv: skipping environment variables")
-		return
+		return nil
 	}
 
 	// Get all configuration keys
@@ -29,6 +31,7 @@ func (c *Structure) loadFromEnv() {
 	}
 
 	// Process each environment variable found
+	var setErrs []error
 	for key, value := range envVars {
 		// Get the target type for this key
 		c.configMutex.RLock()
@@ -52,10 +55,15 @@ func (c *Structure) loadFromEnv() {
 		envVar := c.envVarName(key)
 		if err := dv.Set(value); err != nil {
 			c.log().Info("cfggo: error setting config from environment variable", "key", key, "env", envVar, "value", value, "err", err)
+			setErrs = append(setErrs, fmt.Errorf("key %q from env %s: %w", key, envVar, err))
 		} else {
 			c.log().Debug("cfggo: set config from environment variable", "key", key, "env", envVar, "value", value)
 		}
 	}
+	if len(setErrs) > 0 {
+		return c.WrapError(wrapKind(ErrSource, errors.Join(setErrs...)), ErrCodeInvalidArgument, "failed to apply environment variables")
+	}
+	return nil
 }
 
 func (c *Structure) envVarName(key string) string {

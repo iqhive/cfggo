@@ -59,7 +59,17 @@ func (c *Structure) Reload() error {
 	}
 
 	// Reload from environment variables
-	c.loadFromEnv()
+	if err = c.loadFromEnv(); err != nil {
+		c.log().Error("cfggo: failed to reload environment variables", "err", err)
+		c.configMutex.Lock()
+		c.configData = oldConfig
+		c.provenance = oldProvenance
+		c.provenanceTrail = oldTrail
+		c.changed = oldChanged
+		c.changeVersion = oldChangeVersion
+		c.configMutex.Unlock()
+		return err
+	}
 
 	// Check if flags have been parsed before calling parseFlags
 	var flagsParsed bool
@@ -96,13 +106,19 @@ func (c *Structure) Reload() error {
 	// struct func fields, racing with any goroutine currently calling an
 	// accessor (and with a concurrent reload)
 
-	// Validate configuration after reloading
-	// This stays a warning (rather than an error) so a transient bad value
-	// never tears down a running service mid-reload; the validation error now
-	// carries each value's provenance so the log line points straight at the
-	// offending source
+	// Validate configuration after reloading. A failed reload must leave the
+	// last known-good values live; otherwise validators only report that the
+	// service has already been poisoned by bad config.
 	if err = c.Validate(); err != nil {
-		c.log().Warn("cfggo: configuration validation failed after reload", "err", err)
+		c.log().Warn("cfggo: configuration validation failed after reload; keeping previous values", "err", err)
+		c.configMutex.Lock()
+		c.configData = oldConfig
+		c.provenance = oldProvenance
+		c.provenanceTrail = oldTrail
+		c.changed = oldChanged
+		c.changeVersion = oldChangeVersion
+		c.configMutex.Unlock()
+		return err
 	}
 
 	// Notify OnChange listeners with the aggregate set of keys whose values

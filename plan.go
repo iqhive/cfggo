@@ -306,18 +306,16 @@ func configNameFromField(field reflect.StructField) string {
 // reflection walks (buildFieldMeta / setupConfigData / setDefaultsFromTags /
 // replaceConfigFuncs). All field-index navigation uses precomputed paths via
 // reflect.Value.Field, so it never copies a StructField or re-parses a tag
-func (c *Structure) applyPlan() {
+func (c *Structure) applyPlan() error {
 	v := reflect.ValueOf(c.parent)
 	for v.Kind() == reflect.Ptr {
 		if v.IsNil() {
-			c.log().Warn("cfggo: Init received a nil parent pointer")
-			return
+			return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must not be a nil pointer")
 		}
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		c.log().Warn("cfggo: Init expected a struct", "kind", v.Kind())
-		return
+		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: expected a struct, got %s", v.Kind())
 	}
 
 	if c.configData == nil {
@@ -356,7 +354,7 @@ func (c *Structure) applyPlan() {
 			}
 			if leaf.info.HasDefault && leaf.info.DefaultTag != "" {
 				if val, err := iconvert.ConvertString(leaf.info.DefaultTag, leaf.info.Type, c); err != nil {
-					c.log().Warn("cfggo: could not parse default value", "key", leaf.info.Key, "err", err)
+					return c.WrapError(err, ErrCodeInvalidArgument, "invalid default value for key %q", leaf.info.Key)
 				} else if err := c.set(leaf.info.Key, val); err != nil {
 					c.log().Warn("cfggo: could not apply default value", "key", leaf.info.Key, "err", err)
 				}
@@ -385,6 +383,7 @@ func (c *Structure) applyPlan() {
 		}
 	}
 	c.configMutex.Unlock()
+	return nil
 }
 
 // makeAccessor builds the func value installed into an accessor field. For the

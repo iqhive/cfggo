@@ -1,11 +1,6 @@
 package cfggo
 
 import (
-	"fmt"
-	"sort"
-	"strings"
-	"text/tabwriter"
-
 	"github.com/iqhive/cfggo/sources"
 )
 
@@ -52,13 +47,69 @@ func (s Source) String() string {
 	}
 }
 
+// maxProvenanceTrail bounds the per-key source history so a long-running
+// service that reloads repeatedly cannot grow the trail without limit. Only the
+// most recent entries are retained
+const maxProvenanceTrail = 8
+
 // recordSourceLocked records the provenance of key. The caller must hold
 // c.configMutex for writing.
+//
+// In addition to the single most-recent source, it maintains an ordered
+// override chain (provenanceTrail) that powers SourceChain/Explain. The trail
+// is allocated lazily: a key resolved by a single source records nothing extra,
+// so the overwhelmingly common case stays allocation-free. A trail entry is
+// only created the first time a key's source actually changes, at which point
+// the prior source is captured so the chain reads default -> file -> env -> ...
 func (c *Structure) recordSourceLocked(key string, src Source) {
 	if c.provenance == nil {
 		c.provenance = make(map[string]Source)
 	}
+	prev, had := c.provenance[key]
 	c.provenance[key] = src
+
+	// No history to extend until a key is overridden by a different source
+	if !had || prev == src {
+		return
+	}
+
+	if c.provenanceTrail == nil {
+		c.provenanceTrail = make(map[string][]Source)
+	}
+	trail := c.provenanceTrail[key]
+	if len(trail) == 0 {
+		// Seed with the prior source so the chain begins at the original value
+		trail = []Source{prev, src}
+	} else if trail[len(trail)-1] != src {
+		if len(trail) >= maxProvenanceTrail {
+			// Drop the oldest entry in place (no allocation) to stay bounded
+			copy(trail, trail[1:])
+			trail[len(trail)-1] = src
+		} else {
+			trail = append(trail, src)
+		}
+	}
+	c.provenanceTrail[key] = trail
+}
+
+// SourceChain returns the ordered chain of sources that have contributed to
+// key's current value, eg [SourceDefault, SourceFile, SourceEnv]. When a key was
+// only ever resolved by a single source the chain has one element (that
+// source); an unknown key returns nil. It answers "which layers set this, and
+// in what order?" — the natural follow-up to Source's "where is it from now?"
+func (c *Structure) SourceChain(key string) []Source {
+	c.ensureInit()
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
+	if trail, ok := c.provenanceTrail[key]; ok && len(trail) > 0 {
+		out := make([]Source, len(trail))
+		copy(out, trail)
+		return out
+	}
+	if src, ok := c.provenance[key]; ok {
+		return []Source{src}
+	}
+	return nil
 }
 
 // handlerSource maps the configured ConfigHandler to the Source it represents.
@@ -98,41 +149,12 @@ func (c *Structure) Sources() map[string]Source {
 
 // Explain returns a human-readable, key-sorted dump of every configuration
 // value annotated with where it came from (and the field's help text, if any).
-// It is the recommended starting point for debugging "why is this value X?".
+// When a value was set by more than one source, the full override chain is
+// shown in brackets (eg "[default->file->env]"), making it the recommended
+// starting point for debugging "why is this value X?"
 //
 // Values for fields tagged `secret:"true"` are masked,
 // so the output is safe to log or paste into a bug report
 func (c *Structure) Explain() string {
-	c.ensureInit()
-
-	c.configMutex.RLock()
-	keys := make([]string, 0, len(c.configData))
-	values := make(map[string]string, len(c.configData))
-	srcs := make(map[string]Source, len(c.configData))
-	for key, value := range c.configData {
-		keys = append(keys, key)
-		if c.isSecretKey(key) {
-			values[key] = maskedValue
-		} else {
-			values[key] = fmt.Sprintf("%v", value)
-		}
-		srcs[key] = c.provenance[key]
-	}
-	c.configMutex.RUnlock()
-
-	sort.Strings(keys)
-
-	var sb strings.Builder
-	sb.WriteString(c.name + ":\n")
-	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
-	for _, key := range keys {
-		help := c.GetHelpTag(key)
-		if help != "" {
-			fmt.Fprintf(tw, "%s\t%s\t(from %s)\t// %s\n", key, values[key], srcs[key], help)
-		} else {
-			fmt.Fprintf(tw, "%s\t%s\t(from %s)\t\n", key, values[key], srcs[key])
-		}
-	}
-	tw.Flush()
-	return sb.String()
+	return c.renderHuman(true)
 }

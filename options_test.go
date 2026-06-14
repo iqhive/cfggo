@@ -74,6 +74,35 @@ func TestWithFileConfigParamName(t *testing.T) {
 	}
 }
 
+// TestWithFileConfigParamNameInit ensures WithFileConfigParamName works when
+// applied through Init (where c.FlagSet is still nil at option-application
+// time). This previously panicked with a nil pointer dereference because the
+// option dereferenced c.FlagSet before Init created it.
+func TestWithFileConfigParamNameInit(t *testing.T) {
+	for _, args := range [][]string{
+		{"prog"},                                // no config arg -> registers a String flag
+		{"prog", "--config=testdata/test.json"}, // config arg present
+	} {
+		oldArgs := os.Args
+		os.Args = args
+
+		cfg := &Structure{}
+		err := cfg.Init(cfg, WithFileConfigParamName("config"))
+
+		os.Args = oldArgs
+
+		if err != nil {
+			t.Fatalf("Init() with WithFileConfigParamName returned error for args %v: %v", args, err)
+		}
+		if cfg.FlagSet == nil {
+			t.Fatalf("expected FlagSet to be created for args %v", args)
+		}
+		if cfg.FlagSet.Lookup("config") == nil {
+			t.Errorf("expected 'config' flag to be registered for args %v", args)
+		}
+	}
+}
+
 // TestWithFileConfig tests the WithFileConfig function
 func TestWithFileConfig(t *testing.T) {
 	tests := []struct {

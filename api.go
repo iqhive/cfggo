@@ -20,10 +20,15 @@ func Init(parent interface{}, options ...Option) error {
 	type initer interface {
 		Init(interface{}, ...Option) error
 	}
-	if i, ok := parent.(initer); ok {
-		return i.Init(parent, options...)
+	i, ok := parent.(initer)
+	if !ok {
+		// A struct that does not embed cfggo.Structure has no Init method, so
+		// silently returning nil would leave the program completely
+		// unconfigured while reporting success. Fail loudly instead
+		return GlobalErrorWrapper()(nil, ErrCodeInvalidArgument,
+			"cfggo.Init: parent (%T) must embed cfggo.Structure", parent)
 	}
-	return nil
+	return i.Init(parent, options...)
 }
 
 // --- Logging helpers ----------------------------------------------------------

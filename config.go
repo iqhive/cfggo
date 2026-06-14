@@ -13,21 +13,28 @@ func (c *Structure) Set(key string, value interface{}) error {
 	c.ensureInit()
 
 	c.configMutex.Lock()
-	if _, exists := c.configData[key]; !exists {
+	old, exists := c.configData[key]
+	if !exists {
 		c.configMutex.Unlock()
 		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q", key)
 	}
 	err := c.set(key, value)
+	var newVal interface{}
 	if err == nil {
 		c.changed = true
 		c.recordSourceLocked(key, SourceSet)
+		newVal = c.configData[key]
 	}
 	c.configMutex.Unlock()
 
 	if err != nil {
 		return err
 	}
-	c.notifyChange([]string{key})
+	// Only assemble the change set when someone is listening,
+	// so a plain Set stays allocation-free in the common case
+	if c.hasListeners() {
+		c.notifyChange([]Change{{Key: key, Old: old, New: newVal, Source: SourceSet}})
+	}
 	return nil
 }
 

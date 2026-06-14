@@ -215,6 +215,22 @@ the design:
 In short: the function indirection is what buys you *typed* access and *live*
 reload at the same time.
 
+### Two pitfalls of the function pattern
+
+Because each field is a `func() T`, two mistakes are worth knowing about:
+
+- **Don't call an accessor before `Init`.** cfggo installs the reading closures
+  during `Init`, so a field left at its nil zero value (no `DefaultValue`
+  assigned) is a nil function and `config.ServerPort()` will panic. Always call
+  `Init`/`InitSelf` at startup before reading. Assigning
+  `ServerPort: cfggo.DefaultValue(8080)` makes a field safe to read even before
+  `Init`, since it already holds a real function.
+- **Declare fields as `func() T`, not plain `T`.** A field written as
+  `ServerPort int` with a `cfggo` tag is silently *not* a config field — it is
+  never loaded or reloaded. cfggo now logs a warning during `Init` for any
+  `cfggo`/`cfg`/`config`-tagged field that is not a `func() T`, so this shows up
+  in your logs instead of failing mysteriously at runtime.
+
 ## How It Works
 
 `cfggo` uses a function-based approach to configuration management:
@@ -405,6 +421,15 @@ if err := config.Set("server_port", 9090); err != nil {
 fmt.Println(config.ServerPort()) // 9090
 ```
 
+When you know the expected type, the generic helpers avoid a manual
+`interface{}` assertion. They are package-level functions (Go methods cannot
+take type parameters), so pass the embedded `*Structure`:
+
+```go
+port, ok := cfggo.Value[int](&config.Structure, "server_port") // ok=false if absent/not an int
+dsn := cfggo.MustValue[string](&config.Structure, "db_dsn")     // zero value if absent
+```
+
 ## Saving Configuration
 
 When a `ConfigHandler` is configured (e.g. via `WithFileConfig`), you can persist
@@ -425,13 +450,17 @@ if err := config.SaveIfChanged(); err != nil {
 You can also inspect the configuration without a handler:
 
 ```go
-raw := config.GetJSONBytes()   // []byte JSON snapshot of all values
-fmt.Println(config.String())   // aligned key: value listing with help text
+raw, err := config.GetJSONBytes() // []byte JSON snapshot of all values
+if err != nil {
+    log.Fatal(err)                // marshalling failure is logged and returned
+}
+_ = raw
+fmt.Println(config.String())      // aligned key: value listing with help text
 ```
 
-> ⚠️ `String()`, `Explain()` and `GetJSONBytes()` render **raw** values. If your
-> config holds secrets, see [Secrets and Redaction](#secrets-and-redaction)
-> before logging or printing them.
+> ⚠️ `GetJSONBytes()` writes **raw** values (so config round-trips). `String()`
+> and `Explain()` mask fields tagged `secret:"true"`. Either way, see
+> [Secrets and Redaction](#secrets-and-redaction) before logging or printing.
 
 To save automatically on shutdown, see [`WithAutoSave`](#configuration-options).
 
@@ -454,12 +483,18 @@ fmt.Printf("Updated server port: %d\n", config.ServerPort())
 
 Register a callback to be notified when configuration values change. Callbacks
 fire on `Set` (with the single changed key) and on `Reload`/`ReloadConfig` (with
-the aggregate set of keys whose values changed). They do not fire for values
-applied during `Init`.
+one entry per key whose value changed). They do not fire for values applied
+during `Init`.
+
+Each callback receives a `[]cfggo.Change`, so you get the key, its previous and
+new values, and the source of the new value without a follow-up `Get`:
 
 ```go
-cancel := config.OnChange(func(changedKeys []string) {
-    log.Printf("config changed: %v", changedKeys)
+cancel := config.OnChange(func(changes []cfggo.Change) {
+    for _, ch := range changes {
+        log.Printf("config changed: %s %v -> %v (from %s)",
+            ch.Key, ch.Old, ch.New, ch.Source)
+    }
     // e.g. re-dial a database, adjust a log level, ...
 })
 defer cancel() // unregister when you no longer care
@@ -543,16 +578,31 @@ if err := config.Validate(); err != nil {
 
 ## Secrets and Redaction
 
-`String()`, `Explain()` and `GetJSONBytes()` render configuration values **in
-plaintext**. If your configuration holds secrets (database passwords, API keys,
-tokens), do **not** log or print these outputs as-is in production.
+Tag a field `secret:"true"` to mark it sensitive:
+
+```go
+type AppConfig struct {
+    cfggo.Structure
+    DBPassword func() string `cfggo:"db_password" secret:"true" help:"database password"`
+}
+```
+
+Secret values (and any secret `default` tag) are **masked** as `****` in every
+human-readable / diagnostic output — `Explain()`, `String()`, `Diagnose()` /
+`DiagnoseData()`, `ConfigReference()`, and `Report()` — so a config dump pasted
+into a log or bug report does not leak credentials. Validation still runs
+against the real value, so a bad secret is still reported as invalid.
+
+Masking is for display only. `Save()` and `GetJSONBytes()` deliberately write
+the **real** values so configuration round-trips correctly — do not log their
+output as-is in production.
 
 Recommended practices:
 
-- Keep secrets out of accessors you dump for debugging, or gate dumps behind
-  `LogLevelDebug` so they never reach production logs.
 - Prefer injecting secrets via environment variables / a secrets manager and
   read them only where needed.
+- Treat `Save()` / `GetJSONBytes()` output as sensitive even when other dumps
+  are masked.
 
 ## Debugging: where did this value come from?
 
@@ -564,24 +614,37 @@ answer "why is this value what it is?"
 fmt.Println(config.Explain())
 // features:
 //   name: prod   (from env)
-//   port: 8080   (from flag)
+//   port: 8080   (from flag)   [default->file->flag]   // when several sources contributed
 
 // Or query a single key:
 if src, ok := config.Source("server_port"); ok {
     fmt.Printf("server_port came from %s\n", src) // default | file | http | env | flag | set
 }
+
+// Or get the full override chain for a key (the layers that set it, in order):
+fmt.Println(config.SourceChain("server_port")) // [default file flag]
 ```
 
+When a value was set by more than one source, `Explain()` appends the full
+override chain in brackets, so you can see at a glance that (for example) a flag
+overrode a file value over the struct default.
+
 For a one-stop, programmatic snapshot (ideal for a `--config-check` command),
-use `Diagnose()`. It returns structured data — every key with its value,
-source, type, help text, validation result, plus any unrecognized keys — and
-has a `String()` for pretty printing:
+use `DiagnoseData()`. It returns structured data — every key with its value,
+source, override chain, type, default, help text, validation result, plus any
+unrecognized keys. It is the single data model every built-in report
+(`Diagnose`, `ConfigReference`, `Report`) is rendered from, so you can build your
+own formatting without diverging from them. The returned `Diagnostics` has a
+`String()` for pretty printing (`Diagnose()` is a read-only alias):
 
 ```go
-d := config.Diagnose()
+d := config.DiagnoseData()
 if !d.Valid {
-    fmt.Println(d) // aligned table of keys, values, sources, and statuses
+    fmt.Println(d)            // aligned table of keys, values, sources, statuses
     os.Exit(1)
+}
+for _, k := range d.Keys {   // or render it however you like
+    fmt.Printf("%s = %v (from %s)\n", k.Key, k.Value, k.Source)
 }
 ```
 
@@ -724,15 +787,23 @@ are wired up and safe to call.
 
 ### Detecting Unrecognized Configuration
 
-To catch typos or stale keys (for example, leftover entries in a config file),
-ask cfggo to warn about keys that don't correspond to a struct field:
+cfggo automatically catches typos or stale keys (for example, leftover entries
+in a config file or a misspelled env var): during `Init` any configuration key
+that does not correspond to a struct field is logged as a warning, and listed in
+`DiagnoseData().Unrecognized`. Use `WithStrictKeys()` to turn those warnings into
+a hard `Init` error instead.
+
+To exempt keys that are intentionally present but have no backing field (for
+example command-line-only flags handled elsewhere), pass them to
+`WithIgnoreKeys` at `Init`:
 
 ```go
-config.CheckUnrecognizedItems(config)
+cfggo.Init(config, cfggo.WithIgnoreKeys("admin_token", "trace_id"))
 ```
 
-Use `cfggo.IgnoreFlags("key1", "key2")` to exempt command-line-only keys from
-that check.
+Unlike the previous process-global `IgnoreFlags`, these exemptions are scoped to
+the individual configuration instance, so independent configs (and tests) never
+affect one another.
 
 ### Logging
 
@@ -832,6 +903,10 @@ err = cfggo.Init(config, cfggo.WithLenientLoad())
 // Treat configuration keys with no matching struct field (typos) as errors.
 err = cfggo.Init(config, cfggo.WithStrictKeys())
 
+// Exempt intentional command-line-only keys from the unrecognized-key check
+// (per-instance; replaces the old process-global IgnoreFlags).
+err = cfggo.Init(config, cfggo.WithIgnoreKeys("admin_token", "trace_id"))
+
 // Use a custom logger or error wrapper for this instance.
 err = cfggo.Init(config, cfggo.WithLogger(myLogger))
 err = cfggo.Init(config, cfggo.WithErrorWrapper(myWrapper))
@@ -867,6 +942,15 @@ the returned error yourself. The exported `Logger` / `ErrorWrapper` package
 variables are replaced by the race-safe accessors `GlobalLogger()` /
 `SetGlobalLogger()` and `GlobalErrorWrapper()` / `SetGlobalErrorWrapper()`. The
 unused `LogLevelFatal` level was removed.
+
+`CheckUnrecognizedItems` and the process-global `IgnoreFlags` have been removed.
+Unrecognized keys are now surfaced automatically during `Init` (and via
+`DiagnoseData().Unrecognized`); exempt intentional keys with the per-instance
+`WithIgnoreKeys(...)` option instead.
+
+`GetJSONBytes()` now returns `([]byte, error)` instead of `[]byte` — a
+marshalling failure is both logged and returned. `OnChange` callbacks now
+receive `[]cfggo.Change` (key, old, new, source) instead of `[]string`.
 
 ## Thread Safety
 
@@ -907,8 +991,9 @@ func (h yamlFile) LoadConfig() (json.RawMessage, error) {
 ```
 
 **Is it safe to log the whole config? Does it redact secrets?**
-`String()`/`Explain()`/`GetJSONBytes()` print raw values, so don't log them
-verbatim if your config holds secrets. See
+Tag sensitive fields `secret:"true"` and they are masked in `String()`,
+`Explain()`, `Diagnose()`, `ConfigReference()`, and `Report()`. `GetJSONBytes()`
+and `Save()` still write real values, so don't log those verbatim. See
 [Secrets and Redaction](#secrets-and-redaction).
 
 **Does it coexist with glog/klog/OpenTelemetry flags?**

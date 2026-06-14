@@ -35,25 +35,26 @@ github.com/iqhive/cfggo/
   # Root package `cfggo` (public API)
   doc.go              # Package overview + usage examples
   structure.go        # Structure type + lifecycle (Init/InitSelf return error)
-  config.go           # Get / Set / set (private) / applyLoaded / getAllKeys
+  config.go           # Get / Set / set (private) / applyLoaded / getAllKeys + Value/MustValue
   errors.go           # Sentinel errors (ErrUnknownKey/ErrNoHandler/ErrSource) + ErrorCode
-  provenance.go       # Source enum + Source()/Sources()/Explain() value provenance
-  watch.go            # OnChange change-notification callbacks
+  provenance.go       # Source enum + Source()/Sources()/SourceChain() value provenance
+  watch.go            # Change type + OnChange change-notification callbacks
   plan.go             # Cached per-type struct plan (planForType/applyPlan),
-                      #   typed accessors + readTyped, reflection-free Init wiring
-  fieldmeta.go        # fieldInfo metadata type + unrecognizedKeys
+                      #   typed accessors + readTyped, reflection-free Init wiring,
+                      #   suspect (tagged-but-non-accessor) field detection
+  fieldmeta.go        # fieldInfo metadata type + unrecognizedKeys + secret masking
   fields.go           # createFlags (flag registration from the config map)
+  diagnose.go         # DiagnoseData (canonical snapshot) + Diagnose/ConfigReference/
+                      #   Report + shared human-dump renderer (Explain/String)
   options.go          # Option type + all With* constructors
   flags.go            # Flag registration/parsing (delegates to internal/flags)
   env.go              # Env loading (delegates to internal/env)
-  loadsave.go         # Load/save + JSON decode + GetHelpTag + shouldIgnoreField
+  loadsave.go         # Load/save + JSON decode + GetHelpTag + shouldIgnoreField + GetJSONBytes
   reload.go           # Hot reload (Reload + ReloadConfig)
   validate.go         # Validation methods on Structure + re-exported validators
   logging.go          # Global Logger / ErrorWrapper vars + per-instance log helpers
   api.go              # Init(), SetLogLevel, SetLogOutput, ParseLogLevel, LogLevel*
   dynamicvar.go       # String to typed-value adapter (uses internal/convert)
-  convert.go          # Deprecated root-level ConvertValue (shim, to be removed)
-  unrecognized.go     # Unrecognised-key diagnostics
 
   # Public extension packages
   sources/            # ConfigHandler interface + File/HTTP/Env implementations
@@ -131,15 +132,22 @@ graph TD
 |--------|---------|
 | `Structure` | Embedded type; all config structs embed this |
 | `DefaultValue[T](x T) func() T` | Returns a function that always returns x |
-| `Init(parent, ...Option)` | Package-level convenience wrapper for `parent.Init(parent, ...)` |
-| `Option` / all `With*` funcs | Configuration options for Init |
-| `Get` / `Set` / `GetJSONBytes` / `String` | Config-map accessors |
+| `Init(parent, ...Option)` | Package-level wrapper; errors if `parent` does not embed `Structure` |
+| `Option` / all `With*` funcs | Configuration options for Init (incl. `WithIgnoreKeys`) |
+| `Get` / `Set` / `GetJSONBytes() ([]byte, error)` / `String` | Config-map accessors |
+| `Value[T]` / `MustValue[T]` | Type-safe generic value accessors |
+| `Source` / `Sources` / `SourceChain` | Per-key provenance (final source, all sources, override chain) |
+| `Explain` / `Report` | Human-readable, secret-masked dumps |
+| `DiagnoseData` / `Diagnose` | Canonical structured snapshot (build custom reports from this) |
+| `ConfigReference` | Static field reference table (key, type, env, default, help) |
+| `OnChange(func([]Change))` | Change notifications carrying key, old, new, source |
 | `ReloadConfig()` | Hot reload from all sources |
 | `RegisterValidator` / `AddValidator` / `Validate` / `ValidateKey` | Validation |
 | `Required`, `Range`, `OneOf`, `Regex`, `Email`, `URL`, `MinLength`, `MaxLength`, `All`, `Any`, `Custom` | Re-exported validator constructors |
 | `Logger` / `ErrorWrapper` | Global logger and error wrapper (replaceable) |
 | `SetLogLevel` / `SetLogOutput` / `ParseLogLevel` / `LogLevel*` | Log control |
 | `ConvertValue` | **Deprecated** - use `Structure.Set` instead |
+| `CleanupSignalHandler` | **Deprecated** no-op; drive saves via `WithAutoSave(ctx)` |
 
 ### Extension packages
 

@@ -32,10 +32,14 @@ func (c *Structure) Reload() error {
 			c.log().Error("cfggo: failed to reload configuration source", "err", err)
 
 			// Rollback to old configuration on error. Restore provenance too so
-			// it stays consistent with the values after a failed reload
+			// it stays consistent with the values after a failed reload. The
+			// override-chain trail accumulated during the partial load is
+			// dropped (SourceChain then falls back to the restored single
+			// source); this keeps the success path free of trail-snapshot cost
 			c.configMutex.Lock()
 			c.configData = oldConfig
 			c.provenance = oldProvenance
+			c.provenanceTrail = nil
 			c.configMutex.Unlock()
 			return err
 		}
@@ -88,23 +92,33 @@ func (c *Structure) Reload() error {
 	}
 
 	// Notify OnChange listeners with the aggregate set of keys whose values
-	// differ from the pre-reload snapshot.
-	c.notifyChange(c.changedKeys(oldConfig))
+	// differ from the pre-reload snapshot
+	// Skip the (allocating) diff entirely
+	// when nobody is listening.
+	if c.hasListeners() {
+		c.notifyChange(c.changeSet(oldConfig))
+	}
 
 	return nil
 }
 
-// changedKeys compares the current configData against a previous snapshot and
-// returns the keys whose values changed or were added.
-func (c *Structure) changedKeys(old map[string]interface{}) []string {
+// changeSet compares the current configData against a previous snapshot and
+// returns one Change per key whose value changed or was added, annotated with
+// the current source
+func (c *Structure) changeSet(old map[string]interface{}) []Change {
 	c.configMutex.RLock()
 	defer c.configMutex.RUnlock()
 
-	var keys []string
+	var changes []Change
 	for k, newVal := range c.configData {
 		if oldVal, ok := old[k]; !ok || !reflect.DeepEqual(oldVal, newVal) {
-			keys = append(keys, k)
+			changes = append(changes, Change{
+				Key:    k,
+				Old:    old[k],
+				New:    newVal,
+				Source: c.provenance[k],
+			})
 		}
 	}
-	return keys
+	return changes
 }

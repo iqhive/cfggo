@@ -115,6 +115,17 @@ type structPlan struct {
 	ptrGroups [][]int              // index paths to *struct config groups, pre-order
 	byKey     map[string]*planLeaf // lookup by dotted config key
 	ignored   map[string]bool      // dotted keys of `-`-tagged fields
+	// suspects lists leaf fields that carry an explicit cfggo/cfg/config tag
+	// but are not func() T accessors, so they will never back a config value.
+	// They are almost always a mistake (eg `Port int` instead of
+	// `Port func() int`) and are surfaced as a warning during Init()
+	suspects []suspectField
+}
+
+// suspectField describes a tagged-but-ignored field for the Init warning.
+type suspectField struct {
+	Key  string // the dotted config key the tag would have produced
+	Type string // the field's Go type, for the diagnostic message
 }
 
 // structPlanCache memoises structPlan by struct type
@@ -205,6 +216,11 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int) {
 			leaf.ftype = ft
 			leaf.kind = classify(out)
 			leaf.zero = reflect.Zero(out).Interface()
+		} else if hasExplicitConfigTag(field) {
+			// A field with an explicit cfggo/cfg/config tag that is not a
+			// func() T accessor is silently dropped from the config map, which
+			// is a common and confusing mistake. Record it so Init() can warn
+			p.suspects = append(p.suspects, suspectField{Key: fullKey, Type: ft.String()})
 		}
 
 		p.leaves = append(p.leaves, leaf)
@@ -242,6 +258,23 @@ func isSecretTag(v string) bool {
 	default:
 		return false
 	}
+}
+
+// hasExplicitConfigTag reports whether the field carries a cfggo-family config
+// tag (cfggo/cfg/config). The json tag is deliberately excluded: many structs
+// carry json tags for serialization reasons unrelated to cfggo, so warning on
+// those would be noisy
+func hasExplicitConfigTag(field reflect.StructField) bool {
+	if _, ok := field.Tag.Lookup("cfggo"); ok {
+		return true
+	}
+	if _, ok := field.Tag.Lookup("cfg"); ok {
+		return true
+	}
+	if _, ok := field.Tag.Lookup("config"); ok {
+		return true
+	}
+	return false
 }
 
 // configNameFromField returns the config map key for a struct field by

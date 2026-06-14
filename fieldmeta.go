@@ -49,8 +49,8 @@ func (c *Structure) isSecretKey(key string) bool {
 
 // unrecognizedKeys returns the configuration keys currently present in the
 // config map that are not backed by a struct field (and are not exempted via
-// IgnoreFlags). These are almost always typos in a config file or environment
-// variable. The result is sorted
+// WithIgnoreKeys). These are almost always typos in a config file or
+// environment variable. The result is sorted
 func (c *Structure) unrecognizedKeys() []string {
 	c.configMutex.RLock()
 	keys := make([]string, 0, len(c.configData))
@@ -59,11 +59,6 @@ func (c *Structure) unrecognizedKeys() []string {
 	}
 	c.configMutex.RUnlock()
 
-	ignore := make(map[string]bool, len(commandLineOnlyFlags))
-	for _, f := range commandLineOnlyFlags {
-		ignore[f] = true
-	}
-
 	var out []string
 	for _, k := range keys {
 		if c.plan != nil {
@@ -71,7 +66,7 @@ func (c *Structure) unrecognizedKeys() []string {
 				continue
 			}
 		}
-		if ignore[k] {
+		if c.ignoredKeys[k] {
 			continue
 		}
 		out = append(out, k)

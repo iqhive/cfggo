@@ -87,12 +87,14 @@ func WithFileConfigParamName(argName string) Option {
 	if filename == "" {
 		GlobalLogger().Debug("cfggo: no filename found for config argument", "arg", argName)
 		return func(c *Structure) error {
+			c.ensureFlagSet()
 			c.FlagSet.String(argName, "", "")
 			return nil
 		}
 	}
 	wrap := WithFileConfig(filename)
 	return func(c *Structure) error {
+		c.ensureFlagSet()
 		c.FlagSet.String(argName, "", "")
 		if err := wrap(c); err != nil {
 			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
@@ -285,6 +287,26 @@ func WithErrorWrapper(wrapper errwrapper.ErrorWrapper) Option {
 func WithLenientLoad() Option {
 	return func(c *Structure) error {
 		c.lenient = true
+		return nil
+	}
+}
+
+// WithIgnoreKeys exempts the given configuration keys from the "unrecognized
+// key" diagnostics. Use it for keys that are intentionally present at runtime
+// (eg command-line-only flags read elsewhere) but have no backing struct field,
+// so they are not reported by Init, Diagnose, or Report
+//
+// Unlike the previous process-global IgnoreFlags, the exemptions are scoped to
+// this configuration instance, so independent Structures never affect one
+// another (and tests do not leak state between cases)
+func WithIgnoreKeys(keys ...string) Option {
+	return func(c *Structure) error {
+		if c.ignoredKeys == nil {
+			c.ignoredKeys = make(map[string]bool, len(keys))
+		}
+		for _, k := range keys {
+			c.ignoredKeys[k] = true
+		}
 		return nil
 	}
 }

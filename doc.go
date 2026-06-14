@@ -34,6 +34,21 @@
 // [DefaultValue] (e.g. Port: cfggo.DefaultValue(8080)) or via the `default`
 // tag.
 //
+// # Pitfalls
+//
+// Because each field is a func() T, two mistakes are worth calling out:
+//
+//   - Calling an accessor before Init panics. cfggo installs the reading
+//     closures during Init, so a field left at its nil zero value (no
+//     [DefaultValue] assigned) is a nil func and cfg.Port() panics. Always call
+//     Init/InitSelf at startup before reading any value. Assigning
+//     Port: cfggo.DefaultValue(8080) makes the field safe to read even before
+//     Init, since it already holds a real function.
+//   - A field declared as a plain T instead of func() T is silently ignored.
+//     If you write Port int with a cfggo tag, it never backs a config value.
+//     Init logs a warning for any cfggo/cfg/config-tagged field that is not a
+//     func() T so this shows up instead of failing mysteriously at runtime.
+//
 // # Configuration sources (in precedence order, lowest to highest)
 //
 //  1. Struct field defaults: set via [DefaultValue] at declaration time.
@@ -79,9 +94,15 @@
 //
 // # Debugging
 //
-//   - [Structure.Explain]: human-readable, source-annotated dump of all values.
-//   - [Structure.Diagnose]: structured snapshot (value, source, type, validation)
-//     for building a "--config-check" command.
+//   - [Structure.Explain]: human-readable, source-annotated dump of all values,
+//     including the full override chain (eg "[default->file->env]") for any
+//     value set by more than one source.
+//   - [Structure.SourceChain]: the ordered list of sources that contributed to
+//     a key's current value, the programmatic form of Explain's chain.
+//   - [Structure.DiagnoseData]: the canonical structured snapshot (value,
+//     source, chain, type, default, validation) that every built-in report is
+//     rendered from. Use it to build your own formatting or a "--config-check".
+//   - [Structure.Diagnose]: alias for DiagnoseData for read-only call sites.
 //   - [Structure.ConfigReference]: reference table of every field (key, type,
 //     env var, default, help) generated from the struct definition.
 //   - [Structure.Report]: one-stop dump (reference + resolved state + validation)

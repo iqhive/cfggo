@@ -58,14 +58,17 @@ func TestProvenanceDefaultEnvAndSet(t *testing.T) {
 func TestOnChangeFiresOnSetAndCancels(t *testing.T) {
 	cfg := newFeatureConfig(t)
 
-	var got []string
-	cancel := cfg.OnChange(func(keys []string) { got = append(got, keys...) })
+	var got []Change
+	cancel := cfg.OnChange(func(changes []Change) { got = append(got, changes...) })
 
 	if err := cfg.Set("port", 1234); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if len(got) != 1 || got[0] != "port" {
-		t.Fatalf("callback got %v, want [port]", got)
+	if len(got) != 1 || got[0].Key != "port" {
+		t.Fatalf("callback got %v, want one change for port", got)
+	}
+	if got[0].New != 1234 || got[0].Source != SourceSet {
+		t.Errorf("change = %+v, want New=1234 Source=set", got[0])
 	}
 
 	cancel()

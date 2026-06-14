@@ -10,7 +10,7 @@ import (
 )
 
 // KeyDiagnostic is the resolved state of a single configuration key
-// as reported by Diagnose
+// as reported by DiagnoseData
 type KeyDiagnostic struct {
 	// Key is the dotted configuration key
 	Key string
@@ -18,18 +18,31 @@ type KeyDiagnostic struct {
 	Value interface{}
 	// Source is where the current value came from
 	Source Source
+	// SourceChain is the ordered chain of sources that contributed to the
+	// current value (eg default -> file -> env). It has a single element when
+	// only one source ever set the key. It answers "which layers set this?"
+	SourceChain []Source
 	// Help is the field's `help` tag, if any.
 	Help string
 	// EnvVar is the environment variable name cfggo reads for this key
 	EnvVar string
 	// Type is the accessor's return type (eg "int"), or "" when unknown
 	Type string
+	// Default is the field's `default` tag value (masked when the field is
+	// secret), or "" when none was declared
+	Default string
+	// HasDefault reports whether a `default` tag was declared
+	HasDefault bool
+	// IsAccessor reports whether the key is backed by a func() T accessor field
+	// (as opposed to an unrecognized key present only in the config data)
+	IsAccessor bool
 	// Recognized reports whether the key is backed by a struct field. A false
 	// value usually indicates a typo in a config file or environment variable
 	Recognized bool
 	// Secret reports whether the field is tagged `secret:"true"`. When true,
-	// Value is masked (set to "****") so the diagnostic never carries the
-	// sensitive value; validation is still performed against the real value
+	// Value (and Default) are masked (set to "****") so the diagnostic never
+	// carries the sensitive value; validation is still performed against the
+	// real value
 	Secret bool
 	// Err is the validation error for this key
 	// or nil when it passes or has no validator
@@ -39,7 +52,9 @@ type KeyDiagnostic struct {
 // Diagnostics is a structured, machine-readable snapshot of a configuration's
 // resolved state: every key with its value, provenance, type, help text, and
 // validation result, plus any unrecognized keys. It is the one-stop building
-// block for a "--config-check" / dry-run command
+// block for a "--config-check" / dry-run command, and the single data model
+// every human-readable report (Diagnose, ConfigReference, Report) is rendered
+// from. Obtain it via DiagnoseData and format it however you like
 type Diagnostics struct {
 	// Name is the configuration's name.
 	Name string
@@ -51,11 +66,13 @@ type Diagnostics struct {
 	Valid bool
 }
 
-// Diagnose returns a structured snapshot of the configuration's resolved state.
-// Unlike Explain (which returns a formatted string), Diagnose returns data the
-// caller can inspect programmatically — eg to implement a `--config-check`
-// flag that prints the report and exits non-zero when Valid is false
-func (c *Structure) Diagnose() Diagnostics {
+// DiagnoseData returns a structured snapshot of the configuration's resolved
+// state. It is the canonical data model: callers can inspect it programmatically
+// (eg to implement a `--config-check` flag that prints a report and exits
+// non-zero when Valid is false) or render their own formatting. The built-in
+// Diagnose, ConfigReference, and Report helpers are all thin formatters over
+// this data, so a custom renderer never diverges from them
+func (c *Structure) DiagnoseData() Diagnostics {
 	c.ensureInit()
 
 	c.configMutex.RLock()
@@ -66,6 +83,15 @@ func (c *Structure) Diagnose() Diagnostics {
 	prov := make(map[string]Source, len(c.provenance))
 	for k, v := range c.provenance {
 		prov[k] = v
+	}
+	var chains map[string][]Source
+	if len(c.provenanceTrail) > 0 {
+		chains = make(map[string][]Source, len(c.provenanceTrail))
+		for k, t := range c.provenanceTrail {
+			cp := make([]Source, len(t))
+			copy(cp, t)
+			chains[k] = cp
+		}
 	}
 	c.configMutex.RUnlock()
 
@@ -94,13 +120,17 @@ func (c *Structure) Diagnose() Diagnostics {
 			}
 		}
 		kd := KeyDiagnostic{
-			Key:        key,
-			Value:      data[key],
-			Source:     prov[key],
-			Help:       info.Help,
-			EnvVar:     internalEnvLoader.KeyToEnvVar(key),
-			Recognized: recognized,
-			Secret:     info.IsSecret,
+			Key:         key,
+			Value:       data[key],
+			Source:      prov[key],
+			SourceChain: sourceChainFor(chains, prov, key),
+			Help:        info.Help,
+			EnvVar:      internalEnvLoader.KeyToEnvVar(key),
+			Default:     info.DefaultTag,
+			HasDefault:  info.HasDefault,
+			IsAccessor:  info.IsAccessor,
+			Recognized:  recognized,
+			Secret:      info.IsSecret,
 		}
 		if info.Type != nil {
 			kd.Type = info.Type.String()
@@ -113,9 +143,13 @@ func (c *Structure) Diagnose() Diagnostics {
 				valid = false
 			}
 		}
-		// Never let a secret value escape via the diagnostic struct itself
+		// Never let a secret value escape via the diagnostic struct itself.
+		// A secret's default tag may itself be a credential, so mask it too
 		if kd.Secret {
 			kd.Value = maskedValue
+			if kd.Default != "" {
+				kd.Default = maskedValue
+			}
 		}
 		diags = append(diags, kd)
 	}
@@ -126,6 +160,26 @@ func (c *Structure) Diagnose() Diagnostics {
 		Unrecognized: c.unrecognizedKeys(),
 		Valid:        valid,
 	}
+}
+
+// Diagnose returns a structured snapshot of the configuration's resolved state.
+// It is an alias for DiagnoseData retained for readability at call sites that
+// read the snapshot rather than render it
+func (c *Structure) Diagnose() Diagnostics {
+	return c.DiagnoseData()
+}
+
+// sourceChainFor returns a defensive copy of the recorded override chain for
+// key, falling back to the single recorded source when no multi-source chain
+// exists. The returned slice is owned by the caller
+func sourceChainFor(chains map[string][]Source, prov map[string]Source, key string) []Source {
+	if chain, ok := chains[key]; ok && len(chain) > 0 {
+		return chain
+	}
+	if src, ok := prov[key]; ok {
+		return []Source{src}
+	}
+	return nil
 }
 
 // String renders the diagnostics as an aligned, human-readable
@@ -157,63 +211,134 @@ func (d Diagnostics) String() string {
 	return sb.String()
 }
 
-// ConfigReference returns a human-readable reference table of every
-// configuration field: its key, type, environment variable name, default, and
-// help text. It is generated from the struct definition (not the current
-// values), making it ideal for documentation or a `--help` style listing
-func (c *Structure) ConfigReference() string {
-	c.ensureInit()
-
-	var infos []fieldInfo
-	if c.plan != nil {
-		infos = make([]fieldInfo, 0, len(c.plan.leaves))
-		for i := range c.plan.leaves {
-			info := c.plan.leaves[i].info
-			if !info.IsAccessor {
-				continue
-			}
-			infos = append(infos, info)
-		}
-	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Key < infos[j].Key })
-
+// Reference renders the static field reference (key, type, env var, default,
+// help) for every accessor-backed key in the snapshot, sorted by key. It is the
+// table ConfigReference prints
+func (d Diagnostics) Reference() string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s configuration reference:\n", c.name)
+	fmt.Fprintf(&sb, "%s configuration reference:\n", d.Name)
 	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "KEY\tTYPE\tENV\tDEFAULT\tHELP")
-	for _, info := range infos {
-		typ := "-"
-		if info.Type != nil {
-			typ = info.Type.String()
+	for _, k := range d.Keys {
+		if !k.IsAccessor {
+			continue
+		}
+		typ := k.Type
+		if typ == "" {
+			typ = "-"
 		}
 		def := "-"
-		if info.HasDefault {
-			def = info.DefaultTag
-			// A default for a secret field may itself be a credential
-			if info.IsSecret && def != "" {
-				def = maskedValue
-			}
+		if k.HasDefault {
+			def = k.Default
 		}
-		help := info.Help
+		help := k.Help
 		if help == "" {
 			help = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", info.Key, typ, internalEnvLoader.KeyToEnvVar(info.Key), def, help)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", k.Key, typ, k.EnvVar, def, help)
 	}
 	tw.Flush()
 	return sb.String()
 }
 
+// ConfigReference returns a human-readable reference table of every
+// configuration field: its key, type, environment variable name, default, and
+// help text. It is generated from the struct definition, making it ideal for
+// documentation or a `--help` style listing. Secret defaults are masked
+func (c *Structure) ConfigReference() string {
+	return c.DiagnoseData().Reference()
+}
+
 // Report returns a single, one-stop human-readable dump intended for bug
 // reports and "--config-check" style commands. It combines the static field
-// reference (ConfigReference) with the resolved runtime state and validation
-// status (Diagnose). Values for fields tagged `secret:"true"` are masked
-// throughout, so the output is safe to attach to an issue or paste into a log
+// reference with the resolved runtime state and validation status. Values for
+// fields tagged `secret:"true"` are masked throughout, so the output is safe to
+// attach to an issue or paste into a log. It is built from a single
+// DiagnoseData snapshot, so the two tables are guaranteed consistent
 func (c *Structure) Report() string {
-	c.ensureInit()
+	d := c.DiagnoseData()
 	var sb strings.Builder
-	sb.WriteString(c.ConfigReference())
+	sb.WriteString(d.Reference())
 	sb.WriteString("\n")
-	sb.WriteString(c.Diagnose().String())
+	sb.WriteString(d.String())
 	return sb.String()
+}
+
+// renderHuman builds the key-sorted, secret-masked dump shared by String and
+// Explain. When withSource is true each value is annotated with its final
+// source and (when more than one source contributed) the full override chain.
+// It is kept deliberately lean — it does not run validators or compute env-var
+// names — so the common debug-dump path stays cheap
+func (c *Structure) renderHuman(withSource bool) string {
+	c.ensureInit()
+
+	c.configMutex.RLock()
+	keys := make([]string, 0, len(c.configData))
+	values := make(map[string]string, len(c.configData))
+	var srcs map[string]Source
+	var chains map[string][]Source
+	if withSource {
+		srcs = make(map[string]Source, len(c.configData))
+	}
+	for key, value := range c.configData {
+		keys = append(keys, key)
+		if c.isSecretKey(key) {
+			values[key] = maskedValue
+		} else {
+			values[key] = fmt.Sprintf("%v", value)
+		}
+		if withSource {
+			srcs[key] = c.provenance[key]
+			if trail, ok := c.provenanceTrail[key]; ok && len(trail) > 1 {
+				if chains == nil {
+					chains = make(map[string][]Source)
+				}
+				cp := make([]Source, len(trail))
+				copy(cp, trail)
+				chains[key] = cp
+			}
+		}
+	}
+	c.configMutex.RUnlock()
+
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	sb.WriteString(c.name + ":\n")
+	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
+	for _, key := range keys {
+		help := c.GetHelpTag(key)
+		if !withSource {
+			// Match the lean two-value layout: no per-row string building so a
+			// plain dump stays as cheap as a bare format call
+			if help != "" {
+				fmt.Fprintf(tw, "%s\t%s\t// %s\n", key, values[key], help)
+			} else {
+				fmt.Fprintf(tw, "%s\t%s\t\n", key, values[key])
+			}
+			continue
+		}
+		// chainCol is empty (no allocation) for the common single-source key;
+		// it is only built for keys an override actually touched
+		chainCol := ""
+		if chain := chains[key]; len(chain) > 1 {
+			chainCol = "[" + formatSourceChain(chain) + "]"
+		}
+		if help != "" {
+			fmt.Fprintf(tw, "%s\t%s\t(from %s)\t%s\t// %s\n", key, values[key], srcs[key], chainCol, help)
+		} else {
+			fmt.Fprintf(tw, "%s\t%s\t(from %s)\t%s\t\n", key, values[key], srcs[key], chainCol)
+		}
+	}
+	tw.Flush()
+	return sb.String()
+}
+
+// formatSourceChain joins a source chain with arrows, eg "default->env->set"
+func formatSourceChain(chain []Source) string {
+	parts := make([]string, len(chain))
+	for i, s := range chain {
+		parts[i] = s.String()
+	}
+	return strings.Join(parts, "->")
 }

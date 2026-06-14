@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
-	"strings"
-	"text/tabwriter"
 )
 
 func (c *Structure) loadConfig(alreadyLocked bool) error {
@@ -160,49 +157,28 @@ func (c *Structure) SaveIfChanged() error {
 // Deprecated: this is a no-op and will be removed in a future version.
 func CleanupSignalHandler() {}
 
-func (c *Structure) GetJSONBytes() []byte {
+// GetJSONBytes marshals the current configuration to JSON. Unlike the
+// human-readable dumps it writes real values (secrets are not masked) so the
+// output round-trips through Save/Load. A marshalling failure is both logged
+// and returned so callers can react to it instead of silently receiving nil
+func (c *Structure) GetJSONBytes() ([]byte, error) {
 	c.ensureInit()
 
 	c.configMutex.RLock()
 	defer c.configMutex.RUnlock()
-	data, _ := json.Marshal(c.configData)
-	return data
+	data, err := json.Marshal(c.configData)
+	if err != nil {
+		c.log().Error("cfggo: failed to marshal configuration to JSON", "err", err)
+		return nil, c.WrapError(wrapKind(ErrSource, err), ErrCodeInternal, "failed to marshal configuration to JSON")
+	}
+	return data, nil
 }
 
 // String returns a human-readable, key-sorted dump of the configuration.
 // Values for fields tagged `secret:"true"` are masked,
 // so the output is safe to log or paste into a bug report
 func (c *Structure) String() string {
-	c.ensureInit()
-
-	c.configMutex.RLock()
-	keys := make([]string, 0, len(c.configData))
-	values := make(map[string]string, len(c.configData))
-	for key, value := range c.configData {
-		keys = append(keys, key)
-		if c.isSecretKey(key) {
-			values[key] = maskedValue
-		} else {
-			values[key] = fmt.Sprintf("%v", value)
-		}
-	}
-	c.configMutex.RUnlock()
-
-	// Sort keys so the output is deterministic (handy for diffs and bug reports)
-	sort.Strings(keys)
-
-	var sb strings.Builder
-	sb.WriteString(c.name + ":\n")
-	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
-	for _, key := range keys {
-		if helpTag := c.GetHelpTag(key); helpTag != "" {
-			fmt.Fprintf(tw, "%s\t%s\t// %s\n", key, values[key], helpTag)
-		} else {
-			fmt.Fprintf(tw, "%s\t%s\t\n", key, values[key])
-		}
-	}
-	tw.Flush()
-	return sb.String()
+	return c.renderHuman(false)
 }
 
 // GetHelpTag returns the `help` struct tag for the field backing key, or "" if

@@ -77,6 +77,22 @@ type Structure struct {
 	// by configMutex.
 	provenance map[string]Source
 
+	// provenanceTrail records, per key, the ordered chain of sources that have
+	// contributed to the value (eg default -> file -> env). It is populated
+	// lazily: a key that is only ever set by a single source allocates no trail
+	// entry, so the common case stays allocation-free. Guarded by configMutex
+	provenanceTrail map[string][]Source
+
+	// ignoredKeys holds configuration keys that should be exempt from the
+	// "unrecognized key" diagnostics (eg command-line-only flags). Populated via
+	// WithIgnoreKeys. It replaces the previous process-global IgnoreFlags so the
+	// exemptions are scoped to this instance
+	ignoredKeys map[string]bool
+
+	// lazyInitWarn ensures the "lazy initialisation" warning emitted by
+	// ensureInit is logged at most once per instance
+	lazyInitWarn sync.Once
+
 	// validationMap holds the registered validators keyed by config key. It is
 	// per-instance (a Structure has exactly one configuration), so it is a flat
 	// key->validator map rather than being nested under the config name
@@ -151,6 +167,10 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 		parentType = parentType.Elem()
 	}
 	c.plan = planForType(parentType)
+	for _, s := range c.plan.suspects {
+		c.log().Warn("cfggo: field has a cfggo tag but is not a func() T accessor; "+
+			"it will be ignored (did you mean func() "+s.Type+"?)", "key", s.Key, "type", s.Type)
+	}
 	c.applyPlan()
 
 	if c.configHandler != nil {
@@ -259,6 +279,13 @@ func (c *Structure) InitSelf(options ...Option) error {
 // errors are surfaced
 func (c *Structure) ensureInit() {
 	if c.parent == nil {
+		// Surface the fallback exactly once so a forgotten Init shows up in the
+		// logs instead of silently running on struct/tag defaults only
+		c.lazyInitWarn.Do(func() {
+			c.log().Warn("cfggo: configuration used before Init; falling back to lazy " +
+				"initialisation with no options (no config source, validators, or custom logger). " +
+				"Call Init/InitSelf explicitly at startup to load sources and surface load errors")
+		})
 		if err := c.InitSelf(); err != nil {
 			c.log().Error("cfggo: lazy initialisation failed: " + err.Error())
 		}

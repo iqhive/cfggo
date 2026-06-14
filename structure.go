@@ -171,7 +171,7 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 
 	for _, option := range options {
 		if err := option(c); err != nil {
-			return c.WrapError(err, ErrCodeNone, "Init: option returned error")
+			return c.WrapError(err, ErrorCode(err), "Init: option returned error")
 		}
 	}
 

@@ -73,7 +73,7 @@ func (c *Structure) createSetter(key string) func(interface{}) error {
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
 		if err := c.set(key, value); err != nil {
-			return err
+			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, SourceFlag)
 		}
 		c.changed = true
 		c.recordSourceLocked(key, SourceFlag)

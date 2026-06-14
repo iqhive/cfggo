@@ -54,9 +54,12 @@ func (d *ConfigVar) Set(s string) error {
 
 	value, err := convert.ConvertString(s, d.Want, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("flag %q: %w", d.Name, err)
 	}
-	return d.Setter(value)
+	if err := d.Setter(value); err != nil {
+		return fmt.Errorf("flag %q: %w", d.Name, err)
+	}
+	return nil
 }
 
 // String implements flag.Value. ConfigVar does not cache the value itself;

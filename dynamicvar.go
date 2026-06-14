@@ -27,7 +27,11 @@ func (d *dynamicVar) Set(s string) error {
 
 	value, err := iconvert.ConvertString(s, d.want, d.config)
 	if err != nil {
-		return err
+		src := d.source
+		if src == SourceUnknown {
+			src = SourceSet
+		}
+		return d.config.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", d.name, src)
 	}
 	src := d.source
 	if src == SourceUnknown {

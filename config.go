@@ -28,7 +28,7 @@ func (c *Structure) Set(key string, value interface{}) error {
 	c.configMutex.Unlock()
 
 	if err != nil {
-		return err
+		return c.WrapError(err, ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
 	}
 	// Only assemble the change set when someone is listening,
 	// so a plain Set stays allocation-free in the common case
@@ -46,7 +46,7 @@ func (c *Structure) applyLoaded(key string, value interface{}, src Source) error
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
 	if err := c.set(key, value); err != nil {
-		return err
+		return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, src)
 	}
 	c.changed = true
 	c.recordSourceLocked(key, src)

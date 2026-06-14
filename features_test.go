@@ -119,3 +119,25 @@ func TestInitReturnsErrorForPointerToPointer(t *testing.T) {
 		t.Errorf("ErrorCode = %d, want 400; err = %v", code, err)
 	}
 }
+
+func TestParseLogLevelNormalizesInput(t *testing.T) {
+	tests := []struct {
+		in   string
+		want LogLevel
+	}{
+		{in: " DEBUG ", want: LogLevelDebug},
+		{in: "Info", want: LogLevelInfo},
+		{in: "\twarning\n", want: LogLevelWarn},
+		{in: "Off", want: LogLevelNone},
+	}
+
+	for _, tt := range tests {
+		got, ok := ParseLogLevel(tt.in)
+		if !ok {
+			t.Fatalf("ParseLogLevel(%q) ok = false, want true", tt.in)
+		}
+		if got != tt.want {
+			t.Fatalf("ParseLogLevel(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}

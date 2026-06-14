@@ -3,6 +3,7 @@ package cfggo
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -127,4 +128,42 @@ func TestConcurrentLazyInitIsSerialized(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+type strictNumericRegressionConfig struct {
+	Structure
+	Port func() int `cfggo:"port" default:"8080"`
+}
+
+func TestStrictJSONLoadRejectsLossyNumericConversion(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &strictNumericRegressionConfig{}
+	err := cfg.Init(cfg, WithConfigHandler(&memHandler{data: json.RawMessage(`{"port": 8080.5}`)}), WithoutFlags())
+	if err == nil {
+		t.Fatal("Init: expected lossy numeric conversion error, got nil")
+	}
+	if got := cfg.Port(); got != 8080 {
+		t.Fatalf("Port() = %d, want default retained after failed load", got)
+	}
+}
+
+func TestLoadConversionErrorIncludesKeyAndSource(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &strictNumericRegressionConfig{}
+	err := cfg.Init(cfg, WithConfigHandler(&memHandler{data: json.RawMessage(`{"port": "not-a-number"}`)}), WithoutFlags())
+	if err == nil {
+		t.Fatal("Init: expected conversion error, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{`key "port"`, "from file"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("error %q does not contain %q", msg, want)
+		}
+	}
 }

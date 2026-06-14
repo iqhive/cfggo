@@ -61,6 +61,20 @@ cd validation && go run main.go
 
 ---
 
+### `debugging/` - Startup checks and failure modes
+
+Demonstrates:
+- The recommended startup/debug pattern using `WithStrictKeys` and `Report`.
+- Bad JSON, wrong type, unknown key, and failed validator errors.
+- Environment and flag override provenance.
+- Secret redaction in diagnostic output.
+
+```sh
+cd debugging && go run main.go
+```
+
+---
+
 ## Key patterns
 
 ### `cfggo.Init` vs method call

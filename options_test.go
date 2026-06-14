@@ -103,27 +103,40 @@ func TestWithFileConfigParamNameInit(t *testing.T) {
 	}
 }
 
+func TestWithFileConfigParamNameInitMissingRequiredFile(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"prog", "--config=missing-required.json"}
+
+	cfg := &Structure{}
+	err := cfg.Init(cfg, WithFileConfigParamName("config"))
+	if err == nil {
+		t.Fatal("Init() with missing required config file: expected error, got nil")
+	}
+	if code := ErrorCode(err); code != ErrCodeNotFound {
+		t.Fatalf("ErrorCode = %d, want %d; err = %v", code, ErrCodeNotFound, err)
+	}
+}
+
 // TestWithFileConfig tests the WithFileConfig function
 func TestWithFileConfig(t *testing.T) {
 	tests := []struct {
 		name           string
 		filename       string
 		createFile     bool
-		expectNoop     bool
+		expectErr      bool
 		expectFilename string
 	}{
 		{
 			name:           "existing file",
 			filename:       "testdata/test.json",
 			createFile:     true,
-			expectNoop:     false,
 			expectFilename: "testdata/test.json",
 		},
 		{
-			name:       "non-existent file",
-			filename:   "missing.json",
-			createFile: false,
-			expectNoop: true,
+			name:      "non-existent file",
+			filename:  "missing.json",
+			expectErr: true,
 		},
 	}
 
@@ -143,15 +156,17 @@ func TestWithFileConfig(t *testing.T) {
 			opt := WithFileConfig(tt.filename)
 			err := opt(s)
 
-			if err != nil {
-				t.Errorf("WithFileConfig() error = %v", err)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("WithFileConfig() expected error for missing required file, got nil")
+				}
+				if s.configHandler != nil {
+					t.Error("configHandler should remain nil when required file is missing")
+				}
 				return
 			}
-
-			if tt.expectNoop {
-				if s.configHandler != nil {
-					t.Error("Expected noop but got configHandler")
-				}
+			if err != nil {
+				t.Errorf("WithFileConfig() error = %v", err)
 				return
 			}
 

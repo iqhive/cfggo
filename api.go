@@ -3,6 +3,7 @@ package cfggo
 import (
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 
 	"github.com/iqhive/cfggo/cfglogger"
@@ -47,16 +48,16 @@ const (
 // ParseLogLevel converts a string (case-insensitive) to a LogLevel.
 // Returns (level, true) on success and (LogLevelInfo, false) when unrecognised.
 func ParseLogLevel(s string) (LogLevel, bool) {
-	switch s {
-	case "debug", "DEBUG":
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
 		return LogLevelDebug, true
-	case "info", "INFO":
+	case "info":
 		return LogLevelInfo, true
-	case "warn", "WARN", "warning", "WARNING":
+	case "warn", "warning":
 		return LogLevelWarn, true
-	case "error", "ERROR":
+	case "error":
 		return LogLevelError, true
-	case "none", "NONE", "off", "OFF":
+	case "none", "off":
 		return LogLevelNone, true
 	}
 	return LogLevelInfo, false

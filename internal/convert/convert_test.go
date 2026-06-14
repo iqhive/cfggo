@@ -14,13 +14,16 @@ var (
 	typeInt      = reflect.TypeOf(int(0))
 	typeInt64    = reflect.TypeOf(int64(0))
 	typeUint     = reflect.TypeOf(uint(0))
+	typeUint8    = reflect.TypeOf(uint8(0))
 	typeFloat32  = reflect.TypeOf(float32(0))
 	typeFloat64  = reflect.TypeOf(float64(0))
 	typeDuration = reflect.TypeOf(time.Duration(0))
 	typeTime     = reflect.TypeOf(time.Time{})
+	typeAnySlice = reflect.TypeOf([]interface{}{})
 	typeStrSlice = reflect.TypeOf([]string{})
 	typeIntSlice = reflect.TypeOf([]int{})
 	typeIntMap   = reflect.TypeOf(map[int]int{})
+	typeAnyMap   = reflect.TypeOf(map[string]interface{}{})
 	typeStrMap   = reflect.TypeOf(map[string]string{})
 	typeTextType = reflect.TypeOf(textType{})
 )
@@ -122,6 +125,9 @@ func TestConvertValue(t *testing.T) {
 		{"nil to int zero", nil, typeInt, 0, false},
 		{"same type", 42, typeInt, 42, false},
 		{"float64 to int", float64(7), typeInt, 7, false},
+		{"float64 fractional to int", float64(7.5), typeInt, nil, true},
+		{"negative int to uint", int(-1), typeUint, nil, true},
+		{"overflowing uint", uint64(300), typeUint8, nil, true},
 		{"int to float64", int(3), typeFloat64, float64(3), false},
 		{"int64 to Duration", int64(1e9), typeDuration, time.Duration(1e9), false},
 		{"float64 to Duration nanoseconds", float64(5e8), typeDuration, time.Duration(5e8), false},
@@ -132,8 +138,10 @@ func TestConvertValue(t *testing.T) {
 		// Slice coercions from JSON unmarshal output.
 		{"[]interface{} to []string", []interface{}{"a", "b"}, typeStrSlice, []string{"a", "b"}, false},
 		{"[]interface{} to []int", []interface{}{float64(1), float64(2)}, typeIntSlice, []int{1, 2}, false},
+		{"[]interface{} preserves nil", []interface{}{"a", nil}, typeAnySlice, []interface{}{"a", nil}, false},
 		// Map coercions from JSON unmarshal output.
 		{"map[string]interface{} to map[string]string", map[string]interface{}{"k": "v"}, typeStrMap, map[string]string{"k": "v"}, false},
+		{"map[string]interface{} preserves nil", map[string]interface{}{"k": nil}, typeAnyMap, map[string]interface{}{"k": nil}, false},
 	}
 
 	for _, tc := range cases {

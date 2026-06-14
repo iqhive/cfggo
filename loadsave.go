@@ -12,9 +12,11 @@ func (c *Structure) loadConfig(alreadyLocked bool) error {
 		return c.WrapError(ErrNoHandler, 400, "")
 	}
 
+	src := c.handlerSource()
 	data, err := c.configHandler.LoadConfig()
 	if err != nil {
-		return c.WrapError(wrapKind(ErrSource, err), 0, "")
+		return c.WrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument,
+			"failed to load configuration from %s source", src)
 	}
 
 	return c.loadJSONConfigFromBytes(data, alreadyLocked)
@@ -26,6 +28,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 		return nil
 	}
 
+	src := c.handlerSource()
 	var rawConfig map[string]interface{}
 	if err := json.Unmarshal(data, &rawConfig); err != nil {
 		// A malformed config file is a hard error by default: starting with
@@ -35,15 +38,14 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 			c.log().Warn("cfggo: ignoring malformed configuration JSON", "err", err)
 			return nil
 		}
-		return c.WrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument, "failed to parse configuration JSON")
+		return c.WrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument,
+			"failed to parse configuration JSON from %s source", src)
 	}
 
 	if !alreadyLocked {
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
 	}
-
-	src := c.handlerSource()
 
 	var setErrs []error
 	var processMap func(map[string]interface{}, string)
@@ -83,7 +85,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 			// All type coercion is handled by the unified converter inside c.set.
 			if err := c.set(fullKey, value); err != nil {
 				c.log().Warn("cfggo: error setting config key from source", "key", fullKey, "source", src, "err", err)
-				setErrs = append(setErrs, fmt.Errorf("%s: %w", fullKey, err))
+				setErrs = append(setErrs, fmt.Errorf("key %q from %s: %w", fullKey, src, err))
 				continue
 			}
 			c.recordSourceLocked(fullKey, src)
@@ -97,7 +99,7 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 	// file does not match the struct
 	if len(setErrs) > 0 && !c.lenient {
 		return c.WrapError(wrapKind(ErrSource, errors.Join(setErrs...)), ErrCodeInvalidArgument,
-			"failed to apply configuration values")
+			"failed to apply configuration values from %s source", src)
 	}
 	return nil
 }

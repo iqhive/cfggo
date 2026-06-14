@@ -609,6 +609,24 @@ Recommended practices:
 cfggo tracks the provenance of every value, which is usually the fastest way to
 answer "why is this value what it is?"
 
+The recommended startup pattern is to fail fast, treat unknown keys as typos, and
+print a secret-redacted report when configuration cannot be applied:
+
+```go
+config := &MyConfig{}
+if err := cfggo.Init(config,
+    cfggo.WithFileConfig("config.json"),
+    cfggo.WithStrictKeys(),
+); err != nil {
+    log.Printf("configuration report:\n%s", config.Report())
+    log.Fatalf("load configuration: %v", err)
+}
+```
+
+For CLIs or container entrypoints, the same pattern makes a useful
+`--config-check`: initialise with `WithStrictKeys`, print `config.Report()`, and
+exit non-zero when `Init` or `Validate` returns an error.
+
 ```go
 // Human-readable, source-annotated dump of the whole config:
 fmt.Println(config.Explain())
@@ -662,6 +680,25 @@ and where it came from, e.g.:
 ```
 validation failed for 'port' (value=99999, from flag): value must be between 1 and 65535
 ```
+
+Common failure modes are intentionally surfaced with enough context to fix the
+right source:
+
+- Bad JSON returns an `ErrSource`-wrapping error that names the configuration
+  source that could not be parsed.
+- Wrong types include the key and source, for example `key "port" from file`.
+- Unknown keys are listed in `Report()` and become startup errors with
+  `WithStrictKeys()`.
+- Failed validators include the key, value, and provenance of the invalid value.
+- Environment overrides are visible via `Source("key")`, `SourceChain("key")`,
+  and `Explain()`.
+- Flag overrides record `SourceFlag` after the flag set parses.
+- Secret fields tagged `secret:"true"` are masked in `String`, `Explain`,
+  `DiagnoseData`, `ConfigReference`, and `Report`.
+
+See `examples/debugging` for a runnable program that demonstrates bad JSON,
+wrong type, unknown key, failed validator, env override, flag override, and
+secret redaction.
 
 Turn up logging to trace loading decisions:
 

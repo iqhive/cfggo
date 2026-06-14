@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -292,34 +293,90 @@ func convertNumeric(src reflect.Value, target reflect.Type) (interface{}, error)
 	out := reflect.New(target).Elem()
 	switch target.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		var v int64
 		switch src.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			out.SetInt(src.Int())
+			v = src.Int()
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			out.SetInt(int64(src.Uint()))
+			u := src.Uint()
+			if u > uint64(maxSigned(target.Bits())) {
+				return nil, fmt.Errorf("numeric overflow: %d cannot fit in %v", u, target)
+			}
+			v = int64(u)
 		case reflect.Float32, reflect.Float64:
-			out.SetInt(int64(src.Float()))
+			f := src.Float()
+			if !isWholeFinite(f) || f < float64(minSigned(target.Bits())) || f > float64(maxSigned(target.Bits())) {
+				return nil, fmt.Errorf("lossy numeric conversion: %v cannot fit exactly in %v", f, target)
+			}
+			v = int64(f)
 		}
+		if out.OverflowInt(v) {
+			return nil, fmt.Errorf("numeric overflow: %d cannot fit in %v", v, target)
+		}
+		out.SetInt(v)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		var v uint64
 		switch src.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			out.SetUint(uint64(src.Int()))
+			i := src.Int()
+			if i < 0 {
+				return nil, fmt.Errorf("numeric underflow: %d cannot fit in %v", i, target)
+			}
+			v = uint64(i)
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			out.SetUint(src.Uint())
+			v = src.Uint()
 		case reflect.Float32, reflect.Float64:
-			out.SetUint(uint64(src.Float()))
+			f := src.Float()
+			if !isWholeFinite(f) || f < 0 || f > float64(maxUnsigned(target.Bits())) {
+				return nil, fmt.Errorf("lossy numeric conversion: %v cannot fit exactly in %v", f, target)
+			}
+			v = uint64(f)
 		}
+		if out.OverflowUint(v) {
+			return nil, fmt.Errorf("numeric overflow: %d cannot fit in %v", v, target)
+		}
+		out.SetUint(v)
 	case reflect.Float32, reflect.Float64:
+		var v float64
 		switch src.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			out.SetFloat(float64(src.Int()))
+			v = float64(src.Int())
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			out.SetFloat(float64(src.Uint()))
+			v = float64(src.Uint())
 		case reflect.Float32, reflect.Float64:
-			out.SetFloat(src.Float())
+			v = src.Float()
 		}
+		if out.OverflowFloat(v) {
+			return nil, fmt.Errorf("numeric overflow: %v cannot fit in %v", v, target)
+		}
+		out.SetFloat(v)
 	}
 	return out.Interface(), nil
+}
+
+func isWholeFinite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0) && math.Trunc(f) == f
+}
+
+func minSigned(bits int) int64 {
+	if bits >= 64 {
+		return -1 << 63
+	}
+	return -1 << (bits - 1)
+}
+
+func maxSigned(bits int) int64 {
+	if bits >= 64 {
+		return 1<<63 - 1
+	}
+	return 1<<(bits-1) - 1
+}
+
+func maxUnsigned(bits int) uint64 {
+	if bits >= 64 {
+		return ^uint64(0)
+	}
+	return 1<<bits - 1
 }
 
 func convertSlice(src reflect.Value, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
@@ -330,7 +387,7 @@ func convertSlice(src reflect.Value, target reflect.Type, ew ErrorWrapper) (inte
 		if err != nil {
 			return nil, wrapErr(ew, err, 400, "cannot convert slice[%d]: %v", i, err)
 		}
-		out.Index(i).Set(reflect.ValueOf(elem))
+		out.Index(i).Set(valueForType(elem, elemType))
 	}
 	return out.Interface(), nil
 }
@@ -346,7 +403,21 @@ func convertMap(src reflect.Value, target reflect.Type, ew ErrorWrapper) (interf
 		if err != nil {
 			return nil, err
 		}
-		out.SetMapIndex(reflect.ValueOf(ck), reflect.ValueOf(cv))
+		out.SetMapIndex(valueForType(ck, target.Key()), valueForType(cv, target.Elem()))
 	}
 	return out.Interface(), nil
+}
+
+func valueForType(v interface{}, target reflect.Type) reflect.Value {
+	if v == nil {
+		return reflect.Zero(target)
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Type().AssignableTo(target) {
+		return rv
+	}
+	if rv.Type().ConvertibleTo(target) {
+		return rv.Convert(target)
+	}
+	return reflect.Zero(target)
 }

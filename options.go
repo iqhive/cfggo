@@ -31,29 +31,25 @@ func WithName(name string) Option {
 	}
 }
 
-// withFileConfig sets the config source/dest to a filename, and logs and error if unable to find file
+// WithFileConfig sets the config source/dest to a filename, and logs and error if unable to find file
 func WithFileConfig(filename string) Option {
 	return withFileConfig(filename, "WithFileConfig", false)
 }
 
-// withFileConfig sets the config source/dest to a filename, and ignores if unable to find file
+// WithDefaultFileConfig sets the config source/dest to a filename, and ignores if unable to find file
 func WithDefaultFileConfig(filename string) Option {
 	return withFileConfig(filename, "WithDefaultFileConfig", true)
 }
 
 func withFileConfig(filename string, funcName string, defaultConfig bool) Option {
-	if _, err := os.Stat(filename); err != nil {
-		if os.IsNotExist(err) {
-			if !defaultConfig {
-				GlobalLogger().Warn("cfggo: configuration file does not exist", "filename", filename)
-			}
-			return withNoop()
-		}
-
-		GlobalLogger().Warn("cfggo: error checking configuration file", "filename", filename, "err", err)
-		return withNoop()
-	}
 	return func(c *Structure) error {
+		if _, err := os.Stat(filename); err != nil {
+			if defaultConfig {
+				c.log().Debug("cfggo: optional configuration file unavailable", "filename", filename, "err", err)
+				return nil
+			}
+			return c.WrapError(err, ErrCodeNotFound, "%s: configuration file %q is required but unavailable", funcName, filename)
+		}
 		if c.configHandler != nil {
 			if defaultConfig {
 				return nil
@@ -98,6 +94,7 @@ func WithFileConfigParamName(argName string) Option {
 		c.FlagSet.String(argName, "", "")
 		if err := wrap(c); err != nil {
 			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
+			return err
 		}
 		return nil
 	}

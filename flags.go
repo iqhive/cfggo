@@ -13,6 +13,10 @@ import (
 // NewFlag creates a new configuration item, using the type of the defaultValue
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {
 	c.ensureInit()
+	c.newFlag(configVarName, defaultValue, configDescription)
+}
+
+func (c *Structure) newFlag(configVarName string, defaultValue interface{}, configDescription string) {
 	c.ensureFlagSet()
 
 	c.configMutex.Lock()

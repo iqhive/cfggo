@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"github.com/iqhive/cfggo/cfglogger"
 	"github.com/iqhive/cfggo/errwrapper"
@@ -26,6 +27,7 @@ type Structure struct {
 	changed       bool
 	parent        interface{}
 	configData    map[string]interface{}
+	defaultData   map[string]interface{}
 	autoSave      bool
 	autoSaveCtx   context.Context
 
@@ -92,6 +94,8 @@ type Structure struct {
 	// lazyInitWarn ensures the "lazy initialisation" warning emitted by
 	// ensureInit is logged at most once per instance
 	lazyInitWarn sync.Once
+	initMutex    sync.Mutex
+	initialized  atomic.Bool
 
 	// validationMap holds the registered validators keyed by config key. It is
 	// per-instance (a Structure has exactly one configuration), so it is a flat
@@ -116,6 +120,20 @@ func DefaultValue[T any](x T) func() T {
 // Init initialises the configuration and returns an error on failure
 // parent must be a pointer to the struct that embeds Structure
 func (c *Structure) Init(parent interface{}, options ...Option) error {
+	c.initMutex.Lock()
+	defer c.initMutex.Unlock()
+	if c.initialized.Load() {
+		c.log().Warn("Structure: Init() called more than once")
+		return nil
+	}
+	if err := c.initLocked(parent, options...); err != nil {
+		return err
+	}
+	c.initialized.Store(true)
+	return nil
+}
+
+func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	if c.validationMap == nil {
 		c.validationMap = make(map[string]validcfg.Validator)
 	}
@@ -223,7 +241,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 		}
 	}
 
-	if err := c.Validate(); err != nil {
+	if err := c.validate(); err != nil {
 		if !c.lenient {
 			c.log().Error("cfggo: configuration validation failed", "err", err)
 			return err
@@ -278,18 +296,30 @@ func (c *Structure) InitSelf(options ...Option) error {
 // InitSelf) explicitly at startup so configuration sources are loaded and load
 // errors are surfaced
 func (c *Structure) ensureInit() {
-	if c.parent == nil {
-		// Surface the fallback exactly once so a forgotten Init shows up in the
-		// logs instead of silently running on struct/tag defaults only
-		c.lazyInitWarn.Do(func() {
-			c.log().Warn("cfggo: configuration used before Init; falling back to lazy " +
-				"initialisation with no options (no config source, validators, or custom logger). " +
-				"Call Init/InitSelf explicitly at startup to load sources and surface load errors")
-		})
-		if err := c.InitSelf(); err != nil {
-			c.log().Error("cfggo: lazy initialisation failed: " + err.Error())
-		}
+	if c.initialized.Load() {
+		return
 	}
+	c.initMutex.Lock()
+	defer c.initMutex.Unlock()
+	if c.initialized.Load() {
+		return
+	}
+	if c.parent != nil {
+		c.initialized.Store(true)
+		return
+	}
+	// Surface the fallback exactly once so a forgotten Init shows up in the
+	// logs instead of silently running on struct/tag defaults only
+	c.lazyInitWarn.Do(func() {
+		c.log().Warn("cfggo: configuration used before Init; falling back to lazy " +
+			"initialisation with no options (no config source, validators, or custom logger). " +
+			"Call Init/InitSelf explicitly at startup to load sources and surface load errors")
+	})
+	if err := c.initLocked(c); err != nil {
+		c.log().Error("cfggo: lazy initialisation failed: " + err.Error())
+		return
+	}
+	c.initialized.Store(true)
 }
 
 // ReloadConfig reloads the configuration from all sources.

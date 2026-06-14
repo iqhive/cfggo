@@ -8,8 +8,6 @@ import (
 
 // RegisterValidator registers a validator for key on this configuration instance.
 func (c *Structure) RegisterValidator(key string, validator validcfg.Validator) {
-	c.ensureInit()
-
 	c.validationMutex.Lock()
 	defer c.validationMutex.Unlock()
 	if c.validationMap == nil {
@@ -26,7 +24,10 @@ func (c *Structure) AddValidator(key string, validator validcfg.Validator) {
 // Validate runs all registered validators for this configuration instance.
 func (c *Structure) Validate() error {
 	c.ensureInit()
+	return c.validate()
+}
 
+func (c *Structure) validate() error {
 	c.configMutex.RLock()
 	c.validationMutex.RLock()
 	defer c.configMutex.RUnlock()

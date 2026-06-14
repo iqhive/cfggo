@@ -4,11 +4,14 @@ import "reflect"
 
 // Reload reloads the configuration from all sources
 func (c *Structure) Reload() error {
+	c.ensureInit()
+
 	// First, make a copy of the current configuration for potential rollback
 	var oldConfig map[string]interface{}
 	// oldProvenance lets us re-assert command-line flag precedence after the
 	// file/env layers below have been reloaded (see the restore step)
 	var oldProvenance map[string]Source
+	var oldTrail map[string][]Source
 
 	// Get a snapshot of the current configuration
 	c.configMutex.Lock()
@@ -20,6 +23,13 @@ func (c *Structure) Reload() error {
 	for k, v := range c.provenance {
 		oldProvenance[k] = v
 	}
+	oldTrail = make(map[string][]Source, len(c.provenanceTrail))
+	for k, v := range c.provenanceTrail {
+		cp := make([]Source, len(v))
+		copy(cp, v)
+		oldTrail[k] = cp
+	}
+	c.resetToDefaultsLocked()
 	// Reset the changed flag
 	c.changed = false
 	c.configMutex.Unlock()
@@ -32,14 +42,11 @@ func (c *Structure) Reload() error {
 			c.log().Error("cfggo: failed to reload configuration source", "err", err)
 
 			// Rollback to old configuration on error. Restore provenance too so
-			// it stays consistent with the values after a failed reload. The
-			// override-chain trail accumulated during the partial load is
-			// dropped (SourceChain then falls back to the restored single
-			// source); this keeps the success path free of trail-snapshot cost
+			// it stays consistent with the values after a failed reload
 			c.configMutex.Lock()
 			c.configData = oldConfig
 			c.provenance = oldProvenance
-			c.provenanceTrail = nil
+			c.provenanceTrail = oldTrail
 			c.configMutex.Unlock()
 			return err
 		}
@@ -59,19 +66,18 @@ func (c *Structure) Reload() error {
 		c.parseFlags()
 	}
 
-	// Re-assert command-line flag precedence. The standard flag package will
-	// not re-run an already-parsed FlagSet (parseFlags above early-returns), so
-	// the file and environment layers reloaded above can otherwise clobber a
-	// value that the user supplied on the command line. Flags rank highest in
-	// the documented precedence order, so restore any value whose pre-reload
-	// provenance was SourceFlag.
+	// Re-assert runtime override precedence. The standard flag package will not
+	// re-run an already-parsed FlagSet (parseFlags above early-returns), so the
+	// file and environment layers reloaded above can otherwise clobber values
+	// supplied on the command line. Programmatic Set values are also runtime
+	// overrides and must survive reloads until the caller changes them again
 	for key, src := range oldProvenance {
-		if src != SourceFlag {
+		if src != SourceFlag && src != SourceSet {
 			continue
 		}
 		if v, ok := oldConfig[key]; ok {
-			if err := c.applyLoaded(key, v, SourceFlag); err != nil {
-				c.log().Warn("cfggo: could not restore flag value during reload", "key", key, "err", err)
+			if err := c.applyLoaded(key, v, src); err != nil {
+				c.log().Warn("cfggo: could not restore runtime override during reload", "key", key, "source", src, "err", err)
 			}
 		}
 	}
@@ -102,6 +108,19 @@ func (c *Structure) Reload() error {
 	return nil
 }
 
+func (c *Structure) resetToDefaultsLocked() {
+	if c.defaultData == nil {
+		return
+	}
+	c.configData = make(map[string]interface{}, len(c.defaultData))
+	c.provenance = make(map[string]Source, len(c.defaultData))
+	c.provenanceTrail = nil
+	for k, v := range c.defaultData {
+		c.configData[k] = v
+		c.provenance[k] = SourceDefault
+	}
+}
+
 // changeSet compares the current configData against a previous snapshot and
 // returns one Change per key whose value changed or was added, annotated with
 // the current source
@@ -117,6 +136,16 @@ func (c *Structure) changeSet(old map[string]interface{}) []Change {
 				Old:    old[k],
 				New:    newVal,
 				Source: c.provenance[k],
+			})
+		}
+	}
+	for k, oldVal := range old {
+		if _, ok := c.configData[k]; !ok {
+			changes = append(changes, Change{
+				Key:    k,
+				Old:    oldVal,
+				New:    nil,
+				Source: SourceUnknown,
 			})
 		}
 	}

@@ -364,6 +364,10 @@ func (c *Structure) applyPlan() {
 		}
 		c.recordSourceLocked(leaf.info.Key, SourceDefault)
 	}
+	c.defaultData = make(map[string]interface{}, len(c.configData))
+	for k, v := range c.configData {
+		c.defaultData[k] = v
+	}
 
 	// Wire the accessor func fields. This takes the write lock to match the
 	// original replaceConfigFuncs contract: the installed closures read

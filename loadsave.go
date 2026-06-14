@@ -54,14 +54,16 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 				fullKey = prefix + "." + key
 			}
 
-			// Nested JSON objects represent nested struct fields; recurse.
-			if nested, ok := value.(map[string]interface{}); ok {
-				processMap(nested, fullKey)
+			// Respect fields tagged with "-".
+			if c.shouldIgnoreField(fullKey) {
 				continue
 			}
 
-			// Respect fields tagged with "-".
-			if c.shouldIgnoreField(fullKey) {
+			// Nested JSON objects represent nested struct fields, unless the
+			// object is itself the value for a known accessor leaf such as
+			// func() map[string]string or func() SomeStruct
+			if nested, ok := value.(map[string]interface{}); ok && !c.isAccessorKey(fullKey) {
+				processMap(nested, fullKey)
 				continue
 			}
 
@@ -186,6 +188,10 @@ func (c *Structure) String() string {
 // once during Init rather than re-walking the struct on every call
 func (c *Structure) GetHelpTag(key string) string {
 	c.ensureInit()
+	return c.helpTag(key)
+}
+
+func (c *Structure) helpTag(key string) string {
 	if c.plan != nil {
 		if leaf, ok := c.plan.byKey[key]; ok {
 			return leaf.info.Help
@@ -199,6 +205,14 @@ func (c *Structure) GetHelpTag(key string) string {
 // computed once during Init()
 func (c *Structure) shouldIgnoreField(key string) bool {
 	return c.plan != nil && c.plan.ignored[key]
+}
+
+func (c *Structure) isAccessorKey(key string) bool {
+	if c.plan == nil {
+		return false
+	}
+	leaf, ok := c.plan.byKey[key]
+	return ok && leaf.info.IsAccessor
 }
 
 func (c *Structure) saveConfig() error {

@@ -79,12 +79,42 @@ jobs:
           version: latest
 
       - name: Generate coverage
-        run: go test -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+        run: |
+          go test -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out > coverage.txt
+
+      - name: Summarize coverage
+        run: |
+          total="$(awk '/^total:/ {print $3}' coverage.txt)"
+          {
+            echo "## Coverage"
+            echo
+            echo "**Total:** ${total}"
+            echo
+            echo "<details>"
+            echo "<summary>Function coverage</summary>"
+            echo
+            echo '```text'
+            cat coverage.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.txt
+          retention-days: 30
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
           files: coverage.out
+          flags: unit
+          name: go-unit
           fail_ci_if_error: false
 
   benchmark-module:

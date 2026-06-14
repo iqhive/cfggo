@@ -1,7 +1,9 @@
 package sources
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,5 +39,82 @@ func TestHandlerHTTPNilURLsReturnErrors(t *testing.T) {
 	}
 	if err := NewHandlerHTTP(nil, &http.Request{}, false).SaveConfig(json.RawMessage(`{}`)); err == nil {
 		t.Fatal("SaveConfig() with nil URL: expected error, got nil")
+	}
+}
+
+func TestHandlerHTTPLoadAndSaveRoundTripRequests(t *testing.T) {
+	var savedBody string
+	var savedContentType string
+	var savedHeader string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/load":
+			if got := r.Header.Get("X-Load"); got != "yes" {
+				t.Errorf("load header X-Load = %q, want yes", got)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"loaded":true}`)
+		case "/save":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll(save body) error = %v", err)
+			}
+			savedBody = string(body)
+			savedContentType = r.Header.Get("Content-Type")
+			savedHeader = r.Header.Get("X-Save")
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	source := httptest.NewRequest(http.MethodGet, server.URL+"/load", nil)
+	source.Header.Set("X-Load", "yes")
+	dest := httptest.NewRequest(http.MethodPut, server.URL+"/save", nil)
+	dest.Header.Set("X-Save", "yes")
+	handler := NewHandlerHTTP(source, dest, true)
+
+	if !handler.IsDefault() {
+		t.Fatal("IsDefault() = false, want true")
+	}
+
+	data, err := handler.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if string(data) != `{"loaded":true}` {
+		t.Fatalf("LoadConfig() = %s, want loaded JSON", string(data))
+	}
+
+	if err := handler.SaveConfig(json.RawMessage(`{"saved":true}`)); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if savedBody != `{"saved":true}` {
+		t.Fatalf("saved body = %q, want saved JSON", savedBody)
+	}
+	if savedContentType != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", savedContentType)
+	}
+	if savedHeader != "yes" {
+		t.Fatalf("X-Save = %q, want yes", savedHeader)
+	}
+}
+
+func TestHandlerHTTPStatusErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusTeapot)
+	}))
+	defer server.Close()
+
+	source := httptest.NewRequest(http.MethodGet, server.URL, nil)
+	if _, err := NewHandlerHTTP(source, nil, false).LoadConfig(); err == nil {
+		t.Fatal("LoadConfig() with non-200 response: expected error, got nil")
+	}
+
+	dest := httptest.NewRequest(http.MethodPost, server.URL, bytes.NewReader(nil))
+	if err := NewHandlerHTTP(nil, dest, false).SaveConfig(json.RawMessage(`{}`)); err == nil {
+		t.Fatal("SaveConfig() with non-200 response: expected error, got nil")
 	}
 }

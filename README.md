@@ -330,11 +330,14 @@ Environment variables are automatically mapped from your configuration keys:
 
 - Keys are converted to uppercase.
 - Dots (`.`) are replaced with underscores (`_`).
+- Pass `cfggo.WithEnvPrefix("MYAPP_")` to read the automatic env layer from a
+  prefixed namespace.
 
 For example:
 
 - `server_port` → `SERVER_PORT`
 - `db.url` → `DB_URL`
+- with `WithEnvPrefix("MYAPP_")`, `server_port` → `MYAPP_SERVER_PORT`
 
 ## Command-Line Flags
 
@@ -639,6 +642,9 @@ if src, ok := config.Source("server_port"); ok {
     fmt.Printf("server_port came from %s\n", src) // default | file | http | env | flag | set
 }
 
+// Or print a focused explanation for one key:
+fmt.Println(config.ExplainKey("server_port"))
+
 // Or get the full override chain for a key (the layers that set it, in order):
 fmt.Println(config.SourceChain("server_port")) // [default file flag]
 ```
@@ -790,6 +796,8 @@ type ConfigHandler interface {
 
 cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`),
 HTTP endpoints (`WithHTTPConfig`), and environment variables (`WithEnvConfig`).
+For the normal automatic environment override layer, use `WithEnvPrefix` when
+you want namespaced variables such as `MYAPP_PORT`.
 Plug in your own implementation with `WithConfigHandler`:
 
 ```go
@@ -898,13 +906,18 @@ err = cfggo.Init(config, cfggo.WithFileConfig("config.json"))
 // Load configuration from a file, silently tolerating a missing file.
 err = cfggo.Init(config, cfggo.WithDefaultFileConfig("config.json"))
 
-// Load configuration from a file specified by a command-line flag.
+// Load configuration from a file found by an early os.Args scan.
+// For apps that own flag parsing, parse this bootstrap flag yourself and pass
+// the result to WithFileConfig instead.
 err = cfggo.Init(config, cfggo.WithFileConfigParamName("config"))
 
 // Load configuration from HTTP endpoints.
 err = cfggo.Init(config, cfggo.WithHTTPConfig(httpLoader, httpSaver))
 
-// Use environment variables as a config source, optionally filtered by prefix.
+// Read automatic environment overrides from a prefixed namespace.
+err = cfggo.Init(config, cfggo.WithEnvPrefix("MYAPP_"))
+
+// Use environment variables as a ConfigHandler source, optionally filtered by prefix.
 err = cfggo.Init(config, cfggo.WithEnvConfig("MYAPP_"))
 
 // Plug in a custom sources.ConfigHandler.

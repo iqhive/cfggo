@@ -125,7 +125,7 @@ func (c *Structure) DiagnoseData() Diagnostics {
 			Source:      prov[key],
 			SourceChain: sourceChainFor(chains, prov, key),
 			Help:        info.Help,
-			EnvVar:      internalEnvLoader.KeyToEnvVar(key),
+			EnvVar:      c.envVarName(key),
 			Default:     info.DefaultTag,
 			HasDefault:  info.HasDefault,
 			IsAccessor:  info.IsAccessor,
@@ -261,6 +261,52 @@ func (c *Structure) Report() string {
 	sb.WriteString(d.Reference())
 	sb.WriteString("\n")
 	sb.WriteString(d.String())
+	return sb.String()
+}
+
+// ExplainKey returns a compact, human-readable explanation for one
+// configuration key: its current value, type, source, override chain, env var,
+// default/help metadata, and validation status. Secret values are masked.
+func (c *Structure) ExplainKey(key string) string {
+	d := c.DiagnoseData()
+	for _, kd := range d.Keys {
+		if kd.Key == key {
+			return kd.Explain()
+		}
+	}
+	return fmt.Sprintf("%s: <unknown key>\n", key)
+}
+
+// Explain renders a compact, human-readable explanation for this key diagnostic.
+func (k KeyDiagnostic) Explain() string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s:\n", k.Key)
+	fmt.Fprintf(&sb, "  value: %v\n", k.Value)
+	if k.Type != "" {
+		fmt.Fprintf(&sb, "  type: %s\n", k.Type)
+	} else {
+		fmt.Fprintf(&sb, "  type: -\n")
+	}
+	fmt.Fprintf(&sb, "  source: %s\n", k.Source)
+	if len(k.SourceChain) > 1 {
+		fmt.Fprintf(&sb, "  source_chain: %s\n", formatSourceChain(k.SourceChain))
+	}
+	if k.EnvVar != "" {
+		fmt.Fprintf(&sb, "  env: %s\n", k.EnvVar)
+	}
+	if k.HasDefault {
+		fmt.Fprintf(&sb, "  default: %s\n", k.Default)
+	}
+	if k.Help != "" {
+		fmt.Fprintf(&sb, "  help: %s\n", k.Help)
+	}
+	status := "ok"
+	if k.Err != nil {
+		status = "INVALID: " + k.Err.Error()
+	} else if !k.Recognized {
+		status = "unrecognized"
+	}
+	fmt.Fprintf(&sb, "  status: %s\n", status)
 	return sb.String()
 }
 

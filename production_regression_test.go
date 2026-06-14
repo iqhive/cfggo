@@ -335,3 +335,61 @@ func TestFailedReloadPreservesDirtyState(t *testing.T) {
 		t.Fatalf("SaveConfig calls = %d, want 1", got)
 	}
 }
+
+type explainKeyRegressionConfig struct {
+	Structure
+	Port   func() int    `cfggo:"port" default:"8080" help:"HTTP listen port"`
+	APIKey func() string `cfggo:"api_key" default:"dev-secret" secret:"true" help:"API key"`
+}
+
+func TestExplainKeyIncludesFocusedDebugContext(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+	t.Setenv("PORT", "9090")
+
+	cfg := &explainKeyRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	out := cfg.ExplainKey("port")
+	for _, want := range []string{
+		"port:",
+		"value: 9090",
+		"type: int",
+		"source: env",
+		"source_chain: default->env",
+		"env: PORT",
+		"default: 8080",
+		"help: HTTP listen port",
+		"status: ok",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ExplainKey(port) = %q, missing %q", out, want)
+		}
+	}
+}
+
+func TestExplainKeyMasksSecretsAndReportsUnknownKey(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &explainKeyRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	out := cfg.ExplainKey("api_key")
+	if !strings.Contains(out, "value: ****") || !strings.Contains(out, "default: ****") {
+		t.Fatalf("ExplainKey(api_key) = %q, want masked value and default", out)
+	}
+	if strings.Contains(out, "dev-secret") {
+		t.Fatalf("ExplainKey(api_key) leaked secret default: %q", out)
+	}
+
+	if got := cfg.ExplainKey("missing"); !strings.Contains(got, "missing: <unknown key>") {
+		t.Fatalf("ExplainKey(missing) = %q, want unknown-key explanation", got)
+	}
+}

@@ -24,7 +24,10 @@ type Structure struct {
 	name          string
 	configHandler sources.ConfigHandler
 	skipEnv       bool
+	envPrefix     string
+	envPrefixSet  bool
 	changed       bool
+	changeVersion uint64
 	parent        interface{}
 	configData    map[string]interface{}
 	defaultData   map[string]interface{}

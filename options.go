@@ -64,7 +64,13 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 	}
 }
 
-// WithFileConfigParamName sets the config source/dest to a filename defined in the command line arguments
+// WithFileConfigParamName sets the config source/dest to a filename found by
+// sniffing os.Args before cfggo's normal flag parsing runs.
+//
+// It recognizes --<argName>=filename and --<argName> filename. Because this is
+// an early os.Args scan, it is best suited to simple bootstrap config flags. If
+// your application already owns flag parsing, prefer parsing the config path
+// yourself and passing it to WithFileConfig.
 func WithFileConfigParamName(argName string) Option {
 	var filename string
 	for i := 1; i < len(os.Args); i++ {
@@ -122,6 +128,25 @@ func WithSkipEnvironment() Option {
 	return func(c *Structure) error {
 		// Logger.Debug("Skipping environment variables")
 		c.skipEnv = true
+		return nil
+	}
+}
+
+// WithEnvPrefix makes cfggo's automatic environment-variable loader read only
+// variables with prefix prepended to the usual env name. For example, with
+// WithEnvPrefix("MYAPP_"), key "db.host" is read from MYAPP_DB_HOST instead of
+// DB_HOST. An empty prefix preserves the default unprefixed mapping.
+//
+// This configures the normal environment override layer, not the ConfigHandler.
+// If combined with WithEnvConfig, this option wins and the env ConfigHandler is
+// ignored so environment variables are loaded only once.
+func WithEnvPrefix(prefix string) Option {
+	return func(c *Structure) error {
+		c.envPrefix = prefix
+		c.envPrefixSet = true
+		if _, ok := c.configHandler.(*sources.HandlerEnv); ok {
+			c.configHandler = nil
+		}
 		return nil
 	}
 }
@@ -230,6 +255,9 @@ func WithValidation(key string, validator validcfg.Validator) Option {
 // The handler is read-only: saving configuration via env vars is a no-op.
 func WithEnvConfig(prefix string) Option {
 	return func(c *Structure) error {
+		if c.envPrefixSet {
+			return nil
+		}
 		if c.configHandler != nil {
 			return c.WrapError(nil, ErrCodeInvalidArgument, "configHandler is already set, ignoring WithEnvConfig")
 		}

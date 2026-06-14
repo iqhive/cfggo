@@ -97,6 +97,8 @@
 //   - [Structure.Explain]: human-readable, source-annotated dump of all values,
 //     including the full override chain (eg "[default->file->env]") for any
 //     value set by more than one source.
+//   - [Structure.ExplainKey]: focused explanation for one key, including value,
+//     type, source chain, env var, default/help metadata, and validation status.
 //   - [Structure.SourceChain]: the ordered list of sources that contributed to
 //     a key's current value, the programmatic form of Explain's chain.
 //   - [Structure.DiagnoseData]: the canonical structured snapshot (value,
@@ -115,5 +117,7 @@
 //     [SetGlobalLogger] and [GlobalErrorWrapper] / [SetGlobalErrorWrapper].
 //   - [WithErrorWrapper]: customise error formatting.
 //   - [WithValidation] / [AddValidator]: attach validators to individual keys.
+//   - [WithEnvPrefix]: read automatic environment overrides from a prefixed
+//     namespace such as MYAPP_PORT.
 //   - [WithConfigHandler]: plug in a custom [sources.ConfigHandler].
 package cfggo

@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"os"
 	"reflect"
 )
 
@@ -18,8 +19,14 @@ func (c *Structure) loadFromEnv() {
 	}
 	c.configMutex.RUnlock()
 
-	// Use internal env loader to get environment variables
-	envVars := internalEnvLoader.LoadEnvironmentVariables(keys)
+	// Use internal env loader to get environment variables.
+	envVars := make(map[string]string)
+	for _, key := range keys {
+		envVar := c.envVarName(key)
+		if value, exists := os.LookupEnv(envVar); exists {
+			envVars[key] = value
+		}
+	}
 
 	// Process each environment variable found
 	for key, value := range envVars {
@@ -42,11 +49,19 @@ func (c *Structure) loadFromEnv() {
 		}
 
 		// Set the value
-		envVar := internalEnvLoader.KeyToEnvVar(key)
+		envVar := c.envVarName(key)
 		if err := dv.Set(value); err != nil {
 			c.log().Info("cfggo: error setting config from environment variable", "key", key, "env", envVar, "value", value, "err", err)
 		} else {
 			c.log().Debug("cfggo: set config from environment variable", "key", key, "env", envVar, "value", value)
 		}
 	}
+}
+
+func (c *Structure) envVarName(key string) string {
+	envVar := internalEnvLoader.KeyToEnvVar(key)
+	if c.envPrefix == "" {
+		return envVar
+	}
+	return c.envPrefix + envVar
 }

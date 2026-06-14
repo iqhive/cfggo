@@ -112,12 +112,39 @@ type Structure struct {
 	nextCallbackID  int
 }
 
-// DefaultValue returns a function that always returns x, satisfying the
-// func()-returning field pattern used by cfggo config structs.
+// DefaultValue returns a function that returns x, satisfying the func()-returning
+// field pattern used by cfggo config structs.
+//
+// Mutable defaults (maps, slices, and pointers) are cloned on each call so a
+// pre-Init accessor read cannot mutate the caller's original default value or
+// poison the value later captured during Init.
 func DefaultValue[T any](x T) func() T {
+	return DefaultClone(x)
+}
+
+// DefaultClone returns a default accessor that clones mutable values before
+// returning them. It is useful when you want to make the cloning behavior
+// explicit at the field declaration site.
+func DefaultClone[T any](x T) func() T {
 	return func() T {
+		return cloneDefaultValue(x)
+	}
+}
+
+func cloneDefaultValue[T any](x T) T {
+	v := reflect.ValueOf(x)
+	if !v.IsValid() {
 		return x
 	}
+	cloned := cloneMutableReflectValue(v)
+	if !cloned.IsValid() {
+		return x
+	}
+	out, ok := cloned.Interface().(T)
+	if !ok {
+		return x
+	}
+	return out
 }
 
 // Init initialises the configuration and returns an error on failure
@@ -127,7 +154,7 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 	defer c.initMutex.Unlock()
 	if c.initialized.Load() {
 		c.log().Warn("Structure: Init() called more than once")
-		return nil
+		return c.WrapError(ErrAlreadyInitialized, ErrCodeInvalidArgument, "Init: configuration already initialized")
 	}
 	if err := c.initLocked(parent, options...); err != nil {
 		return err
@@ -160,7 +187,7 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 
 	if c.parent != nil {
 		c.log().Warn("Structure: Init() called more than once")
-		return nil
+		return c.WrapError(ErrAlreadyInitialized, ErrCodeInvalidArgument, "Init: configuration already initialized")
 	}
 	c.parent = parent
 
@@ -193,6 +220,10 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 			"it will be ignored (did you mean func() "+s.Type+"?)", "key", s.Key, "type", s.Type)
 	}
 	c.applyPlan()
+
+	if err := c.validateConfigShape(); err != nil {
+		return err
+	}
 
 	if c.configHandler != nil {
 		if err := c.loadConfig(false); err != nil {

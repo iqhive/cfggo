@@ -193,6 +193,10 @@ go run . --server_port=6000       # flag overrides everything (port 6000)
 >     LogLevel:    cfggo.DefaultValue("info"),
 > }
 > ```
+>
+> `DefaultValue` clones mutable defaults (maps, slices, and pointers) on each
+> call. Use `cfggo.DefaultClone(...)` when you want to make that behavior
+> explicit at the declaration site.
 
 ## Why functions instead of struct fields?
 
@@ -224,7 +228,9 @@ Because each field is a `func() T`, two mistakes are worth knowing about:
   assigned) is a nil function and `config.ServerPort()` will panic. Always call
   `Init`/`InitSelf` at startup before reading. Assigning
   `ServerPort: cfggo.DefaultValue(8080)` makes a field safe to read even before
-  `Init`, since it already holds a real function.
+  `Init`, since it already holds a real function. For mutable defaults,
+  `DefaultValue` returns a fresh top-level map, slice, or pointer value on each
+  call.
 - **Declare fields as `func() T`, not plain `T`.** A field written as
   `ServerPort int` with a `cfggo` tag is silently *not* a config field — it is
   never loaded or reloaded. cfggo now logs a warning during `Init` for any
@@ -794,10 +800,11 @@ type ConfigHandler interface {
 }
 ```
 
-cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`),
-HTTP endpoints (`WithHTTPConfig`), and environment variables (`WithEnvConfig`).
-For the normal automatic environment override layer, use `WithEnvPrefix` when
-you want namespaced variables such as `MYAPP_PORT`.
+cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`)
+and HTTP endpoints (`WithHTTPConfig`). Environment variables are handled by the
+automatic env override layer: use `WithEnvConfig()` for raw unprefixed variables
+such as `PORT`, or `WithEnvPrefix("MYAPP_")` for namespaced variables such as
+`MYAPP_PORT`.
 Plug in your own implementation with `WithConfigHandler`:
 
 ```go
@@ -930,14 +937,17 @@ err = cfggo.Init(config, cfggo.WithHTTPConfig(httpLoader, httpSaver))
 // Read automatic environment overrides from a prefixed namespace.
 err = cfggo.Init(config, cfggo.WithEnvPrefix("MYAPP_"))
 
-// Use environment variables as a ConfigHandler source, optionally filtered by prefix.
-err = cfggo.Init(config, cfggo.WithEnvConfig("MYAPP_"))
+// Read raw, unprefixed environment variables such as PORT.
+err = cfggo.Init(config, cfggo.WithEnvConfig())
+
+// Read automatic environment overrides from a prefixed namespace.
+err = cfggo.Init(config, cfggo.WithEnvPrefix("MYAPP_"))
 
 // Plug in a custom sources.ConfigHandler.
 err = cfggo.Init(config, cfggo.WithConfigHandler(myHandler))
 
 // Skip loading from environment variables.
-err = cfggo.Init(config, cfggo.WithSkipEnvironment())
+err = cfggo.Init(config, cfggo.WithoutEnv())
 
 // Save the configuration when a context is cancelled (e.g. on shutdown).
 // cfggo does not install signal handlers or call os.Exit; you own the context.
@@ -976,11 +986,12 @@ err = cfggo.Init(config, cfggo.WithErrorWrapper(myWrapper))
 ```
 
 By default `Init` is **strict**: a malformed configuration file (invalid JSON),
-a value that cannot be coerced to its field type, or a value that fails a
-registered validator causes `Init` to return an error rather than silently
-starting with partial/default values. Use `WithLenientLoad()` to opt into
-best-effort loading (errors become warnings). Unrecognized configuration keys
-are logged as warnings by default and become errors under `WithStrictKeys()`.
+a value that cannot be coerced to its field type, a validator registered for an
+unknown key, or a value that fails a registered validator causes `Init` to return
+an error rather than silently starting with partial/default values. Use
+`WithLenientLoad()` to opt into best-effort loading (errors become warnings).
+Unrecognized configuration keys are logged as warnings by default and become
+errors under `WithStrictKeys()`.
 
 > **Note:** Options can be combined in a single `Init` call, e.g.
 > `cfggo.Init(config, cfggo.WithName("api"), cfggo.WithFileConfig("config.json"), cfggo.WithAutoSave(ctx))`.

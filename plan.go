@@ -459,7 +459,7 @@ func cloneMutableReflectValue(v reflect.Value) reflect.Value {
 		cp := reflect.MakeMapWithSize(v.Type(), v.Len())
 		iter := v.MapRange()
 		for iter.Next() {
-			cp.SetMapIndex(iter.Key(), iter.Value())
+			cp.SetMapIndex(iter.Key(), cloneMutableReflectValue(iter.Value()))
 		}
 		return cp
 	case reflect.Slice:
@@ -467,7 +467,16 @@ func cloneMutableReflectValue(v reflect.Value) reflect.Value {
 			return v
 		}
 		cp := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
-		reflect.Copy(cp, v)
+		for i := 0; i < v.Len(); i++ {
+			cp.Index(i).Set(cloneMutableReflectValue(v.Index(i)))
+		}
+		return cp
+	case reflect.Pointer:
+		if v.IsNil() {
+			return v
+		}
+		cp := reflect.New(v.Type().Elem())
+		cp.Elem().Set(cloneMutableReflectValue(v.Elem()))
 		return cp
 	default:
 		return v

@@ -28,6 +28,10 @@ var (
 	// config struct.
 	ErrUnknownKey = errors.New("cfggo: unknown configuration key")
 
+	// ErrAlreadyInitialized indicates Init was called on a Structure that has
+	// already completed initialization.
+	ErrAlreadyInitialized = errors.New("cfggo: configuration already initialized")
+
 	// ErrValidation matches any validation failure (see validcfg.ErrValidation).
 	ErrValidation = validcfg.ErrValidation
 )

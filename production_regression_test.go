@@ -80,6 +80,11 @@ type mutableAccessorRegressionConfig struct {
 	Structure
 	Labels func() map[string]string `cfggo:"labels"`
 	Names  func() []string          `cfggo:"names"`
+	State  func() *mutableState     `cfggo:"state"`
+}
+
+type mutableState struct {
+	Name string
 }
 
 func TestMutableAccessorsReturnCopies(t *testing.T) {
@@ -90,6 +95,7 @@ func TestMutableAccessorsReturnCopies(t *testing.T) {
 	cfg := &mutableAccessorRegressionConfig{
 		Labels: DefaultValue(map[string]string{"env": "prod"}),
 		Names:  DefaultValue([]string{"api"}),
+		State:  DefaultValue(&mutableState{Name: "ready"}),
 	}
 	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
 		t.Fatalf("Init: %v", err)
@@ -114,6 +120,38 @@ func TestMutableAccessorsReturnCopies(t *testing.T) {
 	labelsValue["env"] = "qa"
 	if got := cfg.Labels()["env"]; got != "prod" {
 		t.Fatalf("Labels()[env] = %q after mutating typed Value result, want prod", got)
+	}
+
+	state := cfg.State()
+	state.Name = "mutated"
+	if got := cfg.State().Name; got != "ready" {
+		t.Fatalf("State().Name = %q after mutating accessor result, want ready", got)
+	}
+}
+
+func TestDefaultValueClonesMutableValuesBeforeInit(t *testing.T) {
+	labels := map[string]string{"env": "prod"}
+	names := []string{"api"}
+	state := &mutableState{Name: "ready"}
+
+	cfg := &mutableAccessorRegressionConfig{
+		Labels: DefaultValue(labels),
+		Names:  DefaultValue(names),
+		State:  DefaultClone(state),
+	}
+
+	cfg.Labels()["env"] = "dev"
+	cfg.Names()[0] = "worker"
+	cfg.State().Name = "mutated"
+
+	if labels["env"] != "prod" {
+		t.Fatalf("original labels mutated before Init: %#v", labels)
+	}
+	if names[0] != "api" {
+		t.Fatalf("original names mutated before Init: %#v", names)
+	}
+	if state.Name != "ready" {
+		t.Fatalf("original pointer default mutated before Init: %#v", state)
 	}
 }
 
@@ -201,6 +239,36 @@ func TestConcurrentLazyInitIsSerialized(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestRepeatedInitReturnsErrAlreadyInitialized(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &lazyInitRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	err := cfg.Init(cfg, WithoutFlags())
+	if !errors.Is(err, ErrAlreadyInitialized) {
+		t.Fatalf("second Init error = %v, want ErrAlreadyInitialized", err)
+	}
+}
+
+func TestInitRejectsValidatorsForUnknownKeys(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &lazyInitRegressionConfig{}
+	err := cfg.Init(cfg, WithValidation("prot", Required()), WithoutFlags())
+	if !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("Init error = %v, want ErrUnknownKey", err)
+	}
+	if !strings.Contains(err.Error(), "prot") {
+		t.Fatalf("Init error = %q, want unknown validator key", err.Error())
+	}
 }
 
 type strictNumericRegressionConfig struct {

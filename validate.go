@@ -1,6 +1,10 @@
 package cfggo
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	"github.com/iqhive/cfggo/validcfg"
 )
 
@@ -19,6 +23,40 @@ func (c *Structure) RegisterValidator(key string, validator validcfg.Validator) 
 // AddValidator is an alias for RegisterValidator.
 func (c *Structure) AddValidator(key string, validator validcfg.Validator) {
 	c.RegisterValidator(key, validator)
+}
+
+// ValidateConfigShape verifies that configuration metadata registered by code
+// matches the struct shape. It currently checks that every registered validator
+// targets a known config key, catching typos such as WithValidation("prot", ...)
+// during Init instead of silently leaving the validator unused.
+func (c *Structure) ValidateConfigShape() error {
+	c.ensureInit()
+	return c.validateConfigShape()
+}
+
+func (c *Structure) validateConfigShape() error {
+	if c.plan == nil {
+		return nil
+	}
+
+	c.validationMutex.RLock()
+	unknown := make([]string, 0)
+	for key := range c.validationMap {
+		if _, ok := c.plan.byKey[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	c.validationMutex.RUnlock()
+
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return c.WrapError(
+		wrapKind(ErrUnknownKey, fmt.Errorf("validators registered for unknown configuration keys: %s", strings.Join(unknown, ", "))),
+		ErrCodeNotFound,
+		"invalid configuration shape",
+	)
 }
 
 // Validate runs all registered validators for this configuration instance.

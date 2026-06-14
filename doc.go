@@ -32,7 +32,8 @@
 // concurrent reads are race-free. The trade-off is the small syntactic overhead
 // of calling cfg.Port() instead of cfg.Port. Set a default in code with
 // [DefaultValue] (e.g. Port: cfggo.DefaultValue(8080)) or via the `default`
-// tag.
+// tag. DefaultValue clones mutable values (maps, slices, and pointers) on each
+// call so pre-Init reads do not mutate the original default.
 //
 // # Pitfalls
 //
@@ -70,11 +71,12 @@
 // # Strictness
 //
 // By default Init is strict: a malformed configuration file, a value that
-// cannot be coerced to its field type, or a value that fails a registered
-// validator causes Init to return an error instead of silently starting with
-// partial or default values. Use [WithLenientLoad] for best-effort loading
-// (failures become logged warnings), and [WithStrictKeys] to turn unrecognized
-// configuration keys (typos) into errors rather than warnings.
+// cannot be coerced to its field type, a validator registered for an unknown
+// key, or a value that fails a registered validator causes Init to return an
+// error instead of silently starting with partial or default values. Use
+// [WithLenientLoad] for best-effort loading (failures become logged warnings),
+// and [WithStrictKeys] to turn unrecognized configuration keys (typos) into
+// errors rather than warnings.
 //
 // # Reading values
 //
@@ -117,7 +119,7 @@
 //     [SetGlobalLogger] and [GlobalErrorWrapper] / [SetGlobalErrorWrapper].
 //   - [WithErrorWrapper]: customise error formatting.
 //   - [WithValidation] / [AddValidator]: attach validators to individual keys.
-//   - [WithEnvPrefix]: read automatic environment overrides from a prefixed
-//     namespace such as MYAPP_PORT.
+//   - [WithEnvPrefix] / [WithEnvConfig]: read automatic environment overrides
+//     from a prefixed namespace such as MYAPP_PORT, or raw unprefixed variables.
 //   - [WithConfigHandler]: plug in a custom [sources.ConfigHandler].
 package cfggo

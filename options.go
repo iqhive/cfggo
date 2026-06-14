@@ -123,13 +123,19 @@ func WithHTTPConfig(httpLoader *http.Request, httpSaver *http.Request) Option {
 	}
 }
 
-// WithSkipEnvironment skips loading from environment variables
-func WithSkipEnvironment() Option {
+// WithoutEnv skips cfggo's automatic environment variable override layer.
+func WithoutEnv() Option {
 	return func(c *Structure) error {
-		// Logger.Debug("Skipping environment variables")
 		c.skipEnv = true
 		return nil
 	}
+}
+
+// WithSkipEnvironment skips loading from environment variables.
+//
+// Deprecated: use WithoutEnv.
+func WithSkipEnvironment() Option {
+	return WithoutEnv()
 }
 
 // WithEnvPrefix makes cfggo's automatic environment-variable loader read only
@@ -137,9 +143,7 @@ func WithSkipEnvironment() Option {
 // WithEnvPrefix("MYAPP_"), key "db.host" is read from MYAPP_DB_HOST instead of
 // DB_HOST. An empty prefix preserves the default unprefixed mapping.
 //
-// This configures the normal environment override layer, not the ConfigHandler.
-// If combined with WithEnvConfig, this option wins and the env ConfigHandler is
-// ignored so environment variables are loaded only once.
+// This configures the normal environment override layer.
 func WithEnvPrefix(prefix string) Option {
 	return func(c *Structure) error {
 		c.envPrefix = prefix
@@ -249,21 +253,11 @@ func WithValidation(key string, validator validcfg.Validator) Option {
 	}
 }
 
-// WithEnvConfig sets a ConfigHandler that reads configuration from environment
-// variables, optionally filtered to those whose names start with prefix
-// (e.g. "MYAPP_"). An empty prefix accepts all environment variables.
-// The handler is read-only: saving configuration via env vars is a no-op.
-func WithEnvConfig(prefix string) Option {
-	return func(c *Structure) error {
-		if c.envPrefixSet {
-			return nil
-		}
-		if c.configHandler != nil {
-			return c.WrapError(nil, ErrCodeInvalidArgument, "configHandler is already set, ignoring WithEnvConfig")
-		}
-		c.configHandler = sources.NewHandlerEnv(prefix, true)
-		return nil
-	}
+// WithEnvConfig enables cfggo's automatic environment-variable loader with no
+// prefix. It is equivalent to WithEnvPrefix("") and reads raw, un-prefixed
+// variables such as PORT for key "port".
+func WithEnvConfig() Option {
+	return WithEnvPrefix("")
 }
 
 // WithConfigHandler uses the given ConfigHandler to save and load configuration.

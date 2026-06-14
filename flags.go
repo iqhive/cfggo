@@ -81,13 +81,13 @@ func (c *Structure) createSetter(key string) func(interface{}) error {
 	}
 }
 
-func (c *Structure) parseFlags() {
+func (c *Structure) parseFlags() error {
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
 
 	if c.FlagSet.Parsed() {
 		c.log().Info("cfggo: flags already parsed")
-		return
+		return nil
 	}
 
 	args := flags.FilterTestFlags(os.Args[1:])
@@ -101,6 +101,14 @@ func (c *Structure) parseFlags() {
 			c.FlagSet.Init(c.FlagSet.Name(), flag.ContinueOnError)
 		}
 		args = c.filterKnownFlags(args)
+	} else if name, ok := c.firstUnknownFlag(args); ok {
+		if suggestion := c.suggestKey(name); suggestion != "" {
+			return c.WrapError(
+				wrapKind(ErrUnknownKey, fmt.Errorf("flag provided but not defined: -%s (did you mean -%s?)", name, suggestion)),
+				ErrCodeNotFound,
+				"",
+			)
+		}
 	}
 
 	// Collapse "--bool value" into "--bool=value" for known boolean flags. The
@@ -129,6 +137,41 @@ func (c *Structure) parseFlags() {
 	if parseErr == nil {
 		c.markChangedLocked()
 	}
+	if parseErr != nil {
+		return c.WrapError(parseErr, ErrCodeInvalidArgument, "parse command-line flags")
+	}
+	return nil
+}
+
+func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return "", false
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			return "", false
+		}
+
+		name := strings.TrimLeft(arg, "-")
+		if name == "" {
+			return "", false
+		}
+		hasInlineValue := false
+		if idx := strings.IndexByte(name, '='); idx != -1 {
+			name = name[:idx]
+			hasInlineValue = true
+		}
+
+		f := c.FlagSet.Lookup(name)
+		if f == nil {
+			return name, true
+		}
+		if !hasInlineValue && i+1 < len(args) && !isBoolFlag(f) {
+			i++
+		}
+	}
+	return "", false
 }
 
 // filterKnownFlags returns only the argument tokens that correspond to flags

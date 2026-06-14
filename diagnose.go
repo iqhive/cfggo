@@ -39,6 +39,9 @@ type KeyDiagnostic struct {
 	// Recognized reports whether the key is backed by a struct field. A false
 	// value usually indicates a typo in a config file or environment variable
 	Recognized bool
+	// Suggestion is the closest known configuration key for an unrecognized key,
+	// when cfggo can make a confident match.
+	Suggestion string
 	// Secret reports whether the field is tagged `secret:"true"`. When true,
 	// Value (and Default) are masked (set to "****") so the diagnostic never
 	// carries the sensitive value; validation is still performed against the
@@ -130,6 +133,7 @@ func (c *Structure) DiagnoseData() Diagnostics {
 			HasDefault:  info.HasDefault,
 			IsAccessor:  info.IsAccessor,
 			Recognized:  recognized,
+			Suggestion:  c.suggestKey(key),
 			Secret:      info.IsSecret,
 		}
 		if info.Type != nil {
@@ -196,6 +200,9 @@ func (d Diagnostics) String() string {
 			status = "INVALID: " + k.Err.Error()
 		} else if !k.Recognized {
 			status = "unrecognized"
+			if k.Suggestion != "" {
+				status += " (did you mean " + k.Suggestion + "?)"
+			}
 		}
 		typ := k.Type
 		if typ == "" {
@@ -274,7 +281,7 @@ func (c *Structure) ExplainKey(key string) string {
 			return kd.Explain()
 		}
 	}
-	return fmt.Sprintf("%s: <unknown key>\n", key)
+	return fmt.Sprintf("%s: <unknown key>%s\n", key, c.didYouMeanSuffix(key))
 }
 
 // Explain renders a compact, human-readable explanation for this key diagnostic.
@@ -305,6 +312,9 @@ func (k KeyDiagnostic) Explain() string {
 		status = "INVALID: " + k.Err.Error()
 	} else if !k.Recognized {
 		status = "unrecognized"
+		if k.Suggestion != "" {
+			status += " (did you mean " + k.Suggestion + "?)"
+		}
 	}
 	fmt.Fprintf(&sb, "  status: %s\n", status)
 	return sb.String()

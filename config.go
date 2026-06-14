@@ -16,7 +16,7 @@ func (c *Structure) Set(key string, value interface{}) error {
 	old, exists := c.configData[key]
 	if !exists {
 		c.configMutex.Unlock()
-		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q", key)
+		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q%s", key, c.didYouMeanSuffix(key))
 	}
 	err := c.set(key, value)
 	var newVal interface{}

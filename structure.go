@@ -259,7 +259,9 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 			}
 		}
 		c.createFlags()
-		c.parseFlags()
+		if err := c.parseFlags(); err != nil {
+			return err
+		}
 	}
 
 	// Surface configuration keys that are not backed by a struct field. These
@@ -267,10 +269,14 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	// otherwise be silently ignored. WithStrictKeys upgrades this to an error
 	if unrecognized := c.unrecognizedKeys(); len(unrecognized) > 0 {
 		for _, key := range unrecognized {
-			c.log().Warn("cfggo: unrecognized configuration key (no matching struct field)", "key", key)
+			attrs := []any{"key", key}
+			if suggestion := c.suggestKey(key); suggestion != "" {
+				attrs = append(attrs, "suggestion", suggestion)
+			}
+			c.log().Warn("cfggo: unrecognized configuration key (no matching struct field)", attrs...)
 		}
 		if c.strictKeys {
-			return c.WrapError(wrapKind(ErrUnknownKey, fmt.Errorf("%v", unrecognized)), ErrCodeNotFound,
+			return c.WrapError(wrapKind(ErrUnknownKey, fmt.Errorf("%s", c.formatUnknownKeys(unrecognized))), ErrCodeNotFound,
 				"unrecognized configuration keys")
 		}
 	}

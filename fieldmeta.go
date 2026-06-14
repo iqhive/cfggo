@@ -1,8 +1,10 @@
 package cfggo
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 )
 
 // fieldInfo is the precomputed metadata for a single leaf (non-struct) field of
@@ -73,4 +75,110 @@ func (c *Structure) unrecognizedKeys() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (c *Structure) suggestKey(key string) string {
+	if c.plan == nil || len(c.plan.byKey) == 0 {
+		return ""
+	}
+	best := ""
+	bestDistance := 0
+	for candidate, leaf := range c.plan.byKey {
+		if !leaf.info.IsAccessor {
+			continue
+		}
+		distance := editDistance(key, candidate)
+		if best == "" || distance < bestDistance || (distance == bestDistance && candidate < best) {
+			best = candidate
+			bestDistance = distance
+		}
+	}
+	if best == "" || bestDistance > suggestionDistanceLimit(key, best) {
+		return ""
+	}
+	return best
+}
+
+func (c *Structure) unknownKeyMessage(key string) string {
+	if suggestion := c.suggestKey(key); suggestion != "" {
+		return fmt.Sprintf("%s (did you mean %s?)", key, suggestion)
+	}
+	return key
+}
+
+func (c *Structure) didYouMeanSuffix(key string) string {
+	if suggestion := c.suggestKey(key); suggestion != "" {
+		return fmt.Sprintf(" (did you mean %q?)", suggestion)
+	}
+	return ""
+}
+
+func (c *Structure) formatUnknownKeys(keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	out := make([]string, len(keys))
+	for i, key := range keys {
+		out[i] = c.unknownKeyMessage(key)
+	}
+	return strings.Join(out, ", ")
+}
+
+func suggestionDistanceLimit(a, b string) int {
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	switch {
+	case n <= 4:
+		return 2
+	case n <= 8:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func editDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "" {
+		return len(b)
+	}
+	if b == "" {
+		return len(a)
+	}
+
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			curr[j] = minInt(
+				prev[j]+1,
+				curr[j-1]+1,
+				prev[j-1]+cost,
+			)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
+}
+
+func minInt(a, b, c int) int {
+	if b < a {
+		a = b
+	}
+	if c < a {
+		a = c
+	}
+	return a
 }

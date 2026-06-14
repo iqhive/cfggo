@@ -3,7 +3,6 @@ package cfggo
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/iqhive/cfggo/validcfg"
 )
@@ -53,7 +52,7 @@ func (c *Structure) validateConfigShape() error {
 	}
 	sort.Strings(unknown)
 	return c.WrapError(
-		wrapKind(ErrUnknownKey, fmt.Errorf("validators registered for unknown configuration keys: %s", strings.Join(unknown, ", "))),
+		wrapKind(ErrUnknownKey, fmt.Errorf("validators registered for unknown configuration keys: %s", c.formatUnknownKeys(unknown))),
 		ErrCodeNotFound,
 		"invalid configuration shape",
 	)
@@ -102,7 +101,7 @@ func (c *Structure) ValidateKey(key string) error {
 
 	value, exists := c.configData[key]
 	if !exists {
-		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found", key)
+		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found%s", key, c.didYouMeanSuffix(key))
 	}
 
 	validator, exists := c.validationMap[key]

@@ -269,6 +269,9 @@ func TestInitRejectsValidatorsForUnknownKeys(t *testing.T) {
 	if !strings.Contains(err.Error(), "prot") {
 		t.Fatalf("Init error = %q, want unknown validator key", err.Error())
 	}
+	if !strings.Contains(err.Error(), "did you mean port?") {
+		t.Fatalf("Init error = %q, want key suggestion", err.Error())
+	}
 }
 
 type strictNumericRegressionConfig struct {
@@ -588,5 +591,87 @@ func TestExplainKeyMasksSecretsAndReportsUnknownKey(t *testing.T) {
 
 	if got := cfg.ExplainKey("missing"); !strings.Contains(got, "missing: <unknown key>") {
 		t.Fatalf("ExplainKey(missing) = %q, want unknown-key explanation", got)
+	}
+}
+
+type suggestionRegressionConfig struct {
+	Structure
+	ServerPort func() int `cfggo:"server_port" default:"8080"`
+}
+
+func TestUnknownLoadedKeyIncludesSuggestion(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &suggestionRegressionConfig{}
+	err := cfg.Init(cfg,
+		WithConfigHandler(&memHandler{data: json.RawMessage(`{"server_prt":9090}`)}),
+		WithStrictKeys(),
+		WithoutFlags(),
+	)
+	if !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("Init error = %v, want ErrUnknownKey", err)
+	}
+	if !strings.Contains(err.Error(), "server_prt (did you mean server_port?)") {
+		t.Fatalf("Init error = %q, want unknown-key suggestion", err.Error())
+	}
+}
+
+func TestDiagnosticsIncludeUnknownKeySuggestion(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &suggestionRegressionConfig{}
+	if err := cfg.Init(cfg,
+		WithConfigHandler(&memHandler{data: json.RawMessage(`{"server_prt":9090}`)}),
+		WithoutFlags(),
+	); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	diag := cfg.DiagnoseData()
+	var found bool
+	for _, key := range diag.Keys {
+		if key.Key == "server_prt" {
+			found = true
+			if key.Suggestion != "server_port" {
+				t.Fatalf("Suggestion = %q, want server_port", key.Suggestion)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("DiagnoseData missing unrecognized server_prt key")
+	}
+	if out := diag.String(); !strings.Contains(out, "unrecognized (did you mean server_port?)") {
+		t.Fatalf("Diagnostics.String() = %q, want suggestion", out)
+	}
+}
+
+func TestRuntimeUnknownKeyErrorsIncludeSuggestion(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &suggestionRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	for label, err := range map[string]error{
+		"Set":         cfg.Set("server_prt", 9090),
+		"ValidateKey": cfg.ValidateKey("server_prt"),
+	} {
+		if !errors.Is(err, ErrUnknownKey) {
+			t.Fatalf("%s error = %v, want ErrUnknownKey", label, err)
+		}
+		if !strings.Contains(err.Error(), `did you mean "server_port"?`) {
+			t.Fatalf("%s error = %q, want suggestion", label, err.Error())
+		}
+	}
+
+	if out := cfg.ExplainKey("server_prt"); !strings.Contains(out, `did you mean "server_port"?`) {
+		t.Fatalf("ExplainKey(server_prt) = %q, want suggestion", out)
 	}
 }

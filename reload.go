@@ -69,7 +69,9 @@ func (c *Structure) Reload() error {
 
 	// Reload from flags if they've been parsed
 	if flagsParsed {
-		c.parseFlags()
+		if err := c.parseFlags(); err != nil {
+			c.log().Warn("cfggo: could not re-parse command-line flags during reload", "err", err)
+		}
 	}
 
 	// Re-assert runtime override precedence. The standard flag package will not

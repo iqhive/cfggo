@@ -1,8 +1,11 @@
 package cfggo
 
 import (
+	"bytes"
+	"errors"
 	"flag"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -320,6 +323,53 @@ func TestIgnoreUnknownVars(t *testing.T) {
 		if got := cfg.StringField(); got != "keep" {
 			t.Errorf("args %v: StringField() = %q, want keep", args, got)
 		}
+	}
+}
+
+func TestUnknownPrivateFlagSuggestsClosestKnownFlag(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"cmd", "--verbse"}
+
+	type TestConfig struct {
+		Structure
+		Verbose func() bool `cfggo:"verbose"`
+	}
+
+	cfg := &TestConfig{Verbose: DefaultValue(false)}
+	err := cfg.Init(cfg)
+	if !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("Init error = %v, want ErrUnknownKey", err)
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined: -verbse (did you mean -verbose?)") {
+		t.Fatalf("Init error = %q, want flag suggestion", err.Error())
+	}
+}
+
+func TestUnknownPrivateFlagWithoutCloseMatchPrintsUsage(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"cmd", "--totally-unrelated"}
+
+	type TestConfig struct {
+		Structure
+		Verbose func() bool `cfggo:"verbose" help:"Enable verbose logging"`
+	}
+
+	var out bytes.Buffer
+	cfg := &TestConfig{Verbose: DefaultValue(false)}
+	cfg.FlagSet = flag.NewFlagSet("cmd", flag.ContinueOnError)
+	cfg.FlagSet.SetOutput(&out)
+
+	err := cfg.Init(cfg)
+	if err == nil {
+		t.Fatal("Init error = nil, want unknown flag error")
+	}
+	if strings.Contains(err.Error(), "did you mean") {
+		t.Fatalf("Init error = %q, did not want suggestion", err.Error())
+	}
+	if usage := out.String(); !strings.Contains(usage, "-verbose") || !strings.Contains(usage, "Enable verbose logging") {
+		t.Fatalf("flag usage = %q, want known verbose flag", usage)
 	}
 }
 

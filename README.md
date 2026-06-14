@@ -196,7 +196,9 @@ go run . --server_port=6000       # flag overrides everything (port 6000)
 >
 > `DefaultValue` clones mutable defaults (maps, slices, and pointers) on each
 > call. Use `cfggo.DefaultClone(...)` when you want to make that behavior
-> explicit at the declaration site.
+> explicit at the declaration site. The clone is a top-level defensive copy:
+> mutating a returned map, slice, or pointer before `Init` will not mutate the
+> original default captured in your struct literal.
 
 ## Why functions instead of struct fields?
 
@@ -269,6 +271,7 @@ cfggo recognises these struct tags on your config fields:
 | `cfggo:"name"` | The configuration key (used for file keys, env vars, and flags). |
 | `default:"value"` | The fallback value, parsed into the field's type. |
 | `help:"text"` | Description shown in `--help` output, `String()`, and `Explain()`. |
+| `secret:"true"` | Marks the value sensitive so human-readable diagnostics redact it. |
 
 **Choosing the config key.** If no `cfggo` tag is present, cfggo falls back —
 in order — to the `cfg`, `config`, and `json` tags, and finally to the Go field
@@ -302,6 +305,10 @@ sources override earlier ones):
 4. **Environment variables**: Automatically mapped from config keys (e.g., `server_port` → `SERVER_PORT`).
 5. **Command-line flags**: Automatically registered based on your struct fields.
 
+If a field has both a caller-supplied accessor/default function and a
+`default:"..."` tag, the supplied function wins before file/env/flag layers are
+applied.
+
 ## Supported Types
 
 A config field can be a `func() T` for any of the following `T`. cfggo converts
@@ -318,17 +325,25 @@ into the field's declared type automatically:
 
 **String formats for collections.** When a value arrives as a single string
 (common for flags and environment variables), slices accept a JSON array, a
-comma-separated list, or a single value; maps accept a JSON object:
+comma-separated list, or a single value; maps accept a JSON object or compact
+`key:value,key:value` pairs:
 
 ```text
 --tags '["a","b"]'      # JSON array
 --tags a,b,c            # comma-separated
 --tags single           # single value -> ["single"]
 --limits '{"cpu":2}'    # JSON object for a map field
+--limits cpu:2,mem:4    # key:value pairs for a map field
 ```
 
 **Flexible booleans.** Boolean values accept `true/false`, `t/f`, `yes/no`,
 `y/n`, and `1/0` (case-insensitive), from any source.
+
+**JSON object and null behavior.** Nested JSON objects are flattened into dotted
+keys (`{"database":{"host":"db"}}` -> `database.host`) unless the object is
+itself the value for a known accessor leaf, such as a map or struct-valued
+`func() T`. An explicit JSON `null` resets a known key to that field's typed zero
+value.
 
 ## Environment Variables
 
@@ -336,8 +351,10 @@ Environment variables are automatically mapped from your configuration keys:
 
 - Keys are converted to uppercase.
 - Dots (`.`) are replaced with underscores (`_`).
-- Pass `cfggo.WithEnvPrefix("MYAPP_")` to read the automatic env layer from a
-  prefixed namespace.
+- Use `cfggo.WithEnvConfig()` to read raw, unprefixed variables such as `PORT`.
+- Use `cfggo.WithEnvPrefix("MYAPP_")` to read the automatic env layer from a
+  prefixed namespace such as `MYAPP_PORT`.
+- Use `cfggo.WithoutEnv()` when you want files/defaults/flags only.
 
 For example:
 
@@ -362,14 +379,15 @@ Boolean flags can be used with or without a value:
 --feature_enabled        # Sets to true
 --feature_enabled=true   # Sets to true
 --feature_enabled=false  # Sets to false
+--feature_enabled false  # Sets to false (cfggo normalizes bool literals)
 ```
 
-> **Important:** As with the standard `flag` package, boolean flags do **not**
-> consume a following space-separated token. `--feature_enabled true` enables the
-> flag from its *presence* and leaves `true` as a stray positional argument. To
-> set a boolean explicitly always use the `--feature_enabled=value` form. cfggo
-> logs a warning when unexpected positional arguments remain after parsing, since
-> that almost always indicates a `--bool value` mistake.
+cfggo keeps the normal `--bool` shorthand, but is also more forgiving than the
+standard `flag` package for known boolean config flags: when a boolean flag is
+followed by a supported boolean literal (`true/false`, `t/f`, `yes/no`, `y/n`,
+`1/0`), cfggo treats it like `--flag=value` so later flags still parse. If the
+following token is not a boolean literal, the flag is treated as a bare `true`
+flag and the token remains positional.
 
 ### Parsing model and interop with the standard `flag` package
 
@@ -384,6 +402,16 @@ By default, cfggo creates its own private `*flag.FlagSet` and parses
   ```go
   err := cfggo.Init(config, cfggo.WithIgnoreUnknownVars())
   ```
+
+If an unrecognized flag has a close match, cfggo reports the likely intended
+flag before the process exits, for example:
+
+```text
+flag provided but not defined: -verbse (did you mean -verbose?)
+```
+
+When there is no close match, cfggo falls back to the standard `flag` package
+behavior and prints the full usage listing with every known cfggo flag.
 
 If you want cfggo to coexist with the idiomatic "register flags, call
 `flag.Parse()` once" pattern, register cfggo's flags on a flag set you control
@@ -407,6 +435,11 @@ When an external flag set is supplied via `WithFlagSet`/`WithStandardFlags`,
 cfggo registers its flags but does **not** parse during `Init()` — the host owns
 the single `Parse()` call. cfggo flag values still propagate automatically as the
 host parses, because each flag writes directly into the config map.
+
+Use `WithoutFlags()` when a program should not register or parse cfggo command
+line flags at all. This keeps startup focused on defaults, files, environment
+variables, and any custom handler. If you later need the flag set for advanced
+usage, `GetFlagSet()` creates one lazily.
 
 ## Reading and Setting Values at Runtime
 
@@ -488,6 +521,11 @@ if err := config.ReloadConfig(); err != nil {
 fmt.Printf("Updated server port: %d\n", config.ServerPort())
 ```
 
+Reload starts from the configured defaults, reapplies the loadable sources, and
+then preserves runtime overrides from command-line flags and `Set`. That means a
+key removed from a config file falls back to its default, while a value supplied
+by a flag or by `config.Set(...)` continues to win until the process changes it.
+
 ### Reacting to changes (OnChange)
 
 Register a callback to be notified when configuration values change. Callbacks
@@ -540,6 +578,12 @@ if err := config.ValidateKey("server_port"); err != nil {
     log.Fatalf("Validation of server_port failed: %v", err)
 }
 ```
+
+cfggo also validates the validator registrations themselves during `Init`.
+Registering a validator for an unknown key is treated as a configuration-shape
+error, so a typo like `cfggo.WithValidation("server_prt", ...)` fails fast
+instead of silently creating a validator that never runs. When possible, the
+error suggests the nearest known key.
 
 ### Built-in validators
 
@@ -700,7 +744,17 @@ right source:
   source that could not be parsed.
 - Wrong types include the key and source, for example `key "port" from file`.
 - Unknown keys are listed in `Report()` and become startup errors with
-  `WithStrictKeys()`.
+  `WithStrictKeys()`. Close typos include suggestions such as
+  `server_prt (did you mean server_port?)`.
+- `Set`, `ValidateKey`, `ExplainKey`, and `DiagnoseData` also surface
+  close-match suggestions for unknown keys. The programmatic suggestion lives in
+  `KeyDiagnostic.Suggestion`.
+- Unknown command-line flags suggest close matches. If no close match exists,
+  cfggo preserves the standard usage output listing all known flags.
+- A second `Init`/`InitSelf` call returns `ErrAlreadyInitialized`, so repeated
+  startup wiring is visible to callers instead of only being logged.
+- Validators registered for unknown keys fail during `Init`, with the same
+  unknown-key sentinel and close-match suggestions.
 - Failed validators include the key, value, and provenance of the invalid value.
 - Environment overrides are visible via `Source("key")`, `SourceChain("key")`,
   and `Explain()`.
@@ -729,6 +783,7 @@ if err := config.ReloadConfig(); err != nil {
     case errors.Is(err, cfggo.ErrSource):     // source (file/http/env) failure
     case errors.Is(err, cfggo.ErrNoHandler):  // no source configured
     case errors.Is(err, cfggo.ErrUnknownKey): // unknown key
+    case errors.Is(err, cfggo.ErrAlreadyInitialized): // repeated Init/InitSelf
     case errors.Is(err, cfggo.ErrValidation): // validation failure
     }
     code := cfggo.ErrorCode(err) // application-defined code, if any
@@ -801,10 +856,12 @@ type ConfigHandler interface {
 ```
 
 cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`)
-and HTTP endpoints (`WithHTTPConfig`). Environment variables are handled by the
-automatic env override layer: use `WithEnvConfig()` for raw unprefixed variables
-such as `PORT`, or `WithEnvPrefix("MYAPP_")` for namespaced variables such as
-`MYAPP_PORT`.
+and HTTP endpoints (`WithHTTPConfig`). `WithHTTPConfig` accepts separate loader
+and saver requests, so a config can be load-only, save-only, or both; a missing
+side is a no-op and successful HTTP operations must return `200 OK`.
+Environment variables are handled by the automatic env override layer: use
+`WithEnvConfig()` for raw unprefixed variables such as `PORT`, or
+`WithEnvPrefix("MYAPP_")` for namespaced variables such as `MYAPP_PORT`.
 Plug in your own implementation with `WithConfigHandler`:
 
 ```go
@@ -934,9 +991,6 @@ err = cfggo.Init(config, cfggo.WithFileConfigParamName("config"))
 // Load configuration from HTTP endpoints.
 err = cfggo.Init(config, cfggo.WithHTTPConfig(httpLoader, httpSaver))
 
-// Read automatic environment overrides from a prefixed namespace.
-err = cfggo.Init(config, cfggo.WithEnvPrefix("MYAPP_"))
-
 // Read raw, unprefixed environment variables such as PORT.
 err = cfggo.Init(config, cfggo.WithEnvConfig())
 
@@ -966,6 +1020,9 @@ err = cfggo.Init(config, cfggo.WithStandardFlags())
 // Ignore (instead of exiting on) command-line flags cfggo doesn't define.
 err = cfggo.Init(config, cfggo.WithIgnoreUnknownVars())
 
+// Disable cfggo's automatic command-line flag registration and parsing.
+err = cfggo.Init(config, cfggo.WithoutFlags())
+
 // Add a validator during initialization.
 err = cfggo.Init(config, cfggo.WithValidation("server_port", portValidator))
 
@@ -991,7 +1048,8 @@ unknown key, or a value that fails a registered validator causes `Init` to retur
 an error rather than silently starting with partial/default values. Use
 `WithLenientLoad()` to opt into best-effort loading (errors become warnings).
 Unrecognized configuration keys are logged as warnings by default and become
-errors under `WithStrictKeys()`.
+errors under `WithStrictKeys()`. Unknown keys and unknown flags include
+close-match suggestions when cfggo can make a confident match.
 
 > **Note:** Options can be combined in a single `Init` call, e.g.
 > `cfggo.Init(config, cfggo.WithName("api"), cfggo.WithFileConfig("config.json"), cfggo.WithAutoSave(ctx))`.
@@ -1008,6 +1066,7 @@ future major version. Prefer the replacements:
 | `CleanupSignalHandler()` (now a no-op) | `WithAutoSave(ctx)` or call `Save`/`SaveIfChanged` from your own shutdown path |
 | `convert.ConvertValue` / `cfggo.ConvertValue` | `config.Set(key, value)` |
 | `errwrapper` package | `cfgerror` package |
+| `WithSkipEnvironment()` | `WithoutEnv()` |
 
 ### Removed
 

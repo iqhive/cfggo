@@ -1,6 +1,7 @@
 .*
 !.github/
 !.github/**
+!.golangci.yml
 *.json
 !testdata/*.json
 benchmarks/comparison/comparison.test

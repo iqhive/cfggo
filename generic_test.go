@@ -137,7 +137,7 @@ func NewMutatedTestConfig() *TestConfig {
 	config.Float32Slice = DefaultValue([]float32{2.0})
 	config.StringMap = DefaultValue(map[string]string{"mutated_key": "mutated_value"})
 	config.InterfaceMap = DefaultValue(map[string]interface{}{"mutated_key": "mutated_value"})
-	config.DurationField = DefaultValue(time.Duration(1 * time.Hour))
+	config.DurationField = DefaultValue(1 * time.Hour)
 	config.TimeField = DefaultValue(timeNow.Add(24 * time.Hour))
 
 	return config
@@ -153,7 +153,7 @@ func TestDefaultValue(t *testing.T) {
 		{true, true},
 		{[]string{"a", "b"}, []string{"a", "b"}},
 		{map[string]string{"key": "value"}, map[string]string{"key": "value"}},
-		{time.Duration(5 * time.Second), time.Duration(5 * time.Second)},
+		{5 * time.Second, 5 * time.Second},
 		{timeNow.Format(time.RFC3339), timeNow.Format(time.RFC3339)},
 	}
 

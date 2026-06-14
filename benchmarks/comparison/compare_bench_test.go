@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kelseyhightower/envconfig"
 	kjson "github.com/knadh/koanf/parsers/json"
 	"github.com/knadh/koanf/providers/rawbytes"
 	"github.com/knadh/koanf/v2"
-	"github.com/kelseyhightower/envconfig"
 	"github.com/spf13/viper"
 
 	"github.com/iqhive/cfggo"

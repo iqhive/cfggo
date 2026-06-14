@@ -3,6 +3,7 @@ package cfggo
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -221,11 +222,18 @@ func TestInit(t *testing.T) {
 }
 
 func TestSaveAndLoadConfig(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "test.json")
+	if err := os.WriteFile(filename, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
 	config := NewTestConfig()
 	defer RestoreFlagValues()
 
 	// Use WithAutoSave to enable automatic saving for this test
-	_ = config.Init(config, WithFileConfig("testdata/test.json"), WithAutoSave(context.Background()))
+	if err := config.Init(config, WithFileConfig(filename), WithAutoSave(context.Background())); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
 
 	// Set a value to be saved
 	config.Set("string_field", "test_value")
@@ -239,7 +247,9 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	// Create a new config instance to load the saved data
 	newConfig := NewTestConfig()
 	defer RestoreFlagValues()
-	_ = newConfig.Init(newConfig, WithFileConfig("testdata/test.json"))
+	if err := newConfig.Init(newConfig, WithFileConfig(filename)); err != nil {
+		t.Fatalf("init new config: %v", err)
+	}
 
 	// Verify the loaded value
 	if newConfig.StringField() != "test_value" {

@@ -2,4 +2,5 @@
 !.github/
 !.github/**
 *.json
+!testdata/*.json
 benchmarks/comparison/comparison.test

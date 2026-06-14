@@ -17,14 +17,14 @@ func NewLoader() *Loader {
 // LoadEnvironmentVariables loads environment variables for the given keys
 func (l *Loader) LoadEnvironmentVariables(keys []string) map[string]string {
 	envVars := make(map[string]string)
-	
+
 	for _, key := range keys {
 		envVar := l.KeyToEnvVar(key)
 		if value, exists := os.LookupEnv(envVar); exists {
 			envVars[key] = value
 		}
 	}
-	
+
 	return envVars
 }
 
@@ -42,20 +42,20 @@ func (l *Loader) EnvVarToKey(envVar string) string {
 func (l *Loader) GetPrefixedEnvironmentVariables(prefix string) map[string]string {
 	envVars := make(map[string]string)
 	upperPrefix := strings.ToUpper(prefix)
-	
+
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
-		
+
 		key, value := parts[0], parts[1]
 		if strings.HasPrefix(key, upperPrefix) {
 			configKey := l.EnvVarToKey(strings.TrimPrefix(key, upperPrefix))
 			envVars[configKey] = value
 		}
 	}
-	
+
 	return envVars
 }
 

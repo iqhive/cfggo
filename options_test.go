@@ -3,6 +3,7 @@ package cfggo
 import (
 	"flag"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/iqhive/cfggo/sources"
@@ -128,10 +129,8 @@ func TestWithFileConfig(t *testing.T) {
 		expectFilename string
 	}{
 		{
-			name:           "existing file",
-			filename:       "testdata/test.json",
-			createFile:     true,
-			expectFilename: "testdata/test.json",
+			name:       "existing file",
+			createFile: true,
 		},
 		{
 			name:      "non-existent file",
@@ -142,9 +141,16 @@ func TestWithFileConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			filename := tt.filename
+			expectFilename := tt.expectFilename
+			if tt.createFile {
+				filename = filepath.Join(t.TempDir(), "test.json")
+				expectFilename = filename
+			}
+
 			// Create test file if needed
 			if tt.createFile {
-				f, err := os.Create(tt.filename)
+				f, err := os.Create(filename)
 				if err != nil {
 					t.Fatalf("Failed to create test file: %v", err)
 				}
@@ -153,7 +159,7 @@ func TestWithFileConfig(t *testing.T) {
 			}
 
 			s := &Structure{}
-			opt := WithFileConfig(tt.filename)
+			opt := WithFileConfig(filename)
 			err := opt(s)
 
 			if tt.expectErr {
@@ -176,8 +182,8 @@ func TestWithFileConfig(t *testing.T) {
 				return
 			}
 
-			if handler.Filename != tt.expectFilename {
-				t.Errorf("filename = %v, want %v", handler.Filename, tt.expectFilename)
+			if handler.Filename != expectFilename {
+				t.Errorf("filename = %v, want %v", handler.Filename, expectFilename)
 			}
 		})
 	}
@@ -193,11 +199,9 @@ func TestWithDefaultFileConfig(t *testing.T) {
 		expectFilename string
 	}{
 		{
-			name:           "existing file",
-			filename:       "testdata/test.json",
-			createFile:     true,
-			expectNoop:     false,
-			expectFilename: "testdata/test.json",
+			name:       "existing file",
+			createFile: true,
+			expectNoop: false,
 		},
 		{
 			name:       "non-existent file",
@@ -209,9 +213,16 @@ func TestWithDefaultFileConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			filename := tt.filename
+			expectFilename := tt.expectFilename
+			if tt.createFile {
+				filename = filepath.Join(t.TempDir(), "test.json")
+				expectFilename = filename
+			}
+
 			// Create test file if needed
 			if tt.createFile {
-				f, err := os.Create(tt.filename)
+				f, err := os.Create(filename)
 				if err != nil {
 					t.Fatalf("Failed to create test file: %v", err)
 				}
@@ -220,7 +231,7 @@ func TestWithDefaultFileConfig(t *testing.T) {
 			}
 
 			s := &Structure{}
-			opt := WithDefaultFileConfig(tt.filename)
+			opt := WithDefaultFileConfig(filename)
 			err := opt(s)
 
 			if err != nil {
@@ -241,8 +252,8 @@ func TestWithDefaultFileConfig(t *testing.T) {
 				return
 			}
 
-			if handler.Filename != tt.expectFilename {
-				t.Errorf("filename = %v, want %v", handler.Filename, tt.expectFilename)
+			if handler.Filename != expectFilename {
+				t.Errorf("filename = %v, want %v", handler.Filename, expectFilename)
 			}
 		})
 	}

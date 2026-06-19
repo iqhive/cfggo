@@ -2,6 +2,8 @@
 !.github/
 !.github/**
 !.golangci.yml
+coverage.out
 *.json
 !testdata/*.json
+!examples/**/*.json
 benchmarks/comparison/comparison.test

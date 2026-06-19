@@ -1115,6 +1115,14 @@ Runnable examples live in the [`examples/`](examples) directory:
 - [`examples/basic`](examples/basic) — minimal setup with file, env, and flag loading.
 - [`examples/advanced`](examples/advanced) — multiple instances with custom loggers and error wrappers.
 - [`examples/validation`](examples/validation) — built-in and custom validators.
+- [`examples/debugging`](examples/debugging) — startup checks, failure modes, provenance, and redaction.
+
+![cfggo advanced example](advanced.gif)
+
+![cfggo validation example](validation.gif)
+
+![cfggo debugging example](debugging.gif)
+
 
 ## FAQ
 

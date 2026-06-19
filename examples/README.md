@@ -7,6 +7,13 @@ Each example can be run from its own subdirectory with `go run main.go`.
 
 ## Examples
 
+The VHS tape tests for GIF generation are opt-in and do not run during normal
+`go test ./...`. When updating GIFs, run:
+
+```sh
+go test -tags vhs -run 'TestVHSTape|TestEveryRootTape' ./...
+```
+
 ### `demo/` - Hot reload GIF demo
 
 Demonstrates:

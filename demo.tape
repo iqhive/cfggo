@@ -24,7 +24,9 @@ Sleep 4s
 Type "clear" Enter
 Type "# Start the app with config.json" Sleep 500ms Enter
 Sleep 500ms
-Type "bash run.sh &" Enter
+Type "go build -o .demo-app ." Sleep 500ms Enter
+Sleep 1s
+Type "./.demo-app &" Enter
 Sleep 2.5s
 
 Type "# Edit config.json while the process keeps running" Sleep 500ms Enter
@@ -43,4 +45,5 @@ Sleep 3s
 
 Hide
 Type "kill %1" Enter
+Type "rm -f .demo-app" Enter
 Type "cp config.initial.json config.json" Enter

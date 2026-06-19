@@ -41,7 +41,7 @@ port := config.ServerPort() // returns int, checked at compile time
 > stable and follows [Semantic Versioning](https://semver.org) — `v1.x` will not
 > make breaking changes.
 
-![cfggo hot reload in action](‹demo.gif›)
+![cfggo hot reload in action](demo.gif)
 
 > *Editing `config.json` while the app runs — the typed accessors return the new
 > values instantly, no restart.*

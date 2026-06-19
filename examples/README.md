@@ -7,6 +7,19 @@ Each example can be run from its own subdirectory with `go run main.go`.
 
 ## Examples
 
+### `demo/` - Hot reload GIF demo
+
+Demonstrates:
+- Loading config from a JSON file.
+- `OnChange` callbacks when config values change.
+- Typed accessors returning updated values after reload.
+
+```sh
+cd demo && cp config.initial.json config.json && go run main.go
+```
+
+---
+
 ### `basic/` - Getting started
 
 Demonstrates:
@@ -58,6 +71,9 @@ Demonstrates the full validator API:
 ```sh
 cd validation && go run main.go
 ```
+
+Sample `config.json` is included with valid values so the example runs from a
+clean checkout.
 
 ---
 

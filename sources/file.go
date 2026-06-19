@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // HandlerFile implements ConfigHandler for file-based configuration
@@ -42,9 +43,50 @@ func (h *HandlerFile) SaveConfig(data json.RawMessage) error {
 	if h.Filename == "" {
 		return fmt.Errorf("filename is empty")
 	}
-	err := os.WriteFile(h.Filename, data, 0644)
+
+	mode := os.FileMode(0644)
+	if info, err := os.Stat(h.Filename); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	dir := filepath.Dir(h.Filename)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(h.Filename)+".tmp-*")
 	if err != nil {
 		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, h.Filename); err != nil {
+		return err
+	}
+	cleanup = false
+
+	if dirFile, err := os.Open(dir); err == nil {
+		_ = dirFile.Sync()
+		_ = dirFile.Close()
 	}
 	return nil
 }

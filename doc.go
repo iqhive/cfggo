@@ -59,6 +59,11 @@
 //     (e.g. "db.host" becomes "DB_HOST").
 //  5. Command-line flags: registered automatically; name equals the config key.
 //
+// Untagged fields use their Go field name as the config key by default. Set
+// [DefaultSnakeCaseFieldNames] or pass [WithSnakeCaseFieldNames] to make
+// untagged fields use snake_case instead (e.g. ServerPort becomes
+// "server_port"). Explicit cfggo/cfg/config/json tags always take precedence.
+//
 // # Hot reloading
 //
 //	if err := cfg.ReloadConfig(); err != nil {

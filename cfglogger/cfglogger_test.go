@@ -33,7 +33,37 @@ func TestFormatMessageMarksMalformedAttrs(t *testing.T) {
 
 func TestPlainLoggerPassesFormattedMessageWithoutArgs(t *testing.T) {
 	var logs bytes.Buffer
-	logger := Plain(NewPrintfLogger(nil, nil, nil, func(format string, args ...any) {
+	logger := Plain(NewPrintfLogger(
+		func(format string, args ...any) {
+			fmt.Fprintf(&logs, "debug:"+format+"\n", args...)
+		},
+		func(format string, args ...any) {
+			fmt.Fprintf(&logs, "info:"+format+"\n", args...)
+		},
+		func(format string, args ...any) {
+			fmt.Fprintf(&logs, "warn:"+format+"\n", args...)
+		},
+		func(format string, args ...any) {
+			fmt.Fprintf(&logs, format, args...)
+		},
+	))
+
+	logger.Debug("starting", "port", 8080)
+	logger.Info("ready")
+	logger.Warn("slow", "duration", "2s")
+
+	for _, want := range []string{
+		"debug:starting port=8080",
+		"info:ready",
+		"warn:slow duration=2s",
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("plain logger output = %q, want substring %q", logs.String(), want)
+		}
+	}
+	logs.Reset()
+
+	logger = Plain(NewPrintfLogger(nil, nil, nil, func(format string, args ...any) {
 		fmt.Fprintf(&logs, format, args...)
 	}))
 
@@ -112,6 +142,25 @@ func TestDefaultLoggerLevelAndWith(t *testing.T) {
 
 	got := logs.String()
 	for _, want := range []string{"visible", "answer=42", "config=api", "ready"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("logs = %q, want substring %q", got, want)
+		}
+	}
+}
+
+func TestDefaultLoggerConstructorAndErrorLevels(t *testing.T) {
+	logger := NewDefaultLogger()
+	if logger == nil {
+		t.Fatal("NewDefaultLogger() returned nil")
+	}
+
+	var logs bytes.Buffer
+	buffered := NewDefaultLoggerWithWriter(&logs)
+	buffered.Warn("careful", "key", "value")
+	buffered.Error("failed", "err", errors.New("boom"))
+
+	got := logs.String()
+	for _, want := range []string{"level=WARN", "careful", "key=value", "level=ERROR", "failed", "err=boom"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("logs = %q, want substring %q", got, want)
 		}

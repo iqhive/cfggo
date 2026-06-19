@@ -18,12 +18,13 @@ func (c *Structure) Set(key string, value interface{}) error {
 		c.configMutex.Unlock()
 		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q%s", key, c.didYouMeanSuffix(key))
 	}
+	old = cloneMutableInterface(old)
 	err := c.set(key, value)
 	var newVal interface{}
 	if err == nil {
 		c.markChangedLocked()
 		c.recordSourceLocked(key, SourceSet)
-		newVal = c.configData[key]
+		newVal = cloneMutableInterface(c.configData[key])
 	}
 	c.configMutex.Unlock()
 
@@ -66,7 +67,7 @@ func (c *Structure) set(key string, value interface{}) error {
 			// existing is an untyped nil, eg a func() interface{} field with no default
 			// There is no concrete type to convert to, so store the incoming value as-is
 			// rather than letting reflect panic on a nil Type
-			c.configData[key] = value
+			c.configData[key] = cloneMutableInterface(value)
 			return nil
 		}
 
@@ -75,11 +76,11 @@ func (c *Structure) set(key string, value interface{}) error {
 			return err
 		}
 
-		c.configData[key] = convertedValue
+		c.configData[key] = cloneMutableInterface(convertedValue)
 		return nil
 	}
 
-	c.configData[key] = value
+	c.configData[key] = cloneMutableInterface(value)
 	return nil
 }
 
@@ -90,7 +91,7 @@ func (c *Structure) Get(key string) (interface{}, bool) {
 	c.configMutex.RLock()
 	defer c.configMutex.RUnlock()
 	value, exists := c.configData[key]
-	return value, exists
+	return cloneMutableInterface(value), exists
 }
 
 // Value returns the current value for key typed as T, and whether a usable

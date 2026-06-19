@@ -1,7 +1,10 @@
 package convert_test
 
 import (
+	"fmt"
+	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +29,7 @@ var (
 	typeAnyMap   = reflect.TypeOf(map[string]interface{}{})
 	typeStrMap   = reflect.TypeOf(map[string]string{})
 	typeTextType = reflect.TypeOf(textType{})
+	typeTextPtr  = reflect.TypeOf((*textType)(nil))
 )
 
 // textType implements encoding.TextUnmarshaler via a pointer receiver.
@@ -38,6 +42,24 @@ func (t *textType) UnmarshalText(b []byte) error {
 	}
 	t.V = v
 	return nil
+}
+
+type valueTextType string
+
+func (valueTextType) UnmarshalText([]byte) error {
+	return nil
+}
+
+type wrappingErrorWrapper struct {
+	called bool
+}
+
+func (w *wrappingErrorWrapper) WrapError(err error, code int, msg string, args ...interface{}) error {
+	w.called = true
+	if msg == "" {
+		return fmt.Errorf("wrapped[%d]: %w", code, err)
+	}
+	return fmt.Errorf("wrapped[%d]: "+msg, append([]interface{}{code}, args...)...)
 }
 
 func TestConvertString(t *testing.T) {
@@ -99,6 +121,8 @@ func TestConvertString(t *testing.T) {
 		{"map[int]int bad format", "1:10,invalid", typeIntMap, nil, true},
 		// TextUnmarshaler (pointer receiver)
 		{"TextUnmarshaler", "42", typeTextType, textType{V: 42}, false},
+		{"pointer TextUnmarshaler", "42", typeTextPtr, &textType{V: 42}, false},
+		{"value TextUnmarshaler", "ignored", reflect.TypeOf(valueTextType("")), valueTextType("ignored"), false},
 	}
 
 	for _, tc := range cases {
@@ -111,6 +135,101 @@ func TestConvertString(t *testing.T) {
 				t.Errorf("got %v (%T), want %v (%T)", got, got, tc.want, tc.want)
 			}
 		})
+	}
+}
+
+func TestConvertValueEdgeCases(t *testing.T) {
+	type jsonTarget struct {
+		N int `json:"n"`
+	}
+
+	cases := []struct {
+		name    string
+		value   interface{}
+		target  reflect.Type
+		want    interface{}
+		wantErr string
+	}{
+		{
+			name:   "nil target returns original value",
+			value:  map[string]int{"answer": 42},
+			target: nil,
+			want:   map[string]int{"answer": 42},
+		},
+		{
+			name:   "empty interface target accepts any value",
+			value:  []int{1, 2, 3},
+			target: reflect.TypeOf((*interface{})(nil)).Elem(),
+			want:   []int{1, 2, 3},
+		},
+		{
+			name:   "json fallback converts map to struct",
+			value:  map[string]interface{}{"n": float64(7)},
+			target: reflect.TypeOf(jsonTarget{}),
+			want:   jsonTarget{N: 7},
+		},
+		{
+			name:    "json marshal failure is reported",
+			value:   func() {},
+			target:  typeString,
+			wantErr: "cannot marshal",
+		},
+		{
+			name:   "float to uint64 exercises wide unsigned bounds",
+			value:  float64(42),
+			target: reflect.TypeOf(uint64(0)),
+			want:   uint64(42),
+		},
+		{
+			name:    "infinite float to uint is rejected",
+			value:   math.Inf(1),
+			target:  typeUint,
+			wantErr: "lossy numeric conversion",
+		},
+		{
+			name:    "map key conversion error is returned",
+			value:   map[interface{}]interface{}{"bad": "1"},
+			target:  typeIntMap,
+			wantErr: "cannot parse int",
+		},
+		{
+			name:    "map value conversion error is returned",
+			value:   map[string]interface{}{"1": "bad"},
+			target:  typeIntMap,
+			wantErr: "cannot parse int",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := convert.ConvertValue(tc.value, tc.target, nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ConvertValue() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ConvertValue() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("ConvertValue() = %#v (%T), want %#v (%T)", got, got, tc.want, tc.want)
+			}
+		})
+	}
+}
+
+func TestConvertStringUsesErrorWrapper(t *testing.T) {
+	wrapper := &wrappingErrorWrapper{}
+	_, err := convert.ConvertString("not-an-int", typeInt, wrapper)
+	if err == nil {
+		t.Fatal("ConvertString() expected wrapped error, got nil")
+	}
+	if !wrapper.called {
+		t.Fatal("ConvertString() did not call ErrorWrapper")
+	}
+	if got := err.Error(); !strings.Contains(got, "wrapped[400]") || !strings.Contains(got, "cannot parse int") {
+		t.Fatalf("wrapped error = %q, want code and parse message", got)
 	}
 }
 

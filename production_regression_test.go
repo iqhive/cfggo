@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/cfglogger"
@@ -129,6 +131,73 @@ func TestMutableAccessorsReturnCopies(t *testing.T) {
 	}
 }
 
+func TestSetAndGetCloneMutableValues(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &mutableAccessorRegressionConfig{
+		Labels: DefaultValue(map[string]string{}),
+		Names:  DefaultValue([]string{}),
+		State:  DefaultValue(&mutableState{}),
+	}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	labels := map[string]string{"env": "prod"}
+	if err := cfg.Set("labels", labels); err != nil {
+		t.Fatalf("Set labels: %v", err)
+	}
+	labels["env"] = "dev"
+	if got := cfg.Labels()["env"]; got != "prod" {
+		t.Fatalf("Labels()[env] = %q after mutating Set input, want prod", got)
+	}
+
+	gotRaw, ok := cfg.Get("labels")
+	if !ok {
+		t.Fatal("Get(labels) returned ok=false")
+	}
+	gotLabels := gotRaw.(map[string]string)
+	gotLabels["env"] = "qa"
+	if got := cfg.Labels()["env"]; got != "prod" {
+		t.Fatalf("Labels()[env] = %q after mutating Get result, want prod", got)
+	}
+}
+
+func TestReloadChangeValuesAreCopies(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	handler := &memHandler{data: json.RawMessage(`{"labels":{"env":"prod"}}`)}
+	cfg := &mutableAccessorRegressionConfig{
+		Labels: DefaultValue(map[string]string{}),
+		Names:  DefaultValue([]string{}),
+		State:  DefaultValue(&mutableState{}),
+	}
+	if err := cfg.Init(cfg, WithConfigHandler(handler), WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	cancel := cfg.OnChange(func(changes []Change) {
+		for _, ch := range changes {
+			if ch.Key == "labels" {
+				ch.New.(map[string]string)["env"] = "mutated"
+			}
+		}
+	})
+	defer cancel()
+
+	handler.data = json.RawMessage(`{"labels":{"env":"stage"}}`)
+	if err := cfg.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if got := cfg.Labels()["env"]; got != "stage" {
+		t.Fatalf("Labels()[env] = %q after mutating callback Change.New, want stage", got)
+	}
+}
+
 func TestDefaultValueClonesMutableValuesBeforeInit(t *testing.T) {
 	labels := map[string]string{"env": "prod"}
 	names := []string{"api"}
@@ -224,6 +293,12 @@ type validatedReloadRegressionConfig struct {
 	Port func() int `cfggo:"port" default:"8080"`
 }
 
+type validatorDeadlockRegressionConfig struct {
+	Structure
+	Port func() int    `cfggo:"port" default:"8080"`
+	Host func() string `cfggo:"host" default:"localhost"`
+}
+
 func TestReloadValidationFailureKeepsPreviousValues(t *testing.T) {
 	oldArgs := os.Args
 	t.Cleanup(func() { os.Args = oldArgs })
@@ -247,6 +322,64 @@ func TestReloadValidationFailureKeepsPreviousValues(t *testing.T) {
 	}
 	if src, _ := cfg.Source("port"); src != SourceFile {
 		t.Fatalf("after failed reload source = %s, want previous file source", src)
+	}
+}
+
+func TestFlagValidatorCanReadConfigWithoutDeadlock(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test", "--port=9090"}
+
+	cfg := &validatorDeadlockRegressionConfig{}
+	done := make(chan error, 1)
+	go func() {
+		done <- cfg.Init(cfg, WithValidation("port", func(interface{}) error {
+			_, _ = cfg.Get("host")
+			return nil
+		}))
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Init deadlocked while flag validator read config")
+	}
+	if got := cfg.Port(); got != 9090 {
+		t.Fatalf("Port() = %d, want flag value 9090", got)
+	}
+}
+
+func TestValidateAllowsMutatingValidatorWithoutDeadlock(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &validatorDeadlockRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cfg.RegisterValidator("port", func(interface{}) error {
+		return cfg.Set("host", "validator-updated")
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cfg.Validate()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Validate deadlocked while validator mutated config")
+	}
+	if got := cfg.Host(); got != "validator-updated" {
+		t.Fatalf("Host() = %q, want validator-updated", got)
 	}
 }
 
@@ -336,6 +469,23 @@ func TestRepeatedInitReturnsErrAlreadyInitialized(t *testing.T) {
 	err := cfg.Init(cfg, WithoutFlags())
 	if !errors.Is(err, ErrAlreadyInitialized) {
 		t.Fatalf("second Init error = %v, want ErrAlreadyInitialized", err)
+	}
+}
+
+func TestFailedInitCanBeRetried(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &lazyInitRegressionConfig{}
+	if err := cfg.Init(cfg, WithFileConfig("missing-required.json"), WithoutFlags()); err == nil {
+		t.Fatal("first Init: expected missing file error, got nil")
+	}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("retry Init: %v", err)
+	}
+	if got := cfg.Port(); got != 8080 {
+		t.Fatalf("Port() = %d, want default 8080 after retry", got)
 	}
 }
 
@@ -434,6 +584,59 @@ func TestInitRejectsInvalidDefaultTag(t *testing.T) {
 	}
 }
 
+type nonAccessorStrictRegressionConfig struct {
+	Structure
+	Port int `json:"port"`
+}
+
+func TestStrictKeysRejectsNonAccessorField(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &nonAccessorStrictRegressionConfig{}
+	err := cfg.Init(cfg,
+		WithConfigHandler(&memHandler{data: json.RawMessage(`{"port":8080}`)}),
+		WithStrictKeys(),
+		WithoutFlags(),
+	)
+	if !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("Init error = %v, want ErrUnknownKey", err)
+	}
+}
+
+type pointerTextDefaultRegressionValue struct {
+	Value int
+}
+
+func (v *pointerTextDefaultRegressionValue) UnmarshalText(b []byte) error {
+	n, err := strconv.Atoi(string(b))
+	if err != nil {
+		return err
+	}
+	v.Value = n
+	return nil
+}
+
+type pointerTextDefaultRegressionConfig struct {
+	Structure
+	Custom func() *pointerTextDefaultRegressionValue `cfggo:"custom" default:"42"`
+}
+
+func TestInitAppliesPointerTextUnmarshalerDefault(t *testing.T) {
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"test"}
+
+	cfg := &pointerTextDefaultRegressionConfig{}
+	if err := cfg.Init(cfg, WithoutFlags()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := cfg.Custom(); got == nil || got.Value != 42 {
+		t.Fatalf("Custom() = %#v, want Value 42", got)
+	}
+}
+
 func TestInitRejectsNilParent(t *testing.T) {
 	var cfg Structure
 	if err := cfg.Init(nil); err == nil {
@@ -443,6 +646,13 @@ func TestInitRejectsNilParent(t *testing.T) {
 	var typedNil *lazyInitRegressionConfig
 	if err := cfg.Init(typedNil); err == nil {
 		t.Fatal("Init((*Config)(nil)): expected error, got nil")
+	}
+}
+
+func TestPackageInitRejectsTypedNilParent(t *testing.T) {
+	var typedNil *lazyInitRegressionConfig
+	if err := Init(typedNil); err == nil {
+		t.Fatal("cfggo.Init((*Config)(nil)): expected error, got nil")
 	}
 }
 

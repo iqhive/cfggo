@@ -119,7 +119,7 @@ func (c *Structure) DiagnoseData() Diagnostics {
 		if c.plan != nil {
 			if leaf, ok := c.plan.byKey[key]; ok {
 				info = leaf.info
-				recognized = true
+				recognized = leaf.info.IsAccessor
 			}
 		}
 		kd := KeyDiagnostic{

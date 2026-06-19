@@ -169,8 +169,8 @@ func (c *Structure) changeSet(old map[string]interface{}) []Change {
 		if oldVal, ok := old[k]; !ok || !reflect.DeepEqual(oldVal, newVal) {
 			changes = append(changes, Change{
 				Key:    k,
-				Old:    old[k],
-				New:    newVal,
+				Old:    cloneMutableInterface(old[k]),
+				New:    cloneMutableInterface(newVal),
 				Source: c.provenance[k],
 			})
 		}
@@ -179,7 +179,7 @@ func (c *Structure) changeSet(old map[string]interface{}) []Change {
 		if _, ok := c.configData[k]; !ok {
 			changes = append(changes, Change{
 				Key:    k,
-				Old:    oldVal,
+				Old:    cloneMutableInterface(oldVal),
 				New:    nil,
 				Source: SourceUnknown,
 			})

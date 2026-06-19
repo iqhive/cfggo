@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/iqhive/cfggo/internal/flags"
-	"github.com/iqhive/cfggo/validcfg"
 )
 
 // NewFlag creates a new configuration item, using the type of the defaultValue
@@ -71,61 +70,19 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 // stores the value.
 func (c *Structure) createSetter(key string) func(interface{}) error {
 	return func(value interface{}) error {
+		if err := c.validateValueForKey(key, value, SourceFlag); err != nil {
+			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s failed validation", key, SourceFlag)
+		}
+
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
-		old, hadOld := c.configData[key]
-		oldSource, hadSource := c.provenance[key]
-		var oldTrail []Source
-		if trail, ok := c.provenanceTrail[key]; ok {
-			oldTrail = append([]Source(nil), trail...)
-		}
 		if err := c.set(key, value); err != nil {
 			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, SourceFlag)
 		}
 		c.markChangedLocked()
 		c.recordSourceLocked(key, SourceFlag)
-		if err := c.validateKeyLocked(key); err != nil {
-			if hadOld {
-				c.configData[key] = old
-			} else {
-				delete(c.configData, key)
-			}
-			if hadSource {
-				c.provenance[key] = oldSource
-			} else {
-				delete(c.provenance, key)
-			}
-			if oldTrail != nil {
-				if c.provenanceTrail == nil {
-					c.provenanceTrail = make(map[string][]Source)
-				}
-				c.provenanceTrail[key] = oldTrail
-			} else {
-				delete(c.provenanceTrail, key)
-			}
-			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s failed validation", key, SourceFlag)
-		}
 		return nil
 	}
-}
-
-// validateKeyLocked runs a single key's validator while configMutex is already
-// held by the caller.
-func (c *Structure) validateKeyLocked(key string) error {
-	c.validationMutex.RLock()
-	validator, exists := c.validationMap[key]
-	c.validationMutex.RUnlock()
-	if !exists {
-		return nil
-	}
-	value, exists := c.configData[key]
-	if !exists {
-		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found%s", key, c.didYouMeanSuffix(key))
-	}
-	if err := validator(value); err != nil {
-		return validcfg.ValidationError{Key: key, Err: err}.WithProvenance(value, c.provenance[key].String())
-	}
-	return nil
 }
 
 func (c *Structure) parseFlags() error {

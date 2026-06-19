@@ -64,7 +64,7 @@ func (c *Structure) unrecognizedKeys() []string {
 	var out []string
 	for _, k := range keys {
 		if c.plan != nil {
-			if _, ok := c.plan.byKey[k]; ok {
+			if leaf, ok := c.plan.byKey[k]; ok && leaf.info.IsAccessor {
 				continue
 			}
 		}

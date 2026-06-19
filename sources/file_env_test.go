@@ -44,6 +44,20 @@ func TestHandlerFileLoadSaveAndEmptyFilename(t *testing.T) {
 	if _, err := os.Stat(filename); err != nil {
 		t.Fatalf("expected saved file to exist: %v", err)
 	}
+
+	if err := os.Chmod(filename, 0o600); err != nil {
+		t.Fatalf("chmod saved file: %v", err)
+	}
+	if err := handler.SaveConfig(json.RawMessage(`{"port":9090}`)); err != nil {
+		t.Fatalf("SaveConfig() preserving mode error = %v", err)
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("stat saved file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("saved file mode = %v, want 0600", got)
+	}
 }
 
 func TestHandlerEnvLoadConfigParsesPrefixedVariables(t *testing.T) {

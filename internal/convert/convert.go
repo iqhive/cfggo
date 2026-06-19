@@ -73,7 +73,7 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		}
 
 	case reflect.String:
-		return s, nil
+		return reflect.ValueOf(s).Convert(target).Interface(), nil
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		bitSize := int(target.Size() * 8)
@@ -109,6 +109,16 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		return convertStringToMap(s, target, ew)
 
 	default:
+		// Pointer target that itself implements TextUnmarshaler (e.g. func() *T
+		// where *T has UnmarshalText). Allocate a non-nil T before invoking the
+		// method; calling it on reflect.Zero(target) would use a nil receiver.
+		if target.Kind() == reflect.Pointer && target.Implements(textUnmarshalerType) {
+			ptr := reflect.New(target.Elem())
+			if err := ptr.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
+				return nil, wrapErr(ew, err, 400, "UnmarshalText(%v) failed: %v", target, err)
+			}
+			return ptr.Interface(), nil
+		}
 		// Prefer pointer-receiver TextUnmarshaler (the common Go convention).
 		ptrType := reflect.PointerTo(target)
 		if ptrType.Implements(textUnmarshalerType) {

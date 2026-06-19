@@ -228,6 +228,18 @@ func WithIgnoreUnknownVars() Option {
 	}
 }
 
+// WithSnakeCaseFieldNames controls how this configuration names untagged
+// struct fields. When enabled, a field such as ServerPort is named
+// "server_port"; when disabled, cfggo preserves the Go field name ("ServerPort").
+// Explicit cfggo/cfg/config/json tags always take precedence.
+func WithSnakeCaseFieldNames(enabled bool) Option {
+	return func(c *Structure) error {
+		c.snakeCaseFieldNames = enabled
+		c.snakeCaseFieldNamesSet = true
+		return nil
+	}
+}
+
 // WithoutFlags disables command-line flag support entirely. cfggo will not
 // create a private flag.FlagSet or register a flag.Value per configuration key,
 // and will not parse os.Args during Init. Use it for programs that configure

@@ -287,6 +287,20 @@ type MyConfig struct {
 }
 ```
 
+By default, the final Go-field-name fallback is used as-is for backwards
+compatibility. To make untagged fields use snake_case, set
+`cfggo.DefaultSnakeCaseFieldNames = true` before initialising configs, or opt in
+per config with `cfggo.WithSnakeCaseFieldNames(true)`:
+
+```go
+type MyConfig struct {
+    cfggo.Structure
+    ServerPort func() int // key: "server_port" when snake_case naming is enabled
+}
+
+cfggo.Init(config, cfggo.WithSnakeCaseFieldNames(true))
+```
+
 **Ignoring a field.** Tag a field with `-` to exclude it from configuration
 entirely (no key, env var, or flag is created):
 

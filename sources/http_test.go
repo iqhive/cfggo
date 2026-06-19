@@ -2,6 +2,7 @@ package sources
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -116,5 +117,50 @@ func TestHandlerHTTPStatusErrors(t *testing.T) {
 	dest := httptest.NewRequest(http.MethodPost, server.URL, bytes.NewReader(nil))
 	if err := NewHandlerHTTP(nil, dest, false).SaveConfig(json.RawMessage(`{}`)); err == nil {
 		t.Fatal("SaveConfig() with non-200 response: expected error, got nil")
+	}
+}
+
+func TestHandlerHTTPLoadReplaysRequestBody(t *testing.T) {
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll(load body) error = %v", err)
+		}
+		bodies = append(bodies, string(body))
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer server.Close()
+
+	source := httptest.NewRequest(http.MethodPost, server.URL, bytes.NewBufferString(`{"query":"cfg"}`))
+	handler := NewHandlerHTTP(source, nil, false)
+	for i := 0; i < 2; i++ {
+		if _, err := handler.LoadConfig(); err != nil {
+			t.Fatalf("LoadConfig(%d) error = %v", i, err)
+		}
+	}
+	if len(bodies) != 2 || bodies[0] != `{"query":"cfg"}` || bodies[1] != `{"query":"cfg"}` {
+		t.Fatalf("load bodies = %#v, want replayed body twice", bodies)
+	}
+}
+
+func TestHandlerHTTPPreservesRequestContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("server should not receive request after context cancellation")
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	source := httptest.NewRequest(http.MethodGet, server.URL, nil).WithContext(ctx)
+	if _, err := NewHandlerHTTP(source, nil, false).LoadConfig(); err == nil {
+		t.Fatal("LoadConfig() with canceled context: expected error, got nil")
+	}
+
+	dest := httptest.NewRequest(http.MethodPost, server.URL, nil).WithContext(ctx)
+	if err := NewHandlerHTTP(nil, dest, false).SaveConfig(json.RawMessage(`{}`)); err == nil {
+		t.Fatal("SaveConfig() with canceled context: expected error, got nil")
 	}
 }

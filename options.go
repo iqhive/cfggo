@@ -23,6 +23,17 @@ func withNoop() Option {
 	}
 }
 
+func withPrivateFlagSet(fs *flag.FlagSet) Option {
+	return func(c *Structure) error {
+		if fs == nil {
+			return c.WrapError(nil, ErrCodeInvalidArgument, "withPrivateFlagSet: flag set must not be nil")
+		}
+		c.flagSet = fs
+		c.externalFlagSet = false
+		return nil
+	}
+}
+
 // WithName sets the name of the configuration
 func WithName(name string) Option {
 	return func(c *Structure) error {
@@ -90,14 +101,14 @@ func WithFileConfigParamName(argName string) Option {
 		GlobalLogger().Debug("cfggo: no filename found for config argument", "arg", argName)
 		return func(c *Structure) error {
 			c.ensureFlagSet()
-			c.FlagSet.String(argName, "", "")
+			c.flagSet.String(argName, "", "")
 			return nil
 		}
 	}
 	wrap := WithFileConfig(filename)
 	return func(c *Structure) error {
 		c.ensureFlagSet()
-		c.FlagSet.String(argName, "", "")
+		c.flagSet.String(argName, "", "")
 		if err := wrap(c); err != nil {
 			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
 			return err
@@ -192,7 +203,7 @@ func WithFlagSet(fs *flag.FlagSet) Option {
 		if fs == nil {
 			return c.WrapError(nil, ErrCodeInvalidArgument, "WithFlagSet: flag set must not be nil")
 		}
-		c.FlagSet = fs
+		c.flagSet = fs
 		c.externalFlagSet = true
 		return nil
 	}

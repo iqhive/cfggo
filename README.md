@@ -51,7 +51,7 @@ port := config.ServerPort() // returns int, checked at compile time
 ## Why cfggo?
 
 The Go config space is crowded. cfggo's niche is the combination of **typed
-accessors that stay correct across a live reload**, from one small dependency:
+accessors that stay correct across a live reload**:
 
 | | **cfggo** | Viper | envconfig | koanf |
 |---|:---:|:---:|:---:|:---:|
@@ -61,14 +61,14 @@ accessors that stay correct across a live reload**, from one small dependency:
 | Built-in validators | ✅ | ❌ | ⚠️ `required` | ❌ |
 | Coexists with stdlib `flag` | ✅ | ⚠️ | ❌ | ⚠️ |
 | Value provenance (`Explain`/`Source`) | ✅ | ❌ | ❌ | ❌ |
-| Dependencies | Minimal | Many | None | Minimal |
+| External Dependencies | ✅ None | ❌ Many | ✅ None | ⚠️ Few |
 
 > *Comparison reflects each library as of June 2026 and is necessarily a
 > simplification; corrections and updates are welcome via PR.*
 
-**Pick cfggo** if you want strongly-typed config access that *stays typed across live reloads*, plus provenance and validation, from one small dependency.
-**Reach for Viper** if you need its large built-in format ecosystem (YAML/TOML/HCL/INI/etc.) out of the box and don't mind untyped lookups. *(cfggo reads JSON natively; other formats are a few lines via a custom `ConfigHandler` —
-see the [FAQ](#faq).)*
+**Pick cfggo** if you want strongly-typed config access that *stays typed across live reloads*, plus provenance and validation.
+
+**Reach for Viper** if you need its large built-in format ecosystem (YAML/TOML/HCL/INI/etc.) out of the box and don't mind untyped lookups. *(cfggo reads JSON natively; other formats are a few lines via a custom `ConfigHandler` — see the [FAQ](#faq).)*
 
 ---
 
@@ -979,9 +979,8 @@ err := cfggo.Init(config, cfggo.WithLogger(logger))
 ```
 
 `WithErrorWrapper` lets you customise how cfggo formats the errors it returns
-(for example, to attach your own error codes or context). New code should use
-the `cfgerror.Wrapper` type; the older `errwrapper` package remains as a
-backward-compatible alias.
+(for example, to attach your own error codes or context). Use the
+`cfgerror.Wrapper` type for custom wrappers.
 
 ### Configuration Options
 
@@ -1077,17 +1076,15 @@ future major version. Prefer the replacements:
 | Deprecated | Use instead |
 |---|---|
 | `InitE` / `InitSelfE` | `Init` / `InitSelf` now return the error directly |
-| `CleanupSignalHandler()` (now a no-op) | `WithAutoSave(ctx)` or call `Save`/`SaveIfChanged` from your own shutdown path |
 | `convert.ConvertValue` / `cfggo.ConvertValue` | `config.Set(key, value)` |
-| `errwrapper` package | `cfgerror` package |
 | `WithSkipEnvironment()` | `WithoutEnv()` |
 
 ### Removed
 
 The error-wrapper-with-logging path has been removed (it inverted control by
 logging on your behalf). Use `WithErrorWrapper` / `config.WrapError(...)` and log
-the returned error yourself. The exported `Logger` / `ErrorWrapper` package
-variables are replaced by the race-safe accessors `GlobalLogger()` /
+the returned error yourself. The exported logger/error-wrapper package variables
+are replaced by the race-safe accessors `GlobalLogger()` /
 `SetGlobalLogger()` and `GlobalErrorWrapper()` / `SetGlobalErrorWrapper()`. The
 unused `LogLevelFatal` level was removed.
 
@@ -1113,14 +1110,14 @@ on a shared lock.
 Runnable examples live in the [`examples/`](examples) directory:
 
 - [`examples/basic`](examples/basic) — minimal setup with file, env, and flag loading.
-- [`examples/advanced`](examples/advanced) — multiple instances with custom loggers and error wrappers.
-- [`examples/validation`](examples/validation) — built-in and custom validators.
-- [`examples/debugging`](examples/debugging) — startup checks, failure modes, provenance, and redaction.
 
+- [`examples/advanced`](examples/advanced) — multiple instances with custom loggers and error wrappers.
 ![cfggo advanced example](advanced.gif)
 
+- [`examples/validation`](examples/validation) — built-in and custom validators.
 ![cfggo validation example](validation.gif)
 
+- [`examples/debugging`](examples/debugging) — startup checks, failure modes, provenance, and redaction.
 ![cfggo debugging example](debugging.gif)
 
 

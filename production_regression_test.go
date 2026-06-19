@@ -12,9 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/cfglogger"
-	"github.com/iqhive/cfggo/errwrapper"
 )
 
 type mapLeafRegressionConfig struct {
@@ -742,25 +740,6 @@ func TestInitLoadErrorWithPrintfStyleLoggerAdapter(t *testing.T) {
 	}
 	if strings.Count(logLine, "failed to load configuration from file source") != 1 {
 		t.Fatalf("log line %q should include detailed load context exactly once", logLine)
-	}
-}
-
-func TestErrwrapperPackageAliasesCfgerror(t *testing.T) {
-	err := GlobalErrorWrapper()(errors.New("cause"), ErrCodeInvalidArgument, "wrapped")
-
-	var modern *cfgerror.Error
-	if !errors.As(err, &modern) {
-		t.Fatalf("errors.As(*cfgerror.Error) = false for %T: %v", err, err)
-	}
-	var legacy *errwrapper.Error
-	if !errors.As(err, &legacy) {
-		t.Fatalf("errors.As(*errwrapper.Error) = false for %T: %v", err, err)
-	}
-	if modern != legacy {
-		t.Fatalf("cfgerror and errwrapper aliases resolved to different errors: %p vs %p", modern, legacy)
-	}
-	if got, want := errwrapper.Code(err), cfgerror.Code(err); got != want {
-		t.Fatalf("errwrapper.Code = %d, cfgerror.Code = %d", got, want)
 	}
 }
 

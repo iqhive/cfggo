@@ -40,7 +40,7 @@ type Structure struct {
 	autoSave      bool
 	autoSaveCtx   context.Context
 
-	FlagSet *flag.FlagSet
+	flagSet *flag.FlagSet
 	// externalFlagSet is true when the caller supplied the FlagSet (e.g. via
 	// WithFlagSet / WithStandardFlags). In that mode cfggo registers its flags
 	// on the supplied set but does NOT parse it: the host owns the single
@@ -193,7 +193,7 @@ type initStateSnapshot struct {
 	defaultData       map[string]interface{}
 	autoSave          bool
 	autoSaveCtx       context.Context
-	FlagSet           *flag.FlagSet
+	flagSet           *flag.FlagSet
 	externalFlagSet   bool
 	ignoreUnknownVars bool
 	noFlags           bool
@@ -235,7 +235,7 @@ func (c *Structure) snapshotInitState() initStateSnapshot {
 		defaultData:       defaultData,
 		autoSave:          c.autoSave,
 		autoSaveCtx:       c.autoSaveCtx,
-		FlagSet:           c.FlagSet,
+		flagSet:           c.flagSet,
 		externalFlagSet:   c.externalFlagSet,
 		ignoreUnknownVars: c.ignoreUnknownVars,
 		noFlags:           c.noFlags,
@@ -262,7 +262,7 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 	c.envPrefixSet = snapshot.envPrefixSet
 	c.autoSave = snapshot.autoSave
 	c.autoSaveCtx = snapshot.autoSaveCtx
-	c.FlagSet = snapshot.FlagSet
+	c.flagSet = snapshot.flagSet
 	c.externalFlagSet = snapshot.externalFlagSet
 	c.ignoreUnknownVars = snapshot.ignoreUnknownVars
 	c.noFlags = snapshot.noFlags
@@ -455,19 +455,19 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	// flag.CommandLine) they own the single canonical Parse() call, so cfggo
 	// only registers its flags and lets the host parse. Otherwise cfggo creates
 	// a private set, registers, and parses it here. WithoutFlags skips the
-	// private flag set entirely (no FlagSet allocation, no per-key flag.Value)
+	// private flag set entirely (no flagSet allocation, no per-key flag.Value)
 	// for programs that configure purely from files, env, and defaults.
 	if c.externalFlagSet {
 		c.createFlags()
 	} else if !c.noFlags {
-		if c.FlagSet == nil {
+		if c.flagSet == nil {
 			// Default behaviour: an unrecognized flag terminates the process
 			// with usage output (flag.ExitOnError). Use WithIgnoreUnknownVars to
 			// instead ignore flags cfggo doesn't define.
-			c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-			c.FlagSet.Usage = func() {
-				fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
-				c.FlagSet.PrintDefaults()
+			c.flagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+			c.flagSet.Usage = func() {
+				fmt.Fprintf(c.flagSet.Output(), "Usage of %s:\n", os.Args[0])
+				c.flagSet.PrintDefaults()
 			}
 		}
 		c.createFlags()

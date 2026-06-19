@@ -47,7 +47,7 @@ Sample `config.json` is included to show how file-based values are loaded.
 
 Demonstrates:
 - Implementing a fully custom `cfglogger.Logger`.
-- Custom `errwrapper.ErrorWrapper` for rich error formatting.
+- Custom `cfgerror.Wrapper` for rich error formatting.
 - Running multiple independent service configs in one process.
 - `WrapError` for error wrapping, then logging the returned error explicitly.
 

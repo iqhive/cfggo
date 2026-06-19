@@ -74,7 +74,7 @@ func (c *Structure) Reload() error {
 	// Check if flags have been parsed before calling parseFlags
 	var flagsParsed bool
 	c.configMutex.RLock()
-	flagsParsed = c.FlagSet != nil && c.FlagSet.Parsed()
+	flagsParsed = c.flagSet != nil && c.flagSet.Parsed()
 	c.configMutex.RUnlock()
 
 	// Reload from flags if they've been parsed
@@ -85,7 +85,7 @@ func (c *Structure) Reload() error {
 	}
 
 	// Re-assert runtime override precedence. The standard flag package will not
-	// re-run an already-parsed FlagSet (parseFlags above early-returns), so the
+	// re-run an already-parsed flag set (parseFlags above early-returns), so the
 	// file and environment layers reloaded above can otherwise clobber values
 	// supplied on the command line. Programmatic Set values are also runtime
 	// overrides and must survive reloads until the caller changes them again

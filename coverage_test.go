@@ -162,7 +162,6 @@ func TestStructureConvenienceMethodsAndDiagnostics(t *testing.T) {
 		t.Fatalf("WrapError() = %v, want code 123", err)
 	}
 
-	CleanupSignalHandler()
 }
 
 func TestOptionSettersAndRootValidators(t *testing.T) {
@@ -201,7 +200,7 @@ func TestOptionSettersAndRootValidators(t *testing.T) {
 	if err := WithFlagSet(fs)(s); err != nil {
 		t.Fatalf("WithFlagSet() error = %v", err)
 	}
-	if s.FlagSet != fs || !s.externalFlagSet {
+	if s.GetFlagSet() != fs || !s.externalFlagSet {
 		t.Fatal("WithFlagSet() did not store external flag set")
 	}
 

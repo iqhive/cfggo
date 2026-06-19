@@ -7,3 +7,4 @@ coverage.out
 !testdata/*.json
 !examples/**/*.json
 benchmarks/comparison/comparison.test
+demo

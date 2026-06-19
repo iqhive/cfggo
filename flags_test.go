@@ -357,11 +357,11 @@ func TestUnknownPrivateFlagWithoutCloseMatchPrintsUsage(t *testing.T) {
 	}
 
 	var out bytes.Buffer
+	fs := flag.NewFlagSet("cmd", flag.ContinueOnError)
+	fs.SetOutput(&out)
 	cfg := &TestConfig{Verbose: DefaultValue(false)}
-	cfg.FlagSet = flag.NewFlagSet("cmd", flag.ContinueOnError)
-	cfg.FlagSet.SetOutput(&out)
 
-	err := cfg.Init(cfg)
+	err := cfg.Init(cfg, withPrivateFlagSet(fs))
 	if err == nil {
 		t.Fatal("Init error = nil, want unknown flag error")
 	}

@@ -157,13 +157,6 @@ func (c *Structure) SaveIfChanged() error {
 	return nil
 }
 
-// CleanupSignalHandler is retained for backwards compatibility and now does
-// nothing: cfggo no longer installs a process-wide signal handler for
-// auto-save. Drive shutdown saves via the context passed to WithAutoSave, or
-// call Save / SaveIfChanged explicitly
-// Deprecated: this is a no-op and will be removed in a future version.
-func CleanupSignalHandler() {}
-
 // GetJSONBytes marshals the current configuration to JSON. Unlike the
 // human-readable dumps it writes real values (secrets are not masked) so the
 // output round-trips through Save/Load. A marshalling failure is both logged

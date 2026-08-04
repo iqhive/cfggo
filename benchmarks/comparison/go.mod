@@ -11,9 +11,7 @@
 //	cd benchmarks/comparison && go test -bench=. -benchmem
 module github.com/iqhive/cfggo/benchmarks/comparison
 
-go 1.23.0
-
-toolchain go1.23.6
+go 1.26.5
 
 require (
 	github.com/iqhive/cfggo v0.0.0

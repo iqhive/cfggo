@@ -27,8 +27,13 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.configData = make(map[string]interface{})
 	}
 
-	if c.flagSet.Lookup(configVarName) != nil {
-		c.log().Error("cfggo: flag already registered, skipping", "flag", configVarName)
+	// The flag name may carry a prefix (set only by Group) so several
+	// configurations can share one flag set; the configuration key itself is
+	// never prefixed, so plans, accessors, and file/env keys are unaffected.
+	flagName := c.flagNamePrefix + configVarName
+
+	if c.flagSet.Lookup(flagName) != nil {
+		c.log().Error("cfggo: flag already registered, skipping", "flag", flagName)
 		return
 	}
 
@@ -49,7 +54,7 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 			Setter: c.createSetter(configVarName),
 			IsBool: true,
 		}
-		c.flagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 		return
 	}
 
@@ -61,14 +66,14 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 			Want:   reflect.TypeOf(defaultValue),
 			Setter: c.createSetter(configVarName),
 		}
-		c.flagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 	} else {
 		dvar := &flags.ConfigVar{
 			Name:   configVarName,
 			Want:   reflect.TypeOf(c.configData[configVarName]),
 			Setter: c.createSetter(configVarName),
 		}
-		c.flagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 	}
 }
 
@@ -154,6 +159,12 @@ func (c *Structure) parseFlags() error {
 }
 
 func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
+	return firstUnknownFlagIn(c.flagSet, args)
+}
+
+// firstUnknownFlagIn returns the name of the first argument token that is not a
+// flag defined on fs.
+func firstUnknownFlagIn(fs *flag.FlagSet, args []string) (string, bool) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -178,7 +189,7 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 			hasInlineValue = true
 		}
 
-		f := c.flagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f == nil {
 			return name, true
 		}
@@ -195,6 +206,14 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 // cfggo coexist with libraries that register flags elsewhere (e.g. on
 // flag.CommandLine) when cfggo is using its own private flag set
 func (c *Structure) filterKnownFlags(args []string) []string {
+	return filterKnownFlagsIn(c.flagSet, args, func(arg string) {
+		c.log().Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
+	})
+}
+
+// filterKnownFlagsIn is filterKnownFlags against an explicit flag set, calling
+// onDrop for each token it discards.
+func filterKnownFlagsIn(fs *flag.FlagSet, args []string, onDrop func(string)) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -218,9 +237,11 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 			hasInlineValue = true
 		}
 
-		f := c.flagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f == nil {
-			c.log().Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
+			if onDrop != nil {
+				onDrop(arg)
+			}
 			// For "--unknown value", also drop the following value token so it is
 			// not misread as a positional argument (which would stop parsing)
 			if !hasInlineValue && i+1 < len(args) {
@@ -251,6 +272,11 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 // boolean literals are left untouched so genuinely stray arguments still
 // surface via the existing positional-argument warning.
 func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
+	return normalizeBoolFlagArgsIn(c.flagSet, args)
+}
+
+// normalizeBoolFlagArgsIn is normalizeBoolFlagArgs against an explicit flag set.
+func normalizeBoolFlagArgsIn(fs *flag.FlagSet, args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -274,7 +300,7 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 			continue
 		}
 
-		f := c.flagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f != nil && isBoolFlag(f) && i+1 < len(args) {
 			// be flexible with the values we support for bool flags, because
 			// some config var names may cause end-users to supply "yes/no/y/n"

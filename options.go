@@ -34,6 +34,29 @@ func withPrivateFlagSet(fs *flag.FlagSet) Option {
 	}
 }
 
+// withBytesConfig makes the configuration load from an in-memory JSON
+// document instead of a file, reusing the whole file-loading path. Group uses
+// it to inject a member's slice of a combined configuration file.
+func withBytesConfig(handler *sources.HandlerBytes) Option {
+	return func(c *Structure) error {
+		if handler == nil {
+			return c.WrapError(nil, ErrCodeInvalidArgument, "withBytesConfig: handler must not be nil")
+		}
+		c.configHandler = handler
+		return nil
+	}
+}
+
+// withFlagNamePrefix prefixes the names this configuration registers on the
+// flag set (eg "auth." -> --auth.port), leaving configuration keys, accessors,
+// and file/env names untouched. Group uses it so members can share a flag set.
+func withFlagNamePrefix(prefix string) Option {
+	return func(c *Structure) error {
+		c.flagNamePrefix = prefix
+		return nil
+	}
+}
+
 // WithName sets the name of the configuration
 func WithName(name string) Option {
 	return func(c *Structure) error {

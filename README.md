@@ -96,6 +96,7 @@ accessors that stay correct across a live reload**:
 - [Command-Line Flags](#command-line-flags)
 - [Reading and Setting Values at Runtime](#reading-and-setting-values-at-runtime)
 - [Saving Configuration](#saving-configuration)
+- [Combining multiple services in one binary](#combining-multiple-services-in-one-binary)
 - [Performance](#performance)
 - [Advanced Features](#advanced-features)
   - [Configuration Options](#configuration-options)
@@ -847,6 +848,90 @@ See more in [bench_test.go](benchmarks/comparison) and the results below:
 BenchmarkReadInt_Cfggo-64      9.97 ns/op      0 B/op    0 allocs/op
 BenchmarkReadString_Cfggo-64   13.55 ns/op     0 B/op    0 allocs/op
 ```
+
+## Combining multiple services in one binary
+
+Each service normally owns its config struct and calls `cfggo.Init`. Linking
+several of those services into one binary breaks down: every `Init` creates its
+own `flag.FlagSet` and parses `os.Args`, so service A's parser sees service B's
+flags as unknown (and exits the process), identically named keys such as `port`
+collide across flags, env vars, and files, and each service wants its own file.
+
+`cfggo.Group` composes those services instead. Service packages stay exactly as
+they are — still standalone-compatible, with no struct or tag changes:
+
+```go
+// package authsvc
+type Config struct {
+    cfggo.Structure
+    Port   func() int    `cfggo:"port" default:"8080" help:"listen port"`
+    DBHost func() string `cfggo:"db_host"`
+}
+var Cfg = &Config{}
+```
+
+The combined binary registers each service under a namespace and initialises
+them together:
+
+```go
+group := cfggo.NewGroup(
+    cfggo.GroupWithFileConfig("combined.json"), // one file, one section per service
+    cfggo.GroupWithEnvPrefix("MYAPP_"),         // optional global env prefix
+)
+group.Register("auth", authsvc.Cfg)
+group.Register("billing", billingsvc.Cfg,
+    cfggo.WithValidation("port", validcfg.Range(1, 65535))) // per-member options still work
+if err := group.Init(); err != nil {
+    log.Fatal(err)
+}
+
+// Every service reads its configuration exactly as before.
+fmt.Println(authsvc.Cfg.Port())
+```
+
+For a member registered as `"auth"`, the namespace scopes every external
+surface, and only the external surfaces:
+
+| Surface  | Standalone       | In a Group                 |
+|----------|------------------|----------------------------|
+| Flag     | `--port`         | `--auth.port`              |
+| Env var  | `PORT`           | `MYAPP_AUTH_PORT`          |
+| File     | `{"port": 8080}` | `{"auth": {"port": 8080}}` |
+| Accessor | `cfg.Port()`     | `cfg.Port()` (unchanged)   |
+
+A member registered with an empty namespace (`group.Register("", cfg)`) is merged
+at the root with no prefix, reading the file's non-namespaced top-level keys.
+`Init` then reports an error if two root members (or a root member and a
+namespace) claim the same name, instead of silently mis-parsing.
+
+`Group.Init` loads the combined document once and splits it per namespace,
+initialises each member with its own section, its namespaced env prefix, and the
+group's single shared flag set in register-only mode, then parses that flag set
+exactly once and re-runs each member's key and validation checks.
+
+Lifecycle operations are forwarded to the members:
+
+```go
+group.Save()          // reassembles {"auth": {…}, "billing": {…}} and writes it once
+group.SaveIfChanged()  // only when at least one member is dirty
+group.Reload()        // re-reads the file, re-dispatches per member (rollback + OnChange preserved)
+group.Report()        // per-member diagnostics, headed by namespace
+group.String()        // per-member dump, secrets masked
+group.Diagnose()      // map[namespace]Diagnostics
+```
+
+Group options: `GroupWithFileConfig`, `GroupWithDefaultFileConfig`,
+`GroupWithConfigHandler`, `GroupWithEnvPrefix`, `GroupWithFlagSet`,
+`GroupWithStandardFlags`, `GroupWithoutFlags`, `GroupWithIgnoreUnknownFlags`,
+`GroupWithLogger`. Per-member `Option`s are passed to `Register` and are applied
+after the group's, so a member can override any of them (for example its own
+`WithEnvPrefix`).
+
+A `Group` costs nothing at read time: accessors remain the same statically-typed
+closures over each member's own map and mutex, so grouped members neither add
+indirection to a read nor contend with one another. `Group.Init` costs about one
+standalone `Init` per member plus a single JSON split, and the cached per-type
+plan is shared between standalone and grouped use of the same type.
 
 ## Advanced Features
 

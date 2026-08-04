@@ -3,6 +3,8 @@ package benchmarks
 import (
 	"testing"
 	"time"
+
+	"github.com/iqhive/cfggo"
 )
 
 // The typed accessor (cfg.Field()) is the hot path documented in the README:
@@ -13,6 +15,22 @@ func BenchmarkAccessorInt(b *testing.B) {
 	cfg := &mediumConfig{}
 	mustInit(b, cfg)
 
+	b.ReportAllocs()
+	b.ResetTimer()
+	var sink int
+	for i := 0; i < b.N; i++ {
+		sink = cfg.Port()
+	}
+	_ = sink
+}
+
+func BenchmarkAccessorGroupMemberInt(b *testing.B) {
+	cfg := &mediumConfig{}
+	group := cfggo.NewGroup()
+	group.Register("service", cfg)
+	if err := group.Init(); err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	var sink int

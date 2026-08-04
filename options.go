@@ -34,6 +34,31 @@ func withPrivateFlagSet(fs *flag.FlagSet) Option {
 	}
 }
 
+func withFlagNamePrefix(prefix string) Option {
+	return func(c *Structure) error {
+		c.flagNamePrefix = prefix
+		return nil
+	}
+}
+
+func withBytesConfig(handler sources.ConfigHandler) Option {
+	return func(c *Structure) error {
+		c.configHandler = handler
+		return nil
+	}
+}
+
+func withRegisterOnlyFlagSet(fs *flag.FlagSet) Option {
+	return func(c *Structure) error {
+		if fs == nil {
+			return c.WrapError(nil, ErrCodeInvalidArgument, "shared flag set must not be nil")
+		}
+		c.flagSet = fs
+		c.externalFlagSet = true
+		return nil
+	}
+}
+
 // WithName sets the name of the configuration
 func WithName(name string) Option {
 	return func(c *Structure) error {

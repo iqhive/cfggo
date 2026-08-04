@@ -40,7 +40,8 @@ type Structure struct {
 	autoSave      bool
 	autoSaveCtx   context.Context
 
-	flagSet *flag.FlagSet
+	flagSet        *flag.FlagSet
+	flagNamePrefix string
 	// externalFlagSet is true when the caller supplied the FlagSet (e.g. via
 	// WithFlagSet / WithStandardFlags). In that mode cfggo registers its flags
 	// on the supplied set but does NOT parse it: the host owns the single
@@ -203,6 +204,7 @@ type initStateSnapshot struct {
 	autoSave          bool
 	autoSaveCtx       context.Context
 	flagSet           *flag.FlagSet
+	flagNamePrefix    string
 	externalFlagSet   bool
 	ignoreUnknownVars bool
 	noFlags           bool
@@ -245,6 +247,7 @@ func (c *Structure) snapshotInitState() initStateSnapshot {
 		autoSave:          c.autoSave,
 		autoSaveCtx:       c.autoSaveCtx,
 		flagSet:           c.flagSet,
+		flagNamePrefix:    c.flagNamePrefix,
 		externalFlagSet:   c.externalFlagSet,
 		ignoreUnknownVars: c.ignoreUnknownVars,
 		noFlags:           c.noFlags,
@@ -272,6 +275,7 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 	c.autoSave = snapshot.autoSave
 	c.autoSaveCtx = snapshot.autoSaveCtx
 	c.flagSet = snapshot.flagSet
+	c.flagNamePrefix = snapshot.flagNamePrefix
 	c.externalFlagSet = snapshot.externalFlagSet
 	c.ignoreUnknownVars = snapshot.ignoreUnknownVars
 	c.noFlags = snapshot.noFlags

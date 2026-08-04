@@ -183,6 +183,38 @@ SERVER_PORT=7000 go run .         # env overrides the file (port 7000)
 go run . --server_port=6000       # flag overrides everything (port 6000)
 ```
 
+## Combining multiple services in one binary
+
+`cfggo.Group` composes several service configurations while keeping each
+service's existing accessors unchanged:
+
+```go
+group := cfggo.NewGroup(
+    cfggo.GroupWithFileConfig("combined.json"),
+    cfggo.GroupWithEnvPrefix("MYAPP_"),
+)
+group.Register("auth", authsvc.Cfg)
+group.Register("billing", billingsvc.Cfg,
+    cfggo.WithValidation("port", validcfg.Range(1, 65535)))
+if err := group.Init(); err != nil {
+    log.Fatal(err)
+}
+authsvc.Cfg.Port()
+```
+
+Members are namespaced at the composition boundary:
+
+| Input | Standalone `auth` | Grouped member registered as `auth` |
+|---|---|---|
+| Flag | `--port` | `--auth.port` |
+| Environment | `PORT` | `MYAPP_AUTH_PORT` |
+| File | `{"port": 8080}` | `{"auth": {"port": 8080}}` |
+| Accessor | `Cfg.Port()` | `Cfg.Port()` |
+
+An empty namespace merges a member at the file root and uses the group's
+global environment prefix without adding a member-specific prefix. Root-key
+collisions are rejected during `Group.Init`.
+
 > **Prefer defaults in code over tags?** Supply them directly with the
 > `cfggo.DefaultValue` helper:
 >

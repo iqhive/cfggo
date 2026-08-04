@@ -101,3 +101,16 @@ func BenchmarkInitWithEnv(b *testing.B) {
 		mustInit(b, cfg, cfggo.WithName("envbench"))
 	}
 }
+
+func BenchmarkGroupInitNMembers(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		group := cfggo.NewGroup()
+		for n := 0; n < 4; n++ {
+			group.Register(string(rune('a'+n)), &smallConfig{})
+		}
+		if err := group.Init(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

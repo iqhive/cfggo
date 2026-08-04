@@ -51,13 +51,23 @@ func (c *Structure) loadFromEnv() error {
 			source: SourceEnv,
 		}
 
-		// Set the value
+		// Set the value. Secret-tagged fields are redacted from log output and
+		// from the returned error (conversion errors quote the raw input), so a
+		// credential supplied via the environment never reaches the logs
 		envVar := c.envVarName(key)
+		secret := c.isSecretKey(key)
+		loggedValue := value
+		if secret {
+			loggedValue = maskedValue
+		}
 		if err := dv.Set(value); err != nil {
-			c.log().Info("cfggo: error setting config from environment variable", "key", key, "env", envVar, "value", value, "err", err)
+			if secret {
+				err = fmt.Errorf("invalid value (redacted: field is secret)")
+			}
+			c.log().Info("cfggo: error setting config from environment variable", "key", key, "env", envVar, "value", loggedValue, "err", err)
 			setErrs = append(setErrs, fmt.Errorf("key %q from env %s: %w", key, envVar, err))
 		} else {
-			c.log().Debug("cfggo: set config from environment variable", "key", key, "env", envVar, "value", value)
+			c.log().Debug("cfggo: set config from environment variable", "key", key, "env", envVar, "value", loggedValue)
 		}
 	}
 	if len(setErrs) > 0 {

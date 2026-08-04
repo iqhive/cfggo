@@ -2,6 +2,7 @@ package sources
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 )
@@ -27,6 +28,16 @@ func (h *HandlerEnv) IsDefault() bool {
 
 // LoadConfig loads configuration from environment variables
 func (h *HandlerEnv) LoadConfig() (json.RawMessage, error) {
+	// An empty prefix would import the entire process environment into the
+	// config map — including unrelated variables that may hold other
+	// processes' secrets. Require an explicit prefix so only variables
+	// intended for this application are loaded. (cfggo's built-in env override
+	// layer, which matches variables to known struct keys, does not use this
+	// handler and is unaffected.)
+	if h.prefix == "" {
+		return nil, errors.New("HandlerEnv requires a non-empty prefix: an empty prefix would load the entire process environment into the configuration")
+	}
+
 	config := make(map[string]interface{})
 
 	// Get all environment variables

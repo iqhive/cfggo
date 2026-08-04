@@ -83,7 +83,7 @@ func (c *Structure) validate() error {
 		if validator, exists := validators[key]; exists {
 			if err := validator(value); err != nil {
 				ve := validcfg.ValidationError{Key: key, Err: err}
-				errs = append(errs, ve.WithProvenance(value, provenance[key].String()))
+				errs = append(errs, ve.WithProvenance(c.provenanceValue(key, value), provenance[key].String()))
 			}
 		}
 	}
@@ -121,7 +121,7 @@ func (c *Structure) validateValueForKey(key string, value interface{}, source So
 		// Wrap as a ValidationError so the result matches both ErrValidation
 		// (via errors.Is) and the underlying validator error. Provenance is
 		// attached so the message points at the source of the bad value.
-		ve := validcfg.ValidationError{Key: key, Err: err}.WithProvenance(value, source.String())
+		ve := validcfg.ValidationError{Key: key, Err: err}.WithProvenance(c.provenanceValue(key, value), source.String())
 		return c.WrapError(ve, ErrCodeNone, "")
 	}
 

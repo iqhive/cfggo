@@ -44,7 +44,10 @@ func (h *HandlerFile) SaveConfig(data json.RawMessage) error {
 		return fmt.Errorf("filename is empty")
 	}
 
-	mode := os.FileMode(0644)
+	// New config files are created owner-only: saved configuration may contain
+	// unmasked secrets, so it must not be world-readable. Existing files keep
+	// their current permissions.
+	mode := os.FileMode(0600)
 	if info, err := os.Stat(h.Filename); err == nil {
 		mode = info.Mode().Perm()
 	} else if !os.IsNotExist(err) {

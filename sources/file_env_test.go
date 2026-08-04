@@ -130,3 +130,17 @@ func deepEqualJSONValue(got, want interface{}) bool {
 	}
 	return string(gotJSON) == string(wantJSON)
 }
+
+func TestHandlerFileNewFilesAreOwnerOnly(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "secure_config.json")
+	if err := NewHandlerFile(filename, false).SaveConfig(json.RawMessage(`{"api_key":"s3cr3t"}`)); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	info, err := os.Stat(filename)
+	if err != nil {
+		t.Fatalf("stat saved file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("new config file mode = %v, want 0600", got)
+	}
+}

@@ -339,7 +339,6 @@ func toSnakeCase(name string) string {
 				nextLower := i+1 < len(name) && isASCIILower(name[i+1])
 				if prev != '_' && (!isASCIIUpper(prev) || nextLower) {
 					b.WriteByte('_')
-					last = '_'
 				}
 			}
 			b.WriteByte(lower)

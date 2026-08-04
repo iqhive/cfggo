@@ -6,6 +6,31 @@ import "reflect"
 func (c *Structure) Reload() error {
 	c.ensureInit()
 
+	// Hold reloadMutex for the whole multi-phase reload so a concurrent Set
+	// cannot land between the snapshot and a rollback (where it would be
+	// silently lost) or between the reload and the runtime-override restore
+	// (where the pre-reload snapshot would overwrite it). It is released
+	// before OnChange callbacks run so a callback may safely call Set
+	c.reloadMutex.Lock()
+	oldConfig, err := c.reloadLocked()
+	c.reloadMutex.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// Notify OnChange listeners with the aggregate set of keys whose values
+	// differ from the pre-reload snapshot
+	// Skip the (allocating) diff entirely
+	// when nobody is listening.
+	if c.hasListeners() {
+		c.notifyChange(c.changeSet(oldConfig))
+	}
+	return nil
+}
+
+// reloadLocked performs the reload phases. The caller must hold reloadMutex.
+// It returns the pre-reload snapshot for change notification
+func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	// First, make a copy of the current configuration for potential rollback
 	var oldConfig map[string]interface{}
 	// oldProvenance lets us re-assert command-line flag precedence after the
@@ -54,7 +79,7 @@ func (c *Structure) Reload() error {
 			c.changed = oldChanged
 			c.changeVersion = oldChangeVersion
 			c.configMutex.Unlock()
-			return err
+			return nil, err
 		}
 	}
 
@@ -68,7 +93,7 @@ func (c *Structure) Reload() error {
 		c.changed = oldChanged
 		c.changeVersion = oldChangeVersion
 		c.configMutex.Unlock()
-		return err
+		return nil, err
 	}
 
 	// Check if flags have been parsed before calling parseFlags
@@ -109,7 +134,7 @@ func (c *Structure) Reload() error {
 		c.changed = oldChanged
 		c.changeVersion = oldChangeVersion
 		c.configMutex.Unlock()
-		return err
+		return nil, err
 	}
 
 	// The accessor closures installed during Init read c.configData live on
@@ -130,18 +155,10 @@ func (c *Structure) Reload() error {
 		c.changed = oldChanged
 		c.changeVersion = oldChangeVersion
 		c.configMutex.Unlock()
-		return err
+		return nil, err
 	}
 
-	// Notify OnChange listeners with the aggregate set of keys whose values
-	// differ from the pre-reload snapshot
-	// Skip the (allocating) diff entirely
-	// when nobody is listening.
-	if c.hasListeners() {
-		c.notifyChange(c.changeSet(oldConfig))
-	}
-
-	return nil
+	return oldConfig, nil
 }
 
 func (c *Structure) resetToDefaultsLocked() {

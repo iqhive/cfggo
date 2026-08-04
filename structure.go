@@ -90,6 +90,15 @@ type Structure struct {
 	// on a single shared lock.
 	configMutex sync.RWMutex
 
+	// reloadMutex serialises Reload against programmatic Set calls. Reload is a
+	// multi-phase operation (snapshot, reset, reload, restore, validate) that
+	// releases configMutex between phases; without this lock a Set landing
+	// mid-reload could be silently lost on a rollback or overwritten by the
+	// pre-reload snapshot restore. Set takes the read side (concurrent Sets
+	// don't block each other); Reload takes the write side and releases it
+	// before invoking OnChange callbacks so a callback may safely call Set
+	reloadMutex sync.RWMutex
+
 	// provenance records, per key, where the current value came from. Guarded
 	// by configMutex.
 	provenance map[string]Source

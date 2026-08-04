@@ -82,6 +82,7 @@ func (g *Group) Register(namespace string, config interface{}, options ...Option
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.initialized {
+		GlobalLogger().Warn("cfggo: Register called after Group.Init; ignoring member", "namespace", namespace)
 		return
 	}
 	if g.byNamespace == nil {
@@ -114,10 +115,6 @@ func (g *Group) Init() error {
 		return err
 	}
 	g.flagSet = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	g.flagSet.SetOutput(os.Stderr)
-	if !g.ignoreUnknown {
-		g.flagSet.Init(os.Args[0], flag.ContinueOnError)
-	}
 
 	var raw map[string]interface{}
 	if g.fileHandler != nil {
@@ -136,7 +133,7 @@ func (g *Group) Init() error {
 		if member.config == nil {
 			return fmt.Errorf("group member %q config must embed cfggo.Structure", member.namespace)
 		}
-		doc := memberDocument(raw, member, g.byNamespace)
+		doc := memberDocument(raw, member, g.members, g.byNamespace)
 		bytes, err := json.Marshal(doc)
 		if err != nil {
 			return fmt.Errorf("marshal %q configuration: %w", member.namespace, err)
@@ -207,7 +204,7 @@ func (g *Group) validateMembers() error {
 		if t.Kind() != reflect.Pointer || t.Elem().Kind() != reflect.Struct {
 			return fmt.Errorf("group member %q config must be a pointer to a struct", m.namespace)
 		}
-		for key := range planForType(t.Elem(), DefaultSnakeCaseFieldNames).byKey {
+		for key := range planForType(t.Elem(), memberSnakeCaseNames(m)).byKey {
 			if previous, ok := seenRoot[key]; ok {
 				return fmt.Errorf("root configuration key %q collides between members %q and %q", key, previous, m.namespace)
 			}
@@ -220,7 +217,7 @@ func (g *Group) validateMembers() error {
 	return nil
 }
 
-func memberDocument(raw map[string]interface{}, member *groupMember, members map[string]*groupMember) map[string]interface{} {
+func memberDocument(raw map[string]interface{}, member *groupMember, orderedMembers []*groupMember, members map[string]*groupMember) map[string]interface{} {
 	if member.namespace != "" {
 		if doc, ok := raw[member.namespace].(map[string]interface{}); ok {
 			return doc
@@ -229,19 +226,22 @@ func memberDocument(raw map[string]interface{}, member *groupMember, members map
 	}
 	doc := make(map[string]interface{}, len(raw))
 	firstRoot := member
-	for _, candidate := range members {
+	for _, candidate := range orderedMembers {
 		if candidate.namespace == "" {
 			firstRoot = candidate
 			break
 		}
 	}
+	t := reflect.TypeOf(member.parent)
+	var plan *structPlan
+	if t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct {
+		plan = planForType(t.Elem(), memberSnakeCaseNames(member))
+	}
 	for key, value := range raw {
 		if _, namespaced := members[key]; namespaced && key != "" {
 			continue
 		}
-		t := reflect.TypeOf(member.parent)
-		if t.Kind() == reflect.Pointer && t.Elem().Kind() == reflect.Struct {
-			plan := planForType(t.Elem(), DefaultSnakeCaseFieldNames)
+		if plan != nil {
 			matched := false
 			for fieldKey := range plan.byKey {
 				if fieldKey == key || strings.HasPrefix(fieldKey, key+".") {
@@ -255,6 +255,14 @@ func memberDocument(raw map[string]interface{}, member *groupMember, members map
 		}
 	}
 	return doc
+}
+
+func memberSnakeCaseNames(member *groupMember) bool {
+	scratch := &Structure{}
+	for _, option := range member.options {
+		_ = option(scratch)
+	}
+	return scratch.useSnakeCaseFieldNames()
 }
 
 func (m *groupMember) namespacePrefix() string {
@@ -354,7 +362,7 @@ func (g *Group) Reload() error {
 			}
 		}
 		for _, member := range g.members {
-			doc, err := json.Marshal(memberDocument(raw, member, g.byNamespace))
+			doc, err := json.Marshal(memberDocument(raw, member, g.members, g.byNamespace))
 			if err != nil {
 				return err
 			}

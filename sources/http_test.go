@@ -194,3 +194,47 @@ func TestHandlerHTTPAllowsLoopbackHTTP(t *testing.T) {
 		}
 	}
 }
+
+// A https (or loopback http) config endpoint must not be able to silently
+// downgrade the connection by redirecting to a plaintext http URL on a
+// non-loopback host: saved configuration may carry secrets, and Go does not
+// strip sensitive headers on same-host scheme downgrades.
+func TestHandlerHTTPRefusesRedirectDowngradeToPlaintext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.test/config", http.StatusFound)
+	}))
+	defer server.Close()
+
+	source := httptest.NewRequest(http.MethodGet, server.URL, nil)
+	if _, err := NewHandlerHTTP(source, nil, false).LoadConfig(); err == nil {
+		t.Fatal("LoadConfig() redirecting to plaintext non-loopback http: expected error, got nil")
+	}
+
+	dest := httptest.NewRequest(http.MethodPost, server.URL, nil)
+	if err := NewHandlerHTTP(nil, dest, false).SaveConfig(json.RawMessage(`{}`)); err == nil {
+		t.Fatal("SaveConfig() redirecting to plaintext non-loopback http: expected error, got nil")
+	}
+}
+
+// Redirects to an acceptable URL (here another loopback http endpoint) must
+// still be followed by the default client.
+func TestHandlerHTTPFollowsSafeRedirects(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, server.URL+"/real", http.StatusFound)
+	})
+	mux.HandleFunc("/real", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	})
+
+	source := httptest.NewRequest(http.MethodGet, server.URL+"/config", nil)
+	data, err := NewHandlerHTTP(source, nil, false).LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with safe redirect: %v", err)
+	}
+	if string(data) != `{"ok":true}` {
+		t.Fatalf("LoadConfig() = %s, want {\"ok\":true}", string(data))
+	}
+}

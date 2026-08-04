@@ -84,6 +84,12 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 
 			// All type coercion is handled by the unified converter inside c.set.
 			if err := c.set(fullKey, value); err != nil {
+				// Conversion errors quote the raw input, so redact them for
+				// secret-tagged fields: the error is logged and joined into the
+				// returned load error, and must never carry the credential
+				if c.isSecretKey(fullKey) {
+					err = fmt.Errorf("invalid value (redacted: field is secret)")
+				}
 				c.log().Warn("cfggo: error setting config key from source", "key", fullKey, "source", src, "err", err)
 				setErrs = append(setErrs, fmt.Errorf("key %q from %s: %w", fullKey, src, err))
 				continue

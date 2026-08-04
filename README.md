@@ -83,6 +83,7 @@ accessors that stay correct across a live reload**:
 - [Validation](#validation)
 - [Secrets and Redaction](#secrets-and-redaction)
 - [Debugging: where did this value come from?](#debugging-where-did-this-value-come-from)
+- [Combining multiple services in one binary](#combining-multiple-services-in-one-binary)
 - [FAQ](#faq)
 
 <details>
@@ -97,6 +98,7 @@ accessors that stay correct across a live reload**:
 - [Reading and Setting Values at Runtime](#reading-and-setting-values-at-runtime)
 - [Saving Configuration](#saving-configuration)
 - [Performance](#performance)
+- [Combining multiple services in one binary](#combining-multiple-services-in-one-binary)
 - [Advanced Features](#advanced-features)
   - [Configuration Options](#configuration-options)
 - [Thread Safety](#thread-safety)
@@ -846,6 +848,89 @@ See more in [bench_test.go](benchmarks/comparison) and the results below:
 ```
 BenchmarkReadInt_Cfggo-64      9.97 ns/op      0 B/op    0 allocs/op
 BenchmarkReadString_Cfggo-64   13.55 ns/op     0 B/op    0 allocs/op
+```
+
+## Combining multiple services in one binary
+
+When several service packages are compiled into a single binary, each one can
+still own its own `cfggo.Structure`-based config struct. `cfggo.Group` is a
+purely-additive orchestrator that initialises them together with a shared flag
+set, a single combined configuration file, and namespaced environment variables.
+
+Service code does **not** change:
+
+```go
+// package authsvc
+type Config struct {
+    cfggo.Structure
+    Port   func() int    `cfggo:"port" default:"8080" help:"listen port"`
+    DBHost func() string `cfggo:"db_host"`
+}
+
+var Cfg = &Config{}
+```
+
+A standalone binary continues to use `cfggo.Init` exactly as before:
+
+```go
+cfggo.Init(authsvc.Cfg, cfggo.WithFileConfig("auth.json"))
+```
+
+A combined binary uses a `cfggo.Group`:
+
+```go
+group := cfggo.NewGroup(
+    cfggo.GroupWithFileConfig("combined.json"),
+    cfggo.GroupWithEnvPrefix("MYAPP_"),
+)
+
+if err := group.Register("auth", authsvc.Cfg); err != nil {
+    log.Fatal(err)
+}
+if err := group.Register("billing", billingsvc.Cfg,
+    cfggo.WithValidation("port", cfggo.Range(1, 65535)),
+); err != nil {
+    log.Fatal(err)
+}
+
+if err := group.Init(); err != nil {
+    log.Fatal(err)
+}
+```
+
+For a member registered under namespace `"auth"`:
+
+| Surface   | Standalone         | In `cfggo.Group`                      |
+|-----------|--------------------|---------------------------------------|
+| Flags     | `--port`           | `--auth.port`                         |
+| Env vars  | `PORT`             | `MYAPP_AUTH_PORT`                     |
+| File key  | `{"port": 8080}`  | `{"auth": {"port": 8080}}`           |
+| Accessor  | `authsvc.Cfg.Port()` | `authsvc.Cfg.Port()` (unchanged)   |
+
+`Group` loads the combined file once, splits the top-level JSON object into
+per-member sub-documents, and passes each sub-document through the member's
+normal file-loading path. Flags are parsed once on a shared `flag.FlagSet`, and
+environment variables are prefixed per member. The per-member configuration plan
+and accessors are unchanged, so the hot-path accessor performance is identical to
+standalone use.
+
+Members can be registered with an empty namespace to merge them at the root. The
+group detects key collisions among root members at `Init` time and reports them
+as an error instead of silently mis-parsing.
+
+`Group` also forwards lifecycle operations:
+
+- `Group.Save()` / `SaveIfChanged()` reassemble `{"auth": {...}, "billing": {...}}`
+  from member `GetJSONBytes()` and write once through the group's file handler.
+- `Group.Reload()` re-reads the combined file and dispatches each member's
+  sub-document through its existing `Reload` path, preserving rollback and
+  `OnChange` semantics.
+- `Group.Diagnose()` / `String()` concatenate per-member reports, prefixed by
+  namespace.
+
+```go
+fmt.Println(group.Diagnose())
+fmt.Println(group.String())
 ```
 
 ## Advanced Features

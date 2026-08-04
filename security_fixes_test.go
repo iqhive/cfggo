@@ -1,6 +1,8 @@
 package cfggo
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -151,5 +153,29 @@ func TestReloadDoesNotDropConcurrentSet(t *testing.T) {
 func TestHandlerEnvRejectsEmptyPrefix(t *testing.T) {
 	if _, err := sources.NewHandlerEnv("", false).LoadConfig(); err == nil {
 		t.Fatal("LoadConfig() with empty prefix: expected error, got nil")
+	}
+}
+
+// A type-coercion failure on a secret-tagged field while loading from a file
+// (or any ConfigHandler) must not embed the raw value in the returned error:
+// load errors are logged and surfaced by Init.
+func TestSecretValueNotLeakedInLoadErrors(t *testing.T) {
+	type secretLoadConfig struct {
+		Structure
+		Attempts func() int `cfggo:"attempts" secret:"true"`
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"attempts":"super-secret-value"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &secretLoadConfig{}
+	err := cfg.Init(cfg, WithoutFlags(), WithoutEnv(), WithFileConfig(path))
+	if err == nil {
+		t.Fatal("Init: expected load error, got nil")
+	}
+	if strings.Contains(err.Error(), "super-secret-value") {
+		t.Fatalf("load error leaks secret value: %v", err)
 	}
 }

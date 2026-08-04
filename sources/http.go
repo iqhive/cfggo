@@ -85,7 +85,22 @@ func (h *HandlerHTTP) httpClient() *http.Client {
 	if h.Client != nil {
 		return h.Client
 	}
-	return defaultHTTPClient
+	// The default client re-checks the URL scheme on every redirect hop, so a
+	// https config endpoint cannot silently downgrade the connection by
+	// redirecting to a plaintext http URL (Go only strips sensitive headers on
+	// cross-host redirects, not on same-host scheme downgrades). A
+	// caller-supplied Client owns its own redirect policy.
+	client := *defaultHTTPClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := h.checkURLScheme(req.URL); err != nil {
+			return fmt.Errorf("redirect refused: %w", err)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &client
 }
 
 // checkURLScheme rejects plaintext HTTP URLs for non-loopback hosts unless

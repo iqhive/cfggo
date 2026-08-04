@@ -565,16 +565,12 @@ func (g *Group) SaveIfChanged() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	versions := make([]uint64, len(g.members))
 	changed := false
-	for _, member := range g.members {
-		s := member.structure
-		s.configMutex.RLock()
-		memberChanged := s.changed
-		s.configMutex.RUnlock()
-		if memberChanged {
-			changed = true
-			break
-		}
+	for i, member := range g.members {
+		memberChanged, version := member.structure.changedState()
+		versions[i] = version
+		changed = changed || memberChanged
 	}
 	if !changed {
 		return nil
@@ -582,11 +578,8 @@ func (g *Group) SaveIfChanged() error {
 	if err := g.save(); err != nil {
 		return err
 	}
-	for _, member := range g.members {
-		s := member.structure
-		s.configMutex.Lock()
-		s.changed = false
-		s.configMutex.Unlock()
+	for i, member := range g.members {
+		member.structure.clearChangedIf(versions[i])
 	}
 	return nil
 }

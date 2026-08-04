@@ -265,6 +265,71 @@ func TestGroupSaveIfChanged(t *testing.T) {
 	}
 }
 
+type blockingGroupSaveHandler struct {
+	data        json.RawMessage
+	saveStarted chan struct{}
+	releaseSave chan struct{}
+	saves       int
+}
+
+func (h *blockingGroupSaveHandler) IsDefault() bool { return false }
+
+func (h *blockingGroupSaveHandler) LoadConfig() (json.RawMessage, error) {
+	return h.data, nil
+}
+
+func (h *blockingGroupSaveHandler) SaveConfig(data json.RawMessage) error {
+	select {
+	case h.saveStarted <- struct{}{}:
+	default:
+	}
+	<-h.releaseSave
+	h.data = data
+	h.saves++
+	return nil
+}
+
+func TestGroupSaveIfChangedPreservesConcurrentSet(t *testing.T) {
+	withArgs(t)
+
+	handler := &blockingGroupSaveHandler{
+		data:        json.RawMessage(`{}`),
+		saveStarted: make(chan struct{}, 2),
+		releaseSave: make(chan struct{}),
+	}
+	auth := &authConfig{}
+	group := cfggo.NewGroup(
+		cfggo.GroupWithConfigHandler(handler),
+		cfggo.GroupWithoutFlags(),
+	)
+	group.Register("auth", auth)
+	if err := group.Init(); err != nil {
+		t.Fatalf("Group.Init: %v", err)
+	}
+	if err := auth.Set("port", 4444); err != nil {
+		t.Fatalf("Set first: %v", err)
+	}
+
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- group.SaveIfChanged() }()
+	<-handler.saveStarted
+
+	if err := auth.Set("port", 5555); err != nil {
+		t.Fatalf("Set second: %v", err)
+	}
+	close(handler.releaseSave)
+	if err := <-saveDone; err != nil {
+		t.Fatalf("first Group.SaveIfChanged: %v", err)
+	}
+
+	if err := group.SaveIfChanged(); err != nil {
+		t.Fatalf("second Group.SaveIfChanged: %v", err)
+	}
+	if handler.saves != 2 {
+		t.Fatalf("SaveConfig calls = %d, want 2", handler.saves)
+	}
+}
+
 func TestGroupReloadDispatchesPerMember(t *testing.T) {
 	path := writeJSON(t, `{"auth":{"port":1111},"billing":{"port":2222}}`)
 	withArgs(t)

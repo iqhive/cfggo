@@ -146,6 +146,26 @@ func MustValue[T any](c *Structure, key string) T {
 	return v
 }
 
+// changedState returns whether the configuration has been modified and the
+// current changeVersion, both observed under the read lock. It is used by
+// cfggo.Group to decide when to persist the combined configuration.
+func (c *Structure) changedState() (bool, uint64) {
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
+	return c.changed, c.changeVersion
+}
+
+// clearChangedIf clears the changed flag only if changeVersion still matches
+// the supplied value. This avoids losing a concurrent Set that incremented the
+// version after the caller observed the changed state.
+func (c *Structure) clearChangedIf(version uint64) {
+	c.configMutex.Lock()
+	if c.changeVersion == version {
+		c.changed = false
+	}
+	c.configMutex.Unlock()
+}
+
 func (c *Structure) getAllKeys() []string {
 	c.configMutex.RLock()
 	defer c.configMutex.RUnlock()

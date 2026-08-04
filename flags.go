@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/iqhive/cfggo/cfglogger"
 	"github.com/iqhive/cfggo/internal/flags"
 )
 
@@ -27,8 +28,13 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.configData = make(map[string]interface{})
 	}
 
-	if c.flagSet.Lookup(configVarName) != nil {
-		c.log().Error("cfggo: flag already registered, skipping", "flag", configVarName)
+	// The flag name is prefixed when this Structure is part of a cfggo.Group,
+	// but the underlying config key (and the setter) stays unprefixed so
+	// accessors continue to work exactly as in standalone use.
+	flagName := c.flagNamePrefix + configVarName
+
+	if c.flagSet.Lookup(flagName) != nil {
+		c.log().Error("cfggo: flag already registered, skipping", "flag", flagName)
 		return
 	}
 
@@ -44,12 +50,12 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 			c.configData[configVarName] = boolVal
 		}
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
+			Name:   flagName,
 			Want:   reflect.TypeOf(boolVal),
 			Setter: c.createSetter(configVarName),
 			IsBool: true,
 		}
-		c.flagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 		return
 	}
 
@@ -57,18 +63,18 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.log().Warn("cfggo: config key not set, using default value for type", "key", configVarName)
 		c.configData[configVarName] = defaultValue
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
+			Name:   flagName,
 			Want:   reflect.TypeOf(defaultValue),
 			Setter: c.createSetter(configVarName),
 		}
-		c.flagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 	} else {
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
+			Name:   flagName,
 			Want:   reflect.TypeOf(c.configData[configVarName]),
 			Setter: c.createSetter(configVarName),
 		}
-		c.flagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 	}
 }
 
@@ -110,8 +116,8 @@ func (c *Structure) parseFlags() error {
 		if !c.externalFlagSet {
 			c.flagSet.Init(c.flagSet.Name(), flag.ContinueOnError)
 		}
-		args = c.filterKnownFlags(args)
-	} else if name, ok := c.firstUnknownFlag(args); ok {
+		args = filterKnownFlags(c.flagSet, args, c.log())
+	} else if name, ok := firstUnknownFlag(c.flagSet, args); ok {
 		if suggestion := c.suggestKey(name); suggestion != "" {
 			return c.WrapError(
 				wrapKind(ErrUnknownKey, fmt.Errorf("flag provided but not defined: -%s (did you mean -%s?)", name, suggestion)),
@@ -125,7 +131,7 @@ func (c *Structure) parseFlags() error {
 	// standard flag package stops parsing at the first non-flag token, so an
 	// uncollapsed boolean value (e.g. "--boolval true") would otherwise be read
 	// as a positional argument and silently drop every flag that follows it.
-	args = c.normalizeBoolFlagArgs(args)
+	args = normalizeBoolFlagArgs(c.flagSet, args)
 
 	// Temporarily release the lock during parsing to avoid deadlocks with Set().
 	c.configMutex.Unlock()
@@ -154,6 +160,11 @@ func (c *Structure) parseFlags() error {
 }
 
 func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
+	return firstUnknownFlag(c.flagSet, args)
+}
+
+// firstUnknownFlag scans args for the first flag that is not registered on fs.
+func firstUnknownFlag(fs *flag.FlagSet, args []string) (string, bool) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -178,7 +189,7 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 			hasInlineValue = true
 		}
 
-		f := c.flagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f == nil {
 			return name, true
 		}
@@ -195,6 +206,12 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 // cfggo coexist with libraries that register flags elsewhere (e.g. on
 // flag.CommandLine) when cfggo is using its own private flag set
 func (c *Structure) filterKnownFlags(args []string) []string {
+	return filterKnownFlags(c.flagSet, args, c.log())
+}
+
+// filterKnownFlags is the package-level implementation used by Structure and
+// cfggo.Group.
+func filterKnownFlags(fs *flag.FlagSet, args []string, log cfglogger.Logger) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -218,9 +235,11 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 			hasInlineValue = true
 		}
 
-		f := c.flagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f == nil {
-			c.log().Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
+			if log != nil {
+				log.Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
+			}
 			// For "--unknown value", also drop the following value token so it is
 			// not misread as a positional argument (which would stop parsing)
 			if !hasInlineValue && i+1 < len(args) {
@@ -251,6 +270,12 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 // boolean literals are left untouched so genuinely stray arguments still
 // surface via the existing positional-argument warning.
 func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
+	return normalizeBoolFlagArgs(c.flagSet, args)
+}
+
+// normalizeBoolFlagArgs is the package-level implementation used by Structure
+// and cfggo.Group.
+func normalizeBoolFlagArgs(fs *flag.FlagSet, args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -274,7 +299,7 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 			continue
 		}
 
-		f := c.flagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f != nil && isBoolFlag(f) && i+1 < len(args) {
 			// be flexible with the values we support for bool flags, because
 			// some config var names may cause end-users to supply "yes/no/y/n"

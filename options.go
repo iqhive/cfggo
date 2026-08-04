@@ -23,6 +23,17 @@ func withNoop() Option {
 	}
 }
 
+func withBytesConfig(data []byte) Option {
+	return WithConfigHandler(sources.NewHandlerBytes(data))
+}
+
+func withFlagNamePrefix(prefix string) Option {
+	return func(c *Structure) error {
+		c.flagNamePrefix = prefix
+		return nil
+	}
+}
+
 func withPrivateFlagSet(fs *flag.FlagSet) Option {
 	return func(c *Structure) error {
 		if fs == nil {

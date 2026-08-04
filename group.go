@@ -22,16 +22,16 @@ import (
 // that embed cfggo.Structure continue to work standalone; Group is a purely
 // additive composition layer.
 type Group struct {
-	name       string
-	envPrefix  string
-	fileConfig string
+	name        string
+	envPrefix   string
+	fileConfig  string
 	fileDefault bool
-	handler    sources.ConfigHandler
+	handler     sources.ConfigHandler
 
-	members      []groupMember
-	memberIndex  map[string]int
-	flagSet      *flag.FlagSet
-	initialized  bool
+	members           []groupMember
+	memberIndex       map[string]int
+	flagSet           *flag.FlagSet
+	initialized       bool
 	ignoreUnknownVars bool
 
 	logger       cfglogger.Logger

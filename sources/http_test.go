@@ -164,3 +164,33 @@ func TestHandlerHTTPPreservesRequestContext(t *testing.T) {
 		t.Fatal("SaveConfig() with canceled context: expected error, got nil")
 	}
 }
+
+func TestHandlerHTTPRefusesPlaintextNonLoopback(t *testing.T) {
+	source := httptest.NewRequest(http.MethodGet, "http://example.test/config", nil)
+	if _, err := NewHandlerHTTP(source, nil, false).LoadConfig(); err == nil {
+		t.Fatal("LoadConfig() over plaintext http to non-loopback host: expected error, got nil")
+	}
+
+	dest := httptest.NewRequest(http.MethodPost, "http://example.test/config", nil)
+	if err := NewHandlerHTTP(nil, dest, false).SaveConfig(json.RawMessage(`{}`)); err == nil {
+		t.Fatal("SaveConfig() over plaintext http to non-loopback host: expected error, got nil")
+	}
+
+	// Opting in via AllowInsecureHTTP passes the scheme check (the request
+	// itself will fail to connect, which is fine for this test).
+	h := NewHandlerHTTP(source, nil, false)
+	h.AllowInsecureHTTP = true
+	if err := h.checkURLScheme(h.source.URL); err != nil {
+		t.Fatalf("checkURLScheme with AllowInsecureHTTP: %v", err)
+	}
+}
+
+func TestHandlerHTTPAllowsLoopbackHTTP(t *testing.T) {
+	h := &HandlerHTTP{}
+	for _, u := range []string{"http://127.0.0.1:8080/c", "http://localhost/c", "http://[::1]/c"} {
+		req := httptest.NewRequest(http.MethodGet, u, nil)
+		if err := h.checkURLScheme(req.URL); err != nil {
+			t.Fatalf("checkURLScheme(%s): %v", u, err)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/iqhive/cfggo/internal/flags"
@@ -36,7 +37,12 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 	// own private flag set or the host parses flag.CommandLine), and so the
 	// standard flag package allows the "--flag" / "--flag=true" forms.
 	if boolVal, isBool := defaultValue.(bool); isBool {
-		c.configData[configVarName] = boolVal
+		// Only seed the default when the key has no value yet, mirroring the
+		// non-bool path below: a value already loaded from a file, the
+		// environment, or a Set call must not be silently overwritten
+		if _, exists := c.configData[configVarName]; !exists {
+			c.configData[configVarName] = boolVal
+		}
 		dvar := &flags.ConfigVar{
 			Name:   configVarName,
 			Want:   reflect.TypeOf(boolVal),
@@ -156,8 +162,13 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 		if len(arg) < 2 || arg[0] != '-' {
 			return "", false
 		}
+		// A negative number (eg "-1" or "-2.5") is a value or positional
+		// argument, not a flag; the standard flag package would stop here too
+		if isNegativeNumber(arg) {
+			return "", false
+		}
 
-		name := strings.TrimLeft(arg, "-")
+		name := trimFlagDashes(arg)
 		if name == "" {
 			return "", false
 		}
@@ -194,13 +205,13 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 			break
 		}
 
-		// Non-flag (positional) argument, or a bare "-".
-		if len(arg) < 2 || arg[0] != '-' {
+		// Non-flag (positional) argument, a bare "-", or a negative number.
+		if len(arg) < 2 || arg[0] != '-' || isNegativeNumber(arg) {
 			out = append(out, arg)
 			continue
 		}
 
-		name := strings.TrimLeft(arg, "-")
+		name := trimFlagDashes(arg)
 		hasInlineValue := false
 		if idx := strings.IndexByte(name, '='); idx != -1 {
 			name = name[:idx]
@@ -250,13 +261,13 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 			break
 		}
 
-		// Non-flag (positional) argument, or a bare "-".
-		if len(arg) < 2 || arg[0] != '-' {
+		// Non-flag (positional) argument, a bare "-", or a negative number.
+		if len(arg) < 2 || arg[0] != '-' || isNegativeNumber(arg) {
 			out = append(out, arg)
 			continue
 		}
 
-		name := strings.TrimLeft(arg, "-")
+		name := trimFlagDashes(arg)
 		// Already in "--flag=value" form; nothing to collapse.
 		if strings.IndexByte(name, '=') != -1 {
 			out = append(out, arg)
@@ -282,6 +293,25 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 		out = append(out, arg)
 	}
 	return out
+}
+
+// trimFlagDashes strips the leading "-" or "--" from a flag token, matching
+// the standard flag package (which accepts at most two dashes) instead of
+// stripping every leading dash
+func trimFlagDashes(arg string) string {
+	name := strings.TrimPrefix(arg, "-")
+	name = strings.TrimPrefix(name, "-")
+	return name
+}
+
+// isNegativeNumber reports whether arg is a negative numeric literal such as
+// "-1" or "-2.5", which is an argument value rather than a flag
+func isNegativeNumber(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false
+	}
+	_, err := strconv.ParseFloat(arg[1:], 64)
+	return err == nil
 }
 
 // replacement for strconv.ParseBool that also supports yes/y/no/n

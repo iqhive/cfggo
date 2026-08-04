@@ -12,10 +12,15 @@ import (
 func (c *Structure) Set(key string, value interface{}) error {
 	c.ensureInit()
 
+	// Exclude concurrent Reloads (which release configMutex between phases)
+	// so this Set cannot be lost to a reload rollback or snapshot restore.
+	// Released before callbacks fire so a callback may itself trigger a Reload
+	c.reloadMutex.RLock()
 	c.configMutex.Lock()
 	old, exists := c.configData[key]
 	if !exists {
 		c.configMutex.Unlock()
+		c.reloadMutex.RUnlock()
 		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q%s", key, c.didYouMeanSuffix(key))
 	}
 	old = cloneMutableInterface(old)
@@ -27,6 +32,7 @@ func (c *Structure) Set(key string, value interface{}) error {
 		newVal = cloneMutableInterface(c.configData[key])
 	}
 	c.configMutex.Unlock()
+	c.reloadMutex.RUnlock()
 
 	if err != nil {
 		return c.WrapError(err, ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)

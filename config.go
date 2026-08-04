@@ -7,10 +7,16 @@ import (
 )
 
 // Set sets a configuration value and propagates it to the config struct.
-// On success it records the value's provenance as SourceSet and fires any
-// OnChange callbacks for the key.
+// The value is checked against any validator registered for the key, so a
+// runtime Set cannot bypass the validation enforced on the flag, file, and
+// environment layers. On success it records the value's provenance as
+// SourceSet and fires any OnChange callbacks for the key.
 func (c *Structure) Set(key string, value interface{}) error {
 	c.ensureInit()
+
+	if err := c.validateForSet(key, value); err != nil {
+		return err
+	}
 
 	// Exclude concurrent Reloads (which release configMutex between phases)
 	// so this Set cannot be lost to a reload rollback or snapshot restore.
@@ -43,6 +49,36 @@ func (c *Structure) Set(key string, value interface{}) error {
 		c.notifyChange([]Change{{Key: key, Old: old, New: newVal, Source: SourceSet}})
 	}
 	return nil
+}
+
+// validateForSet runs the registered validator (if any) for key against the
+// value as it would be stored: converted to the key's current concrete type
+// when one is known. It runs before any lock is taken because a validator is
+// arbitrary user code that may itself read configuration.
+func (c *Structure) validateForSet(key string, value interface{}) error {
+	c.validationMutex.RLock()
+	_, hasValidator := c.validationMap[key]
+	c.validationMutex.RUnlock()
+	if !hasValidator {
+		return nil
+	}
+
+	c.configMutex.RLock()
+	existing, exists := c.configData[key]
+	c.configMutex.RUnlock()
+	if !exists {
+		return nil
+	}
+
+	checked := value
+	if existingType := reflect.TypeOf(existing); existingType != nil {
+		converted, err := iconvert.ConvertValue(value, existingType, c)
+		if err != nil {
+			return c.WrapError(err, ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
+		}
+		checked = converted
+	}
+	return c.validateValueForKey(key, checked, SourceSet)
 }
 
 // applyLoaded stores key=value originating from a loading layer (a default

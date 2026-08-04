@@ -62,16 +62,18 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.log().Warn("cfggo: config key not set, using default value for type", "key", configVarName)
 		c.configData[configVarName] = defaultValue
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
-			Want:   reflect.TypeOf(defaultValue),
-			Setter: c.createSetter(configVarName),
+			Name:     configVarName,
+			Want:     reflect.TypeOf(defaultValue),
+			Setter:   c.createSetter(configVarName),
+			IsSecret: c.isSecretKey(configVarName),
 		}
 		c.flagSet.Var(dvar, flagName, configDescription)
 	} else {
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
-			Want:   reflect.TypeOf(c.configData[configVarName]),
-			Setter: c.createSetter(configVarName),
+			Name:     configVarName,
+			Want:     reflect.TypeOf(c.configData[configVarName]),
+			Setter:   c.createSetter(configVarName),
+			IsSecret: c.isSecretKey(configVarName),
 		}
 		c.flagSet.Var(dvar, flagName, configDescription)
 	}

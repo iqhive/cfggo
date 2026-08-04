@@ -123,20 +123,29 @@ func WithFileConfigParamName(argName string) Option {
 	if filename == "" {
 		GlobalLogger().Debug("cfggo: no filename found for config argument", "arg", argName)
 		return func(c *Structure) error {
-			c.ensureFlagSet()
-			c.flagSet.String(argName, "", "")
+			c.registerConfigPathFlag(argName)
 			return nil
 		}
 	}
 	wrap := WithFileConfig(filename)
 	return func(c *Structure) error {
-		c.ensureFlagSet()
-		c.flagSet.String(argName, "", "")
+		c.registerConfigPathFlag(argName)
 		if err := wrap(c); err != nil {
 			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
 			return err
 		}
 		return nil
+	}
+}
+
+// registerConfigPathFlag registers the bootstrap config-path flag so it is not
+// reported as unknown during parsing. Registering a flag name twice on one set
+// panics in the standard flag package, so an already-registered name (eg the
+// host's own flag on a shared set, or a retried Init) is left as-is.
+func (c *Structure) registerConfigPathFlag(argName string) {
+	c.ensureFlagSet()
+	if c.flagSet.Lookup(argName) == nil {
+		c.flagSet.String(argName, "", "path to the configuration file")
 	}
 }
 

@@ -145,11 +145,11 @@ func TestStructureConvenienceMethodsAndDiagnostics(t *testing.T) {
 	if err := cfg.ValidateKey("name"); err != nil {
 		t.Fatalf("ValidateKey(name) error = %v", err)
 	}
-	if err := cfg.Set("port", 0); err != nil {
-		t.Fatalf("Set(port) error = %v", err)
+	if err := cfg.Set("port", 0); !errors.Is(err, validcfg.ErrValidation) {
+		t.Fatalf("Set(port) error = %v, want ErrValidation (Set enforces registered validators)", err)
 	}
-	if err := cfg.ValidateKey("port"); !errors.Is(err, validcfg.ErrValidation) {
-		t.Fatalf("ValidateKey(port) error = %v, want ErrValidation", err)
+	if err := cfg.ValidateKey("port"); err != nil {
+		t.Fatalf("ValidateKey(port) error = %v, want nil (invalid Set was rejected)", err)
 	}
 
 	logger := &cfglogger.NoopLogger{}

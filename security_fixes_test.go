@@ -35,9 +35,19 @@ func TestSecretValueNotLeakedInValidationErrors(t *testing.T) {
 	if err := cfg2.Init(cfg2, WithoutFlags(), WithoutEnv()); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	cfg2.RegisterValidator("api_key", MinLength(64))
+	// Register the validator after Set: Set now enforces registered validators,
+	// so this stores an invalid value first to exercise redaction in
+	// ValidateKey/Diagnose/Report below.
 	if err := cfg2.Set("api_key", "hunter2-super-secret"); err != nil {
 		t.Fatalf("Set: %v", err)
+	}
+	cfg2.RegisterValidator("api_key", MinLength(64))
+
+	// A Set rejected by a validator must also redact the secret value.
+	if err := cfg2.Set("api_key", "hunter2-other-secret"); err == nil {
+		t.Fatal("Set: expected validation error, got nil")
+	} else if strings.Contains(err.Error(), "hunter2-other-secret") {
+		t.Fatalf("Set validation error leaks secret value: %v", err)
 	}
 
 	if err := cfg2.ValidateKey("api_key"); err != nil {

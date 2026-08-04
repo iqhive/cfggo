@@ -468,8 +468,10 @@ if v, ok := config.Get("server_port"); ok {
     fmt.Println("port is", v)
 }
 
-// Set a value by key. The value is converted to the field's type, the change
-// is recorded with SourceSet provenance, and any OnChange callbacks fire.
+// Set a value by key. The value is converted to the field's type, checked
+// against any validator registered for the key, the change is recorded with
+// SourceSet provenance, and any OnChange callbacks fire. A value that fails
+// validation is rejected and the stored value is left unchanged.
 if err := config.Set("server_port", 9090); err != nil {
     log.Fatal(err)
 }
@@ -594,6 +596,11 @@ if err := config.ValidateKey("server_port"); err != nil {
 }
 ```
 
+Validators are enforced on every write path: `Init` validates the fully loaded
+configuration, a command-line flag value is validated as it is parsed,
+`config.Set(...)` rejects values that fail the key's validator, and `Reload`
+re-validates (and rolls back) after applying new source data.
+
 cfggo also validates the validator registrations themselves during `Init`.
 Registering a validator for an unknown key is treated as a configuration-shape
 error, so a typo like `cfggo.WithValidation("server_prt", ...)` fails fast
@@ -656,10 +663,14 @@ type AppConfig struct {
 ```
 
 Secret values (and any secret `default` tag) are **masked** as `****` in every
-human-readable / diagnostic output — `Explain()`, `String()`, `Diagnose()` /
-`DiagnoseData()`, `ConfigReference()`, and `Report()` — so a config dump pasted
-into a log or bug report does not leak credentials. Validation still runs
-against the real value, so a bad secret is still reported as invalid.
+human-readable / diagnostic output and in error messages: validation failures
+report `****` instead of the offending value, and a secret value that cannot be
+parsed from a config file, an environment variable, or a command-line flag is
+redacted from the resulting error rather than echoed back. Masking applies to
+`Explain()`, `String()`, `Diagnose()` / `DiagnoseData()`, `ConfigReference()`,
+and `Report()` — so a config dump pasted into a log or bug report does not leak
+credentials. Validation still runs against the real value, so a bad secret is
+still reported as invalid.
 
 Masking is for display only. `Save()` and `GetJSONBytes()` deliberately write
 the **real** values so configuration round-trips correctly — do not log their
@@ -918,6 +929,8 @@ group.Reload()        // re-reads the file, re-dispatches per member (rollback +
 group.Report()        // per-member diagnostics, headed by namespace
 group.String()        // per-member dump, secrets masked
 group.Diagnose()      // map[namespace]Diagnostics
+group.Namespaces()    // registered namespaces, in registration order
+group.FlagSet()       // the shared flag set (for host-owned parsing)
 ```
 
 Group options: `GroupWithFileConfig`, `GroupWithDefaultFileConfig`,
@@ -958,6 +971,26 @@ cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`)
 and HTTP endpoints (`WithHTTPConfig`). `WithHTTPConfig` accepts separate loader
 and saver requests, so a config can be load-only, save-only, or both; a missing
 side is a no-op and successful HTTP operations must return `200 OK`.
+The handlers can also be constructed directly from the `sources` package
+(`sources.NewHandlerFile`, `sources.NewHandlerHTTP`, `sources.NewHandlerEnv`,
+`sources.NewHandlerBytes`) and passed to `WithConfigHandler` — useful when you
+need handler-level control, an in-memory config (`HandlerBytes`), or a custom
+`*http.Client`.
+
+The built-in handlers apply security hardening by default:
+
+- **HTTP**: plaintext `http://` URLs are rejected unless the host is loopback
+  (`localhost`, `127.0.0.0/8`, `::1`), so configuration (which may include
+  secrets on save) never transits a network unencrypted; opt out explicitly by
+  setting the handler's `AllowInsecureHTTP` field. Redirects that downgrade
+  HTTPS to HTTP are refused, redirect chains are capped at 10 hops, responses
+  are capped at 10 MiB, and the default client uses a 30 s timeout. Supplying
+  your own client via the handler's `Client` field gives you full ownership of
+  the redirect policy and timeouts.
+- **File**: saves are atomic (write to a temp file, fsync, rename) so a crash
+  cannot leave a truncated config. Newly created files use mode `0600`;
+  existing file permissions are preserved.
+
 Environment variables are handled by the automatic env override layer: use
 `WithEnvConfig()` for raw unprefixed variables such as `PORT`, or
 `WithEnvPrefix("MYAPP_")` for namespaced variables such as `MYAPP_PORT`.
@@ -1051,6 +1084,9 @@ works directly) and supply it with `WithLogger` (or `config.SetLogger(...)`):
 ```go
 err := cfggo.Init(config, cfggo.WithLogger(slog.Default()))
 ```
+
+To silence cfggo entirely for one instance, pass
+`cfggo.WithLogger(&cfglogger.NoopLogger{})`.
 
 If your custom logger is backed by `fmt.Printf`, `log.Printf`, or another
 printf-style API, wrap it with `cfglogger.Plain(...)` or build it with

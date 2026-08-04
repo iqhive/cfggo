@@ -57,6 +57,12 @@ type Structure struct {
 	// per key. It is mutually exclusive with WithFlagSet/WithStandardFlags
 	noFlags bool
 
+	// flagNamePrefix is prepended to the flag name (not the configuration key)
+	// when registering flags, so several Structures can share one flag.FlagSet
+	// without colliding (eg "auth.port"). It is set only by Group; it is empty
+	// for every standalone configuration and then costs nothing.
+	flagNamePrefix string
+
 	// lenient, when true (via WithLenientLoad), downgrades configuration load
 	// and validation failures during Init from hard errors to logged warnings.
 	// The default (false) makes Init() return these errors so misconfiguration is
@@ -206,6 +212,7 @@ type initStateSnapshot struct {
 	externalFlagSet   bool
 	ignoreUnknownVars bool
 	noFlags           bool
+	flagNamePrefix    string
 	lenient           bool
 	strictKeys        bool
 	snakeCaseNames    bool
@@ -248,6 +255,7 @@ func (c *Structure) snapshotInitState() initStateSnapshot {
 		externalFlagSet:   c.externalFlagSet,
 		ignoreUnknownVars: c.ignoreUnknownVars,
 		noFlags:           c.noFlags,
+		flagNamePrefix:    c.flagNamePrefix,
 		lenient:           c.lenient,
 		strictKeys:        c.strictKeys,
 		snakeCaseNames:    c.snakeCaseFieldNames,
@@ -275,6 +283,7 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 	c.externalFlagSet = snapshot.externalFlagSet
 	c.ignoreUnknownVars = snapshot.ignoreUnknownVars
 	c.noFlags = snapshot.noFlags
+	c.flagNamePrefix = snapshot.flagNamePrefix
 	c.lenient = snapshot.lenient
 	c.strictKeys = snapshot.strictKeys
 	c.snakeCaseFieldNames = snapshot.snakeCaseNames
@@ -547,6 +556,10 @@ func (c *Structure) GetLogger() cfglogger.Logger {
 	}
 	return c.logger
 }
+
+// structure returns the embedded Structure. It lets Group treat any config
+// struct that embeds Structure uniformly without reflection.
+func (c *Structure) structure() *Structure { return c }
 
 // InitSelf is a convenience variant of Init for when the struct initialises
 // itself (i.e. parent == c).

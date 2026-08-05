@@ -94,8 +94,9 @@ func TestSentinelErrors(t *testing.T) {
 	cfg.RegisterValidator("name", Custom(func(v interface{}) error {
 		return errors.New("always fails")
 	}))
-	if err := cfg.Set("name", "x"); err != nil {
-		t.Fatalf("Set: %v", err)
+	// Set enforces registered validators, so the failing validator rejects it.
+	if serr := cfg.Set("name", "x"); !errors.Is(serr, ErrValidation) {
+		t.Errorf("Set invalid: errors.Is(ErrValidation) = false, err = %v", serr)
 	}
 	verr := cfg.ValidateKey("name")
 	if !errors.Is(verr, ErrValidation) {

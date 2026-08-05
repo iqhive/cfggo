@@ -72,9 +72,10 @@ func main() {
 	}
 
 	// --- Show what a validation failure looks like. ---
+	// Set enforces registered validators, so an invalid value is rejected
+	// immediately and the stored value is left unchanged.
 	fmt.Println("\n-- Setting an invalid port to show failure output --")
-	_ = cfg.Set("server_port", 80) // below the 1024 minimum
-	if err := cfg.ValidateKey("server_port"); err != nil {
+	if err := cfg.Set("server_port", 80); err != nil { // below the 1024 minimum
 		fmt.Printf("Expected error: %v\n", err)
 	}
 

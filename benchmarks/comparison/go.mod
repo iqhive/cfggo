@@ -19,7 +19,7 @@ require (
 	github.com/iqhive/cfggo v0.0.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/knadh/koanf/parsers/json v1.0.0
-	github.com/knadh/koanf/providers/rawbytes v1.0.0
+	github.com/knadh/koanf/providers/rawbytes v1.0.1
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/spf13/viper v1.21.0
 )

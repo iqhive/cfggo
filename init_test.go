@@ -94,3 +94,75 @@ func TestWithEnvPrefixAndWithEnvConfigFollowOptionOrder(t *testing.T) {
 		})
 	}
 }
+
+type failedInitConfig struct {
+	Structure
+	Port func() int `cfggo:"port" default:"notanumber"`
+	Host func() string
+}
+
+func TestFailedInitRestoresPreInitState(t *testing.T) {
+	oldArgs := os.Args
+	os.Args = []string{"cmd"}
+	defer func() { os.Args = oldArgs }()
+
+	cfg := &failedInitConfig{}
+	err := cfg.Init(cfg, WithoutFlags())
+	if err == nil {
+		t.Fatal("Init should have failed with invalid default tag")
+	}
+
+	if cfg.parent != nil {
+		t.Errorf("cfg.parent = %v, want nil after failed Init", cfg.parent)
+	}
+	if cfg.plan != nil {
+		t.Errorf("cfg.plan = %v, want nil after failed Init", cfg.plan)
+	}
+	if cfg.initialized.Load() {
+		t.Errorf("cfg.initialized = true, want false after failed Init")
+	}
+	if len(cfg.configData) != 0 {
+		t.Errorf("len(cfg.configData) = %d, want 0 after failed Init", len(cfg.configData))
+	}
+	if len(cfg.defaultData) != 0 {
+		t.Errorf("len(cfg.defaultData) = %d, want 0 after failed Init", len(cfg.defaultData))
+	}
+	if len(cfg.provenance) != 0 {
+		t.Errorf("len(cfg.provenance) = %d, want 0 after failed Init", len(cfg.provenance))
+	}
+	if cfg.changed {
+		t.Errorf("cfg.changed = true, want false after failed Init")
+	}
+	if cfg.changeVersion != 0 {
+		t.Errorf("cfg.changeVersion = %d, want 0 after failed Init", cfg.changeVersion)
+	}
+}
+
+type lateFailConfig struct {
+	Structure
+	Port func() int `cfggo:"port" default:"8080"`
+}
+
+func TestFailedInitAfterPlanResetsToDefaults(t *testing.T) {
+	oldArgs := os.Args
+	os.Args = []string{"cmd"}
+	defer func() { os.Args = oldArgs }()
+
+	t.Setenv("PORT", "not-a-number")
+
+	cfg := &lateFailConfig{}
+	err := cfg.Init(cfg, WithoutFlags())
+	if err == nil {
+		t.Fatal("Init should have failed with invalid env value")
+	}
+
+	if cfg.initialized.Load() {
+		t.Errorf("cfg.initialized = true, want false after failed Init")
+	}
+	if got := cfg.Port(); got != 8080 {
+		t.Errorf("Port() = %d, want 8080 default", got)
+	}
+	if src, _ := cfg.Source("port"); src != SourceDefault {
+		t.Errorf("Source(port) = %v, want %v", src, SourceDefault)
+	}
+}

@@ -6,6 +6,31 @@ import "reflect"
 func (c *Structure) Reload() error {
 	c.ensureInit()
 
+	// Hold reloadMutex for the whole multi-phase reload so a concurrent Set
+	// cannot land between the snapshot and a rollback (where it would be
+	// silently lost) or between the reload and the runtime-override restore
+	// (where the pre-reload snapshot would overwrite it). It is released
+	// before OnChange callbacks run so a callback may safely call Set
+	c.reloadMutex.Lock()
+	oldConfig, err := c.reloadLocked()
+	c.reloadMutex.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// Notify OnChange listeners with the aggregate set of keys whose values
+	// differ from the pre-reload snapshot
+	// Skip the (allocating) diff entirely
+	// when nobody is listening.
+	if c.hasListeners() {
+		c.notifyChange(c.changeSet(oldConfig))
+	}
+	return nil
+}
+
+// reloadLocked performs the reload phases. The caller must hold reloadMutex.
+// It returns the pre-reload snapshot for change notification
+func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	// First, make a copy of the current configuration for potential rollback
 	var oldConfig map[string]interface{}
 	// oldProvenance lets us re-assert command-line flag precedence after the
@@ -19,20 +44,9 @@ func (c *Structure) Reload() error {
 	c.configMutex.Lock()
 	oldChanged = c.changed
 	oldChangeVersion = c.changeVersion
-	oldConfig = make(map[string]interface{})
-	for k, v := range c.configData {
-		oldConfig[k] = v
-	}
-	oldProvenance = make(map[string]Source, len(c.provenance))
-	for k, v := range c.provenance {
-		oldProvenance[k] = v
-	}
-	oldTrail = make(map[string][]Source, len(c.provenanceTrail))
-	for k, v := range c.provenanceTrail {
-		cp := make([]Source, len(v))
-		copy(cp, v)
-		oldTrail[k] = cp
-	}
+	oldConfig = cloneInterfaceMap(c.configData)
+	oldProvenance = cloneSourceMap(c.provenance)
+	oldTrail = cloneSourceTrailMap(c.provenanceTrail)
 	c.resetToDefaultsLocked()
 	// Reset the changed flag
 	c.changed = false
@@ -54,7 +68,7 @@ func (c *Structure) Reload() error {
 			c.changed = oldChanged
 			c.changeVersion = oldChangeVersion
 			c.configMutex.Unlock()
-			return err
+			return nil, err
 		}
 	}
 
@@ -68,13 +82,13 @@ func (c *Structure) Reload() error {
 		c.changed = oldChanged
 		c.changeVersion = oldChangeVersion
 		c.configMutex.Unlock()
-		return err
+		return nil, err
 	}
 
 	// Check if flags have been parsed before calling parseFlags
 	var flagsParsed bool
 	c.configMutex.RLock()
-	flagsParsed = c.FlagSet != nil && c.FlagSet.Parsed()
+	flagsParsed = c.flagSet != nil && c.flagSet.Parsed()
 	c.configMutex.RUnlock()
 
 	// Reload from flags if they've been parsed
@@ -85,7 +99,7 @@ func (c *Structure) Reload() error {
 	}
 
 	// Re-assert runtime override precedence. The standard flag package will not
-	// re-run an already-parsed FlagSet (parseFlags above early-returns), so the
+	// re-run an already-parsed flag set (parseFlags above early-returns), so the
 	// file and environment layers reloaded above can otherwise clobber values
 	// supplied on the command line. Programmatic Set values are also runtime
 	// overrides and must survive reloads until the caller changes them again
@@ -109,7 +123,7 @@ func (c *Structure) Reload() error {
 		c.changed = oldChanged
 		c.changeVersion = oldChangeVersion
 		c.configMutex.Unlock()
-		return err
+		return nil, err
 	}
 
 	// The accessor closures installed during Init read c.configData live on
@@ -130,18 +144,10 @@ func (c *Structure) Reload() error {
 		c.changed = oldChanged
 		c.changeVersion = oldChangeVersion
 		c.configMutex.Unlock()
-		return err
+		return nil, err
 	}
 
-	// Notify OnChange listeners with the aggregate set of keys whose values
-	// differ from the pre-reload snapshot
-	// Skip the (allocating) diff entirely
-	// when nobody is listening.
-	if c.hasListeners() {
-		c.notifyChange(c.changeSet(oldConfig))
-	}
-
-	return nil
+	return oldConfig, nil
 }
 
 func (c *Structure) resetToDefaultsLocked() {
@@ -152,7 +158,9 @@ func (c *Structure) resetToDefaultsLocked() {
 	c.provenance = make(map[string]Source, len(c.defaultData))
 	c.provenanceTrail = nil
 	for k, v := range c.defaultData {
-		c.configData[k] = v
+		// Clone mutable values (maps, slices, pointers) so that a subsequent
+		// mutation via an accessor or Set does not corrupt c.defaultData.
+		c.configData[k] = cloneMutableInterface(v)
 		c.provenance[k] = SourceDefault
 	}
 }
@@ -169,8 +177,8 @@ func (c *Structure) changeSet(old map[string]interface{}) []Change {
 		if oldVal, ok := old[k]; !ok || !reflect.DeepEqual(oldVal, newVal) {
 			changes = append(changes, Change{
 				Key:    k,
-				Old:    old[k],
-				New:    newVal,
+				Old:    cloneMutableInterface(old[k]),
+				New:    cloneMutableInterface(newVal),
 				Source: c.provenance[k],
 			})
 		}
@@ -179,7 +187,7 @@ func (c *Structure) changeSet(old map[string]interface{}) []Change {
 		if _, ok := c.configData[k]; !ok {
 			changes = append(changes, Change{
 				Key:    k,
-				Old:    oldVal,
+				Old:    cloneMutableInterface(oldVal),
 				New:    nil,
 				Source: SourceUnknown,
 			})

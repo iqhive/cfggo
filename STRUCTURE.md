@@ -62,10 +62,11 @@ github.com/iqhive/cfggo/
     file.go           #   HandlerFile
     http.go           #   HandlerHTTP
     env.go            #   HandlerEnv (wired via WithEnvConfig option)
+  conf/               # Dependency-free key=value/section format + file handler
   cfglogger/          # Logger interface + DefaultLogger + NoopLogger
     cfglogger.go
-  errwrapper/         # ErrorWrapper type + default chain-preserving wrapper
-    errwrapper.go
+  cfgerror/           # Structured error type + default chain-preserving wrapper
+    cfgerror.go
   validcfg/           # Validator type + built-in validators + composites
     validation.go     #   Validator type, ValidationError, ValidationErrors, Custom
     validators.go     #   Required, MinLength, MaxLength, Range, OneOf, Regex, Email, URL
@@ -96,6 +97,12 @@ github.com/iqhive/cfggo/
     validation/
       main.go         # All built-in validators + custom validator
       config.json
+    conf-simple/       # Root values, [global], comments, typed conversion
+      main.go
+      config.conf
+    conf-advanced/     # Groups, limits, JSON leaf values, deterministic rewrite
+      main.go
+      config.conf
 
   testdata/           # Test fixtures (canonical, single directory)
     test.json
@@ -113,13 +120,12 @@ graph TD
     user["user code"] --> cfggo["cfggo (root)"]
     cfggo --> sources
     cfggo --> cfglogger
-    cfggo --> errwrapper
+    cfggo --> cfgerror
     cfggo --> validcfg
     cfggo --> iconvert["internal/convert"]
     cfggo --> iflags["internal/flags"]
     cfggo --> ienv["internal/env"]
     iflags --> iconvert
-    errwrapper --> cfglogger
 ```
 
 ---
@@ -147,15 +153,15 @@ graph TD
 | `Logger` / `ErrorWrapper` | Global logger and error wrapper (replaceable) |
 | `SetLogLevel` / `SetLogOutput` / `ParseLogLevel` / `LogLevel*` | Log control |
 | `ConvertValue` | **Deprecated** - use `Structure.Set` instead |
-| `CleanupSignalHandler` | **Deprecated** no-op; drive saves via `WithAutoSave(ctx)` |
 
 ### Extension packages
 
 | Package | Exports |
 |---------|---------|
 | `sources` | `ConfigHandler` interface, `HandlerFile`, `HandlerHTTP`, `HandlerEnv` |
+| `conf` | Dependency-free `.conf` codec, limits, and `FileHandler` |
 | `cfglogger` | `Logger` interface, `DefaultLogger`, `NoopLogger` |
-| `errwrapper` | `ErrorWrapper`, default chain-preserving wrapper |
+| `cfgerror` | `Error`, `Wrapper`, default chain-preserving wrapper |
 | `validcfg` | `Validator` type, all built-in validators |
 
 ---

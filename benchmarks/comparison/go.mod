@@ -13,7 +13,7 @@ module github.com/iqhive/cfggo/benchmarks/comparison
 
 go 1.23.0
 
-toolchain go1.23.6
+toolchain go1.26.5
 
 require (
 	github.com/iqhive/cfggo v0.0.0

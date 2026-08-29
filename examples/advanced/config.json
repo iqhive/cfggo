@@ -1,0 +1,6 @@
+{
+  "service_name": "my-service",
+  "port": 9090,
+  "debug": false,
+  "timeout": "60s"
+}

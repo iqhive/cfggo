@@ -128,13 +128,18 @@ type suspectField struct {
 	Type string // the field's Go type, for the diagnostic message
 }
 
-// structPlanCache memoises structPlan by struct type
-// Keyed by reflect.Type value *structPlan
+// structPlanCache memoises structPlan by struct type and fallback naming mode.
 var structPlanCache sync.Map
 
+type structPlanCacheKey struct {
+	t         reflect.Type
+	snakeCase bool
+}
+
 // planForType returns the cached plan for struct type t, building it once
-func planForType(t reflect.Type) *structPlan {
-	if cached, ok := structPlanCache.Load(t); ok {
+func planForType(t reflect.Type, snakeCaseFieldNames bool) *structPlan {
+	key := structPlanCacheKey{t: t, snakeCase: snakeCaseFieldNames}
+	if cached, ok := structPlanCache.Load(key); ok {
 		return cached.(*structPlan)
 	}
 
@@ -142,23 +147,23 @@ func planForType(t reflect.Type) *structPlan {
 		byKey:   make(map[string]*planLeaf),
 		ignored: make(map[string]bool),
 	}
-	p.walk(t, "", nil)
+	p.walk(t, "", nil, snakeCaseFieldNames)
 	for i := range p.leaves {
 		p.byKey[p.leaves[i].info.Key] = &p.leaves[i]
 	}
 
-	actual, _ := structPlanCache.LoadOrStore(t, p)
+	actual, _ := structPlanCache.LoadOrStore(key, p)
 	return actual.(*structPlan)
 }
 
-func (p *structPlan) walk(t reflect.Type, prefix string, index []int) {
+func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseFieldNames bool) {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if field.Anonymous && field.Type == structureType {
 			continue
 		}
 
-		configVarName := configNameFromField(field)
+		configVarName := configNameFromField(field, snakeCaseFieldNames)
 
 		// build this field's index path (a fresh slice so children don't alias)
 		fieldIndex := make([]int, len(index)+1)
@@ -166,12 +171,12 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int) {
 		fieldIndex[len(index)] = i
 
 		// A field tagged "-" is excluded from config. Record the dotted
-		// Go-field-name key so shouldIgnoreField matches
-		// the same key callers would use for it
+		// fallback key so shouldIgnoreField matches the same key callers would
+		// use for it under the current naming mode
 		if configVarName == "-" {
-			key := field.Name
+			key := fallbackConfigName(field, snakeCaseFieldNames)
 			if prefix != "" {
-				key = prefix + "." + field.Name
+				key = prefix + "." + key
 			}
 			p.ignored[key] = true
 			continue
@@ -190,7 +195,7 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int) {
 			if isPtr {
 				p.ptrGroups = append(p.ptrGroups, fieldIndex)
 			}
-			p.walk(groupT, fullKey, fieldIndex)
+			p.walk(groupT, fullKey, fieldIndex, snakeCaseFieldNames)
 			continue
 		}
 
@@ -278,9 +283,10 @@ func hasExplicitConfigTag(field reflect.StructField) bool {
 }
 
 // configNameFromField returns the config map key for a struct field by
-// inspecting struct tags in priority order: cfggo, cfg, config, json, Name.
+// inspecting struct tags in priority order: cfggo, cfg, config, json, field
+// name. The field-name fallback uses snake_case only when enabled.
 // It runs only during one-time plan construction, so it does no caching
-func configNameFromField(field reflect.StructField) string {
+func configNameFromField(field reflect.StructField, snakeCaseFieldNames bool) string {
 	name := field.Tag.Get("cfggo")
 	if name == "" {
 		name = field.Tag.Get("cfg")
@@ -292,13 +298,66 @@ func configNameFromField(field reflect.StructField) string {
 		name = field.Tag.Get("json")
 	}
 	if name == "" {
-		name = field.Name
+		name = fallbackConfigName(field, snakeCaseFieldNames)
 	}
 	// Strip options after a comma (e.g. `json:"name,omitempty"`).
 	if idx := strings.IndexByte(name, ','); idx != -1 {
 		name = name[:idx]
 	}
 	return name
+}
+
+func fallbackConfigName(field reflect.StructField, snakeCaseFieldNames bool) string {
+	if !snakeCaseFieldNames {
+		return field.Name
+	}
+	return toSnakeCase(field.Name)
+}
+
+func toSnakeCase(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(name) + 4)
+	var last byte
+	for i := 0; i < len(name); i++ {
+		ch := name[i]
+		if ch == '_' {
+			if b.Len() > 0 && last != '_' {
+				b.WriteByte('_')
+				last = '_'
+			}
+			continue
+		}
+
+		if isASCIIUpper(ch) {
+			lower := ch + ('a' - 'A')
+			if i > 0 && b.Len() > 0 {
+				prev := name[i-1]
+				nextLower := i+1 < len(name) && isASCIILower(name[i+1])
+				if prev != '_' && (!isASCIIUpper(prev) || nextLower) {
+					b.WriteByte('_')
+				}
+			}
+			b.WriteByte(lower)
+			last = lower
+			continue
+		}
+
+		b.WriteByte(ch)
+		last = ch
+	}
+	return b.String()
+}
+
+func isASCIIUpper(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z'
+}
+
+func isASCIILower(ch byte) bool {
+	return ch >= 'a' && ch <= 'z'
 }
 
 // applyPlan uses the cached plan to seed c.configData with defaults and wire

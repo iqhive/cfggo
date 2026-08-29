@@ -30,4 +30,6 @@
 //   - provenance_bench_test.go Source/Sources/Explain/String/GetJSONBytes
 //   - validation_bench_test.go Validate/ValidateKey and the built-in validators
 //   - concurrent_bench_test.go contended read, write, and mixed workloads
+//   - group_bench_test.go      Group composition: member reads (must match the
+//     standalone accessor numbers) and Group.Init scaling with member count
 package benchmarks

@@ -144,10 +144,22 @@ func Regex(pattern string) Validator {
 	}
 }
 
+var defaultEmailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
 // Email returns a validator that checks if a string is a valid email address
 func Email() Validator {
-	emailRegex := `^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`
-	return Regex(emailRegex)
+	return func(value interface{}) error {
+		s, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("Regex validator can only be applied to strings, got %T", value)
+		}
+
+		if !defaultEmailRegex.MatchString(s) {
+			return fmt.Errorf("value must match pattern: %s", defaultEmailRegex.String())
+		}
+
+		return nil
+	}
 }
 
 // URL returns a validator that checks if a string is a valid URL

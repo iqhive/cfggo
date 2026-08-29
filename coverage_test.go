@@ -145,11 +145,11 @@ func TestStructureConvenienceMethodsAndDiagnostics(t *testing.T) {
 	if err := cfg.ValidateKey("name"); err != nil {
 		t.Fatalf("ValidateKey(name) error = %v", err)
 	}
-	if err := cfg.Set("port", 0); err != nil {
-		t.Fatalf("Set(port) error = %v", err)
+	if err := cfg.Set("port", 0); !errors.Is(err, validcfg.ErrValidation) {
+		t.Fatalf("Set(port) error = %v, want ErrValidation (Set enforces registered validators)", err)
 	}
-	if err := cfg.ValidateKey("port"); !errors.Is(err, validcfg.ErrValidation) {
-		t.Fatalf("ValidateKey(port) error = %v, want ErrValidation", err)
+	if err := cfg.ValidateKey("port"); err != nil {
+		t.Fatalf("ValidateKey(port) error = %v, want nil (invalid Set was rejected)", err)
 	}
 
 	logger := &cfglogger.NoopLogger{}
@@ -162,7 +162,6 @@ func TestStructureConvenienceMethodsAndDiagnostics(t *testing.T) {
 		t.Fatalf("WrapError() = %v, want code 123", err)
 	}
 
-	CleanupSignalHandler()
 }
 
 func TestOptionSettersAndRootValidators(t *testing.T) {
@@ -201,7 +200,7 @@ func TestOptionSettersAndRootValidators(t *testing.T) {
 	if err := WithFlagSet(fs)(s); err != nil {
 		t.Fatalf("WithFlagSet() error = %v", err)
 	}
-	if s.FlagSet != fs || !s.externalFlagSet {
+	if s.GetFlagSet() != fs || !s.externalFlagSet {
 		t.Fatal("WithFlagSet() did not store external flag set")
 	}
 
@@ -333,5 +332,103 @@ func TestGlobalLoggingHelpers(t *testing.T) {
 	SetGlobalErrorWrapper(nil)
 	if GlobalErrorWrapper() == nil {
 		t.Fatal("SetGlobalErrorWrapper(nil) should not clear wrapper")
+	}
+}
+
+func TestValidateConfigShapeReportsUnknownValidators(t *testing.T) {
+	type ShapeConfig struct {
+		Structure
+		Port func() int `cfggo:"port"`
+	}
+
+	cfg := &ShapeConfig{Port: DefaultValue(8080)}
+	err := cfg.Init(cfg, WithoutFlags(), WithoutEnv(), WithValidation("prot", Required()))
+	if !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("Init() error = %v, want ErrUnknownKey", err)
+	}
+	if !strings.Contains(err.Error(), "validators registered for unknown configuration keys: prot") {
+		t.Fatalf("Init() error = %q, want unknown validator key", err.Error())
+	}
+
+	uninitialized := &Structure{}
+	uninitialized.RegisterValidator("anything", Required())
+	if err := uninitialized.validateConfigShape(); err != nil {
+		t.Fatalf("validateConfigShape() without plan error = %v", err)
+	}
+}
+
+func TestNewFlagCanRegisterDynamicValuesAfterInit(t *testing.T) {
+	cfg := &Structure{}
+	if err := cfg.InitSelf(WithoutFlags(), WithoutEnv()); err != nil {
+		t.Fatalf("InitSelf() error = %v", err)
+	}
+
+	cfg.NewFlag("runtime", 10, "runtime value")
+	cfg.NewFlag("runtime_enabled", false, "runtime bool")
+
+	fs := cfg.GetFlagSet()
+	if err := fs.Parse([]string{"--runtime=42", "--runtime_enabled"}); err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if got, _ := cfg.Get("runtime"); got != 42 {
+		t.Fatalf("runtime = %#v, want 42", got)
+	}
+	if got, _ := cfg.Get("runtime_enabled"); got != true {
+		t.Fatalf("runtime_enabled = %#v, want true", got)
+	}
+	if got, _ := cfg.Source("runtime"); got != SourceFlag {
+		t.Fatalf("runtime source = %s, want flag", got)
+	}
+}
+
+func TestGetAllKeysReturnsSnapshot(t *testing.T) {
+	cfg := newCoverageConfig()
+	if err := cfg.Init(cfg, WithoutFlags(), WithoutEnv()); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	keys := cfg.getAllKeys()
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		seen[key] = true
+	}
+	for _, want := range []string{"port", "name", "secret", "labels"} {
+		if !seen[want] {
+			t.Fatalf("getAllKeys() = %v, missing %q", keys, want)
+		}
+	}
+}
+
+func TestChangeSetIncludesChangedAddedAndRemovedKeys(t *testing.T) {
+	cfg := &Structure{
+		configData: map[string]interface{}{
+			"changed": 2,
+			"added":   "new",
+		},
+		provenance: map[string]Source{
+			"changed": SourceSet,
+			"added":   SourceEnv,
+		},
+	}
+	old := map[string]interface{}{
+		"changed": 1,
+		"removed": "old",
+	}
+
+	changes := cfg.changeSet(old)
+	got := make(map[string]Change, len(changes))
+	for _, change := range changes {
+		got[change.Key] = change
+	}
+
+	if change := got["changed"]; change.Old != 1 || change.New != 2 || change.Source != SourceSet {
+		t.Fatalf("changed entry = %#v, want old=1 new=2 source=set", change)
+	}
+	if change := got["added"]; change.Old != nil || change.New != "new" || change.Source != SourceEnv {
+		t.Fatalf("added entry = %#v, want nil -> new from env", change)
+	}
+	if change := got["removed"]; change.Old != "old" || change.New != nil || change.Source != SourceUnknown {
+		t.Fatalf("removed entry = %#v, want old -> nil from unknown", change)
 	}
 }

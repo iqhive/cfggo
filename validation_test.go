@@ -7,6 +7,46 @@ import (
 	"testing"
 )
 
+func TestValidateConfigShape(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{"test"}
+
+	type ShapeConfig struct {
+		Structure
+		Port func() int `cfggo:"port"`
+	}
+
+	t.Run("valid_shape", func(t *testing.T) {
+		config := &ShapeConfig{}
+		if err := config.Init(config, WithFlagSet(flag.NewFlagSet("shape-valid", flag.ContinueOnError))); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		config.RegisterValidator("port", func(interface{}) error { return nil })
+		if err := config.ValidateConfigShape(); err != nil {
+			t.Fatalf("ValidateConfigShape() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("unknown_key", func(t *testing.T) {
+		config := &ShapeConfig{}
+		if err := config.Init(config, WithFlagSet(flag.NewFlagSet("shape-unknown", flag.ContinueOnError))); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		config.RegisterValidator("prot", func(interface{}) error { return nil })
+		if err := config.ValidateConfigShape(); err == nil {
+			t.Fatal("ValidateConfigShape() = nil, want an unknown-key error")
+		}
+	})
+
+	t.Run("no_plan", func(t *testing.T) {
+		config := &Structure{}
+		if err := config.ValidateConfigShape(); err != nil {
+			t.Fatalf("ValidateConfigShape() on uninitialized structure = %v, want nil", err)
+		}
+	})
+}
+
 func TestValidation(t *testing.T) {
 	// Save original command line arguments and restore them after the test
 	origArgs := os.Args

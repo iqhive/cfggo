@@ -1,7 +1,10 @@
 package convert_test
 
 import (
+	"fmt"
+	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,23 +12,25 @@ import (
 )
 
 var (
-	typeBool     = reflect.TypeOf(true)
-	typeString   = reflect.TypeOf("")
-	typeInt      = reflect.TypeOf(int(0))
-	typeInt64    = reflect.TypeOf(int64(0))
-	typeUint     = reflect.TypeOf(uint(0))
-	typeUint8    = reflect.TypeOf(uint8(0))
-	typeFloat32  = reflect.TypeOf(float32(0))
-	typeFloat64  = reflect.TypeOf(float64(0))
-	typeDuration = reflect.TypeOf(time.Duration(0))
-	typeTime     = reflect.TypeOf(time.Time{})
-	typeAnySlice = reflect.TypeOf([]interface{}{})
-	typeStrSlice = reflect.TypeOf([]string{})
-	typeIntSlice = reflect.TypeOf([]int{})
-	typeIntMap   = reflect.TypeOf(map[int]int{})
-	typeAnyMap   = reflect.TypeOf(map[string]interface{}{})
-	typeStrMap   = reflect.TypeOf(map[string]string{})
-	typeTextType = reflect.TypeOf(textType{})
+	typeBool      = reflect.TypeOf(true)
+	typeString    = reflect.TypeOf("")
+	typeInt       = reflect.TypeOf(int(0))
+	typeInt64     = reflect.TypeOf(int64(0))
+	typeUint      = reflect.TypeOf(uint(0))
+	typeUint8     = reflect.TypeOf(uint8(0))
+	typeFloat32   = reflect.TypeOf(float32(0))
+	typeFloat64   = reflect.TypeOf(float64(0))
+	typeDuration  = reflect.TypeOf(time.Duration(0))
+	typeTime      = reflect.TypeOf(time.Time{})
+	typeAnySlice  = reflect.TypeOf([]interface{}{})
+	typeStrSlice  = reflect.TypeOf([]string{})
+	typeIntSlice  = reflect.TypeOf([]int{})
+	typeBoolSlice = reflect.TypeOf([]bool{})
+	typeIntMap    = reflect.TypeOf(map[int]int{})
+	typeAnyMap    = reflect.TypeOf(map[string]interface{}{})
+	typeStrMap    = reflect.TypeOf(map[string]string{})
+	typeTextType  = reflect.TypeOf(textType{})
+	typeTextPtr   = reflect.TypeOf((*textType)(nil))
 )
 
 // textType implements encoding.TextUnmarshaler via a pointer receiver.
@@ -38,6 +43,24 @@ func (t *textType) UnmarshalText(b []byte) error {
 	}
 	t.V = v
 	return nil
+}
+
+type valueTextType string
+
+func (valueTextType) UnmarshalText([]byte) error {
+	return nil
+}
+
+type wrappingErrorWrapper struct {
+	called bool
+}
+
+func (w *wrappingErrorWrapper) WrapError(err error, code int, msg string, args ...interface{}) error {
+	w.called = true
+	if msg == "" {
+		return fmt.Errorf("wrapped[%d]: %w", code, err)
+	}
+	return fmt.Errorf("wrapped[%d]: "+msg, append([]interface{}{code}, args...)...)
 }
 
 func TestConvertString(t *testing.T) {
@@ -88,17 +111,25 @@ func TestConvertString(t *testing.T) {
 		{"time bad", "notadate", typeTime, nil, true},
 		// []string
 		{"[]string csv", "a,b,c", typeStrSlice, []string{"a", "b", "c"}, false},
+		{"[]string csv with trailing comma", "a,b,c,", typeStrSlice, []string{"a", "b", "c"}, false},
+		{"[]string csv with empty elements and spaces", " a, , b , c , ", typeStrSlice, []string{"a", "b", "c"}, false},
 		{"[]string json", `["x","y","z"]`, typeStrSlice, []string{"x", "y", "z"}, false},
 		{"[]string empty", "", typeStrSlice, []string{}, false},
+		{"[]string only commas and spaces", " , , ", typeStrSlice, []string{}, false},
 		// []int
 		{"[]int csv", "1,2,3", typeIntSlice, []int{1, 2, 3}, false},
+		{"[]int csv with trailing comma", "1, 2, 3, ", typeIntSlice, []int{1, 2, 3}, false},
 		{"[]int bad element", "1,abc,3", typeIntSlice, nil, true},
+		// []bool
+		{"[]bool csv with trailing comma", "true, false, true,", typeBoolSlice, []bool{true, false, true}, false},
 		// map[int]int
 		{"map[int]int ok", "1:10,2:20,3:30", typeIntMap, map[int]int{1: 10, 2: 20, 3: 30}, false},
 		{"map[int]int bad val", "1:abc", typeIntMap, nil, true},
 		{"map[int]int bad format", "1:10,invalid", typeIntMap, nil, true},
 		// TextUnmarshaler (pointer receiver)
 		{"TextUnmarshaler", "42", typeTextType, textType{V: 42}, false},
+		{"pointer TextUnmarshaler", "42", typeTextPtr, &textType{V: 42}, false},
+		{"value TextUnmarshaler", "ignored", reflect.TypeOf(valueTextType("")), valueTextType("ignored"), false},
 	}
 
 	for _, tc := range cases {
@@ -111,6 +142,127 @@ func TestConvertString(t *testing.T) {
 				t.Errorf("got %v (%T), want %v (%T)", got, got, tc.want, tc.want)
 			}
 		})
+	}
+}
+
+func TestConvertValueEdgeCases(t *testing.T) {
+	type jsonTarget struct {
+		N int `json:"n"`
+	}
+
+	cases := []struct {
+		name    string
+		value   interface{}
+		target  reflect.Type
+		want    interface{}
+		wantErr string
+	}{
+		{
+			name:   "nil target returns original value",
+			value:  map[string]int{"answer": 42},
+			target: nil,
+			want:   map[string]int{"answer": 42},
+		},
+		{
+			name:   "empty interface target accepts any value",
+			value:  []int{1, 2, 3},
+			target: reflect.TypeOf((*interface{})(nil)).Elem(),
+			want:   []int{1, 2, 3},
+		},
+		{
+			name:   "json fallback converts map to struct",
+			value:  map[string]interface{}{"n": float64(7)},
+			target: reflect.TypeOf(jsonTarget{}),
+			want:   jsonTarget{N: 7},
+		},
+		{
+			name:    "json marshal failure is reported",
+			value:   func() {},
+			target:  typeString,
+			wantErr: "cannot marshal",
+		},
+		{
+			name:   "float to uint64 exercises wide unsigned bounds",
+			value:  float64(42),
+			target: reflect.TypeOf(uint64(0)),
+			want:   uint64(42),
+		},
+		{
+			name:    "infinite float to uint is rejected",
+			value:   math.Inf(1),
+			target:  typeUint,
+			wantErr: "lossy numeric conversion",
+		},
+		{
+			name:    "map key conversion error is returned",
+			value:   map[interface{}]interface{}{"bad": "1"},
+			target:  typeIntMap,
+			wantErr: "cannot parse int",
+		},
+		{
+			name:    "map value conversion error is returned",
+			value:   map[string]interface{}{"1": "bad"},
+			target:  typeIntMap,
+			wantErr: "cannot parse int",
+		},
+		// Float-to-int boundary: value just beyond int64 max must be rejected
+		{
+			name:    "float beyond int64 max rejected",
+			value:   math.Nextafter(float64(math.MaxInt64), math.Inf(1)),
+			target:  typeInt64,
+			wantErr: "lossy numeric conversion",
+		},
+		{
+			name:    "float beyond int64 min rejected",
+			value:   math.Nextafter(float64(math.MinInt64), math.Inf(-1)),
+			target:  typeInt64,
+			wantErr: "lossy numeric conversion",
+		},
+		// Float->uint64 boundary: must reject values beyond MaxUint64
+		{
+			name:    "float beyond uint64 max rejected",
+			value:   math.Nextafter(float64(math.MaxUint64), math.Inf(1)),
+			target:  reflect.TypeOf(uint64(0)),
+			wantErr: "lossy numeric conversion",
+		},
+		{
+			name:    "negative float to uint rejected",
+			value:   float64(-1),
+			target:  typeUint,
+			wantErr: "lossy numeric conversion",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := convert.ConvertValue(tc.value, tc.target, nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ConvertValue() error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ConvertValue() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("ConvertValue() = %#v (%T), want %#v (%T)", got, got, tc.want, tc.want)
+			}
+		})
+	}
+}
+
+func TestConvertStringUsesErrorWrapper(t *testing.T) {
+	wrapper := &wrappingErrorWrapper{}
+	_, err := convert.ConvertString("not-an-int", typeInt, wrapper)
+	if err == nil {
+		t.Fatal("ConvertString() expected wrapped error, got nil")
+	}
+	if !wrapper.called {
+		t.Fatal("ConvertString() did not call ErrorWrapper")
+	}
+	if got := err.Error(); !strings.Contains(got, "wrapped[400]") || !strings.Contains(got, "cannot parse int") {
+		t.Fatalf("wrapped error = %q, want code and parse message", got)
 	}
 }
 

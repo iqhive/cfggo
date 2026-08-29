@@ -1,0 +1,7 @@
+{
+  "server_port": 8080,
+  "admin_email": "admin@example.com",
+  "log_level": "info",
+  "max_connections": 50,
+  "api_key": "abcdefghijklmnopqrstuvwxyz123456"
+}

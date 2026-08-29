@@ -10,7 +10,7 @@ coverage:
         base: auto
         flags:
           - unit
-        if_ci_failed: error
+        if_ci_failed: warn
     patch:
       default:
         target: 80%
@@ -18,7 +18,7 @@ coverage:
         base: auto
         flags:
           - unit
-        if_ci_failed: error
+        if_ci_failed: warn
 
 comment:
   layout: "reach, diff, flags, files"

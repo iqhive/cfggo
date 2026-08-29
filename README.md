@@ -3,9 +3,9 @@
 > **Type-safe, hot-reloadable configuration for Go. No untyped lookups, no boilerplate.**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/iqhive/cfggo.svg)](https://pkg.go.dev/github.com/iqhive/cfggo)
-[![Go Report Card](https://goreportcard.com/badge/github.com/iqhive/cfggo)](https://goreportcard.com/report/github.com/iqhive/cfggo)
+[![golangci-lint](https://img.shields.io/badge/golangci--lint-passing-brightgreen.svg)](https://github.com/iqhive/cfggo/actions/workflows/ci.yml)
 [![CI](https://github.com/iqhive/cfggo/actions/workflows/ci.yml/badge.svg)](https://github.com/iqhive/cfggo/actions)
-[![Coverage](https://codecov.io/gh/iqhive/cfggo/branch/main/graph/badge.svg)](https://codecov.io/gh/iqhive/cfggo)
+[![Coverage](https://codecov.io/g/iqhive/cfggo/branch/main/graph/badge.svg)](https://codecov.io/gh/iqhive/cfggo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/iqhive/cfggo)](https://github.com/iqhive/cfggo/releases)
 
@@ -41,7 +41,7 @@ port := config.ServerPort() // returns int, checked at compile time
 > stable and follows [Semantic Versioning](https://semver.org) — `v1.x` will not
 > make breaking changes.
 
-![cfggo hot reload in action](‹demo.gif›)
+![cfggo hot reload in action](demo.gif)
 
 > *Editing `config.json` while the app runs — the typed accessors return the new
 > values instantly, no restart.*
@@ -51,7 +51,7 @@ port := config.ServerPort() // returns int, checked at compile time
 ## Why cfggo?
 
 The Go config space is crowded. cfggo's niche is the combination of **typed
-accessors that stay correct across a live reload**, from one small dependency:
+accessors that stay correct across a live reload**:
 
 | | **cfggo** | Viper | envconfig | koanf |
 |---|:---:|:---:|:---:|:---:|
@@ -61,14 +61,14 @@ accessors that stay correct across a live reload**, from one small dependency:
 | Built-in validators | ✅ | ❌ | ⚠️ `required` | ❌ |
 | Coexists with stdlib `flag` | ✅ | ⚠️ | ❌ | ⚠️ |
 | Value provenance (`Explain`/`Source`) | ✅ | ❌ | ❌ | ❌ |
-| Dependencies | Minimal | Many | None | Minimal |
+| External Dependencies | ✅ None | ❌ Many | ✅ None | ⚠️ Few |
 
 > *Comparison reflects each library as of June 2026 and is necessarily a
 > simplification; corrections and updates are welcome via PR.*
 
-**Pick cfggo** if you want strongly-typed config access that *stays typed across live reloads*, plus provenance and validation, from one small dependency.
-**Reach for Viper** if you need its large built-in format ecosystem (YAML/TOML/HCL/INI/etc.) out of the box and don't mind untyped lookups. *(cfggo reads JSON natively; other formats are a few lines via a custom `ConfigHandler` —
-see the [FAQ](#faq).)*
+**Pick cfggo** if you want strongly-typed config access that *stays typed across live reloads*, plus provenance and validation.
+
+**Reach for Viper** if you need its large built-in format ecosystem (YAML/TOML/HCL/INI/etc.) out of the box and don't mind untyped lookups. *(cfggo reads JSON natively; other formats are a few lines via a custom `ConfigHandler` — see the [FAQ](#faq).)*
 
 ---
 
@@ -96,6 +96,7 @@ see the [FAQ](#faq).)*
 - [Command-Line Flags](#command-line-flags)
 - [Reading and Setting Values at Runtime](#reading-and-setting-values-at-runtime)
 - [Saving Configuration](#saving-configuration)
+- [Combining multiple services in one binary](#combining-multiple-services-in-one-binary)
 - [Performance](#performance)
 - [Advanced Features](#advanced-features)
   - [Configuration Options](#configuration-options)
@@ -287,6 +288,20 @@ type MyConfig struct {
 }
 ```
 
+By default, the final Go-field-name fallback is used as-is for backwards
+compatibility. To make untagged fields use snake_case, set
+`cfggo.DefaultSnakeCaseFieldNames = true` before initialising configs, or opt in
+per config with `cfggo.WithSnakeCaseFieldNames(true)`:
+
+```go
+type MyConfig struct {
+    cfggo.Structure
+    ServerPort func() int // key: "server_port" when snake_case naming is enabled
+}
+
+cfggo.Init(config, cfggo.WithSnakeCaseFieldNames(true))
+```
+
 **Ignoring a field.** Tag a field with `-` to exclude it from configuration
 entirely (no key, env var, or flag is created):
 
@@ -453,8 +468,10 @@ if v, ok := config.Get("server_port"); ok {
     fmt.Println("port is", v)
 }
 
-// Set a value by key. The value is converted to the field's type, the change
-// is recorded with SourceSet provenance, and any OnChange callbacks fire.
+// Set a value by key. The value is converted to the field's type, checked
+// against any validator registered for the key, the change is recorded with
+// SourceSet provenance, and any OnChange callbacks fire. A value that fails
+// validation is rejected and the stored value is left unchanged.
 if err := config.Set("server_port", 9090); err != nil {
     log.Fatal(err)
 }
@@ -579,6 +596,11 @@ if err := config.ValidateKey("server_port"); err != nil {
 }
 ```
 
+Validators are enforced on every write path: `Init` validates the fully loaded
+configuration, a command-line flag value is validated as it is parsed,
+`config.Set(...)` rejects values that fail the key's validator, and `Reload`
+re-validates (and rolls back) after applying new source data.
+
 cfggo also validates the validator registrations themselves during `Init`.
 Registering a validator for an unknown key is treated as a configuration-shape
 error, so a typo like `cfggo.WithValidation("server_prt", ...)` fails fast
@@ -641,10 +663,14 @@ type AppConfig struct {
 ```
 
 Secret values (and any secret `default` tag) are **masked** as `****` in every
-human-readable / diagnostic output — `Explain()`, `String()`, `Diagnose()` /
-`DiagnoseData()`, `ConfigReference()`, and `Report()` — so a config dump pasted
-into a log or bug report does not leak credentials. Validation still runs
-against the real value, so a bad secret is still reported as invalid.
+human-readable / diagnostic output and in error messages: validation failures
+report `****` instead of the offending value, and a secret value that cannot be
+parsed from a config file, an environment variable, or a command-line flag is
+redacted from the resulting error rather than echoed back. Masking applies to
+`Explain()`, `String()`, `Diagnose()` / `DiagnoseData()`, `ConfigReference()`,
+and `Report()` — so a config dump pasted into a log or bug report does not leak
+credentials. Validation still runs against the real value, so a bad secret is
+still reported as invalid.
 
 Masking is for display only. `Save()` and `GetJSONBytes()` deliberately write
 the **real** values so configuration round-trips correctly — do not log their
@@ -834,6 +860,92 @@ BenchmarkReadInt_Cfggo-64      9.97 ns/op      0 B/op    0 allocs/op
 BenchmarkReadString_Cfggo-64   13.55 ns/op     0 B/op    0 allocs/op
 ```
 
+## Combining multiple services in one binary
+
+Each service normally owns its config struct and calls `cfggo.Init`. Linking
+several of those services into one binary breaks down: every `Init` creates its
+own `flag.FlagSet` and parses `os.Args`, so service A's parser sees service B's
+flags as unknown (and exits the process), identically named keys such as `port`
+collide across flags, env vars, and files, and each service wants its own file.
+
+`cfggo.Group` composes those services instead. Service packages stay exactly as
+they are — still standalone-compatible, with no struct or tag changes:
+
+```go
+// package authsvc
+type Config struct {
+    cfggo.Structure
+    Port   func() int    `cfggo:"port" default:"8080" help:"listen port"`
+    DBHost func() string `cfggo:"db_host"`
+}
+var Cfg = &Config{}
+```
+
+The combined binary registers each service under a namespace and initialises
+them together:
+
+```go
+group := cfggo.NewGroup(
+    cfggo.GroupWithFileConfig("combined.json"), // one file, one section per service
+    cfggo.GroupWithEnvPrefix("MYAPP_"),         // optional global env prefix
+)
+group.Register("auth", authsvc.Cfg)
+group.Register("billing", billingsvc.Cfg,
+    cfggo.WithValidation("port", validcfg.Range(1, 65535))) // per-member options still work
+if err := group.Init(); err != nil {
+    log.Fatal(err)
+}
+
+// Every service reads its configuration exactly as before.
+fmt.Println(authsvc.Cfg.Port())
+```
+
+For a member registered as `"auth"`, the namespace scopes every external
+surface, and only the external surfaces:
+
+| Surface  | Standalone       | In a Group                 |
+|----------|------------------|----------------------------|
+| Flag     | `--port`         | `--auth.port`              |
+| Env var  | `PORT`           | `MYAPP_AUTH_PORT`          |
+| File     | `{"port": 8080}` | `{"auth": {"port": 8080}}` |
+| Accessor | `cfg.Port()`     | `cfg.Port()` (unchanged)   |
+
+A member registered with an empty namespace (`group.Register("", cfg)`) is merged
+at the root with no prefix, reading the file's non-namespaced top-level keys.
+`Init` then reports an error if two root members (or a root member and a
+namespace) claim the same name, instead of silently mis-parsing.
+
+`Group.Init` loads the combined document once and splits it per namespace,
+initialises each member with its own section, its namespaced env prefix, and the
+group's single shared flag set in register-only mode, then parses that flag set
+exactly once and re-runs each member's key and validation checks.
+
+Lifecycle operations are forwarded to the members:
+
+```go
+group.Save()          // reassembles {"auth": {…}, "billing": {…}} and writes it once
+group.SaveIfChanged()  // only when at least one member is dirty
+group.Reload()        // re-reads the file, re-dispatches per member (rollback + OnChange preserved)
+group.Report()        // per-member diagnostics, headed by namespace
+group.String()        // per-member dump, secrets masked
+group.Diagnose()      // map[namespace]Diagnostics
+group.Namespaces()    // registered namespaces, in registration order
+group.FlagSet()       // the shared flag set (for host-owned parsing)
+```
+
+Group options: `GroupWithFileConfig`, `GroupWithDefaultFileConfig`,
+`GroupWithConfigHandler`, `GroupWithEnvPrefix`, `GroupWithFlagSet`,
+`GroupWithStandardFlags`, `GroupWithoutFlags`, `GroupWithIgnoreUnknownFlags`,
+`GroupWithLogger`. Per-member `Option`s are passed to `Register` and are applied
+after the group's, so a member can override any of them (for example its own
+`WithEnvPrefix`).
+
+A `Group` costs nothing at read time: accessors remain the same statically-typed
+closures over each member's own map and mutex, so grouped members neither add
+indirection to a read nor contend with one another. `Group.Init` costs about one
+standalone `Init` per member plus a single JSON split, and the cached per-type
+plan is shared between standalone and grouped use of the same type.
+
 ## Advanced Features
 
 ### Custom Configuration Sources
@@ -859,6 +971,26 @@ cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`)
 and HTTP endpoints (`WithHTTPConfig`). `WithHTTPConfig` accepts separate loader
 and saver requests, so a config can be load-only, save-only, or both; a missing
 side is a no-op and successful HTTP operations must return `200 OK`.
+The handlers can also be constructed directly from the `sources` package
+(`sources.NewHandlerFile`, `sources.NewHandlerHTTP`, `sources.NewHandlerEnv`,
+`sources.NewHandlerBytes`) and passed to `WithConfigHandler` — useful when you
+need handler-level control, an in-memory config (`HandlerBytes`), or a custom
+`*http.Client`.
+
+The built-in handlers apply security hardening by default:
+
+- **HTTP**: plaintext `http://` URLs are rejected unless the host is loopback
+  (`localhost`, `127.0.0.0/8`, `::1`), so configuration (which may include
+  secrets on save) never transits a network unencrypted; opt out explicitly by
+  setting the handler's `AllowInsecureHTTP` field. Redirects that downgrade
+  HTTPS to HTTP are refused, redirect chains are capped at 10 hops, responses
+  are capped at 10 MiB, and the default client uses a 30 s timeout. Supplying
+  your own client via the handler's `Client` field gives you full ownership of
+  the redirect policy and timeouts.
+- **File**: saves are atomic (write to a temp file, fsync, rename) so a crash
+  cannot leave a truncated config. Newly created files use mode `0600`;
+  existing file permissions are preserved.
+
 Environment variables are handled by the automatic env override layer: use
 `WithEnvConfig()` for raw unprefixed variables such as `PORT`, or
 `WithEnvPrefix("MYAPP_")` for namespaced variables such as `MYAPP_PORT`.
@@ -870,6 +1002,59 @@ err := cfggo.Init(config, cfggo.WithConfigHandler(myHandler))
 
 This is also how you add **YAML, TOML, or any other format**: unmarshal it to
 JSON in `LoadConfig` (see the [FAQ](#faq)).
+
+### `.conf` Files
+
+cfggo includes an opt-in, dependency-free `conf` package. Existing
+`WithFileConfig` behavior remains unchanged, so select the format explicitly:
+
+```go
+handler, err := conf.NewFileHandler("config.conf", false)
+if err != nil {
+    return err
+}
+err = cfggo.Init(config, cfggo.WithConfigHandler(handler))
+```
+
+The format uses `key=value` assignments and optional sections:
+
+```conf
+# Values before the first section are root values.
+name = checkout-api
+port = 8080 # everything after # is a comment
+
+[database]
+host = database.internal
+pool.size = 20
+
+[global]
+# The special global section also selects the root.
+debug = true
+```
+
+Bare scalar values remain strings until cfggo converts them against the typed
+destination field. Quoted strings, arrays, and objects use JSON syntax. `null`
+clears a value. A `#` always starts a comment, including inside apparent quotes;
+use the JSON escape `\u0023` for a literal hash in a quoted string.
+
+Duplicate keys, malformed structured values, and scalar/object path conflicts
+are errors. Dotted keys and dotted sections create nested objects. Input size,
+line count, line size, entry count, and nesting depth are bounded and can be
+configured with `conf.WithLimits`.
+
+File handlers are read-only by default because cfggo cannot preserve comments,
+ordering, or formatting when saving. Opt into a complete deterministic rewrite
+when that tradeoff is acceptable:
+
+```go
+handler, err := conf.NewFileHandler(
+    "config.conf",
+    false,
+    conf.RewriteOnSave(),
+)
+```
+
+See `examples/conf-simple` and `examples/conf-advanced` for runnable examples.
 
 ### Nested Configuration
 
@@ -953,6 +1138,9 @@ works directly) and supply it with `WithLogger` (or `config.SetLogger(...)`):
 err := cfggo.Init(config, cfggo.WithLogger(slog.Default()))
 ```
 
+To silence cfggo entirely for one instance, pass
+`cfggo.WithLogger(&cfglogger.NoopLogger{})`.
+
 If your custom logger is backed by `fmt.Printf`, `log.Printf`, or another
 printf-style API, wrap it with `cfglogger.Plain(...)` or build it with
 `cfglogger.NewPrintfLogger(...)`. cfggo passes slog-style key/value attributes;
@@ -965,9 +1153,8 @@ err := cfggo.Init(config, cfggo.WithLogger(logger))
 ```
 
 `WithErrorWrapper` lets you customise how cfggo formats the errors it returns
-(for example, to attach your own error codes or context). New code should use
-the `cfgerror.Wrapper` type; the older `errwrapper` package remains as a
-backward-compatible alias.
+(for example, to attach your own error codes or context). Use the
+`cfgerror.Wrapper` type for custom wrappers.
 
 ### Configuration Options
 
@@ -1063,17 +1250,15 @@ future major version. Prefer the replacements:
 | Deprecated | Use instead |
 |---|---|
 | `InitE` / `InitSelfE` | `Init` / `InitSelf` now return the error directly |
-| `CleanupSignalHandler()` (now a no-op) | `WithAutoSave(ctx)` or call `Save`/`SaveIfChanged` from your own shutdown path |
 | `convert.ConvertValue` / `cfggo.ConvertValue` | `config.Set(key, value)` |
-| `errwrapper` package | `cfgerror` package |
 | `WithSkipEnvironment()` | `WithoutEnv()` |
 
 ### Removed
 
 The error-wrapper-with-logging path has been removed (it inverted control by
 logging on your behalf). Use `WithErrorWrapper` / `config.WrapError(...)` and log
-the returned error yourself. The exported `Logger` / `ErrorWrapper` package
-variables are replaced by the race-safe accessors `GlobalLogger()` /
+the returned error yourself. The exported logger/error-wrapper package variables
+are replaced by the race-safe accessors `GlobalLogger()` /
 `SetGlobalLogger()` and `GlobalErrorWrapper()` / `SetGlobalErrorWrapper()`. The
 unused `LogLevelFatal` level was removed.
 
@@ -1099,8 +1284,16 @@ on a shared lock.
 Runnable examples live in the [`examples/`](examples) directory:
 
 - [`examples/basic`](examples/basic) — minimal setup with file, env, and flag loading.
+
 - [`examples/advanced`](examples/advanced) — multiple instances with custom loggers and error wrappers.
+![cfggo advanced example](advanced.gif)
+
 - [`examples/validation`](examples/validation) — built-in and custom validators.
+![cfggo validation example](validation.gif)
+
+- [`examples/debugging`](examples/debugging) — startup checks, failure modes, provenance, and redaction.
+![cfggo debugging example](debugging.gif)
+
 
 ## FAQ
 

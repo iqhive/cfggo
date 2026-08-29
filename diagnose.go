@@ -119,7 +119,7 @@ func (c *Structure) DiagnoseData() Diagnostics {
 		if c.plan != nil {
 			if leaf, ok := c.plan.byKey[key]; ok {
 				info = leaf.info
-				recognized = true
+				recognized = leaf.info.IsAccessor
 			}
 		}
 		kd := KeyDiagnostic{
@@ -143,7 +143,7 @@ func (c *Structure) DiagnoseData() Diagnostics {
 		// so a bad secret is still reported as invalid
 		if v, ok := validators[key]; ok {
 			if err := v(data[key]); err != nil {
-				kd.Err = validcfg.ValidationError{Key: key, Err: err}.WithProvenance(data[key], prov[key].String())
+				kd.Err = validcfg.ValidationError{Key: key, Err: err}.WithProvenance(c.provenanceValue(key, data[key]), prov[key].String())
 				valid = false
 			}
 		}

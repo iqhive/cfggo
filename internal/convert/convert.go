@@ -73,7 +73,7 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		}
 
 	case reflect.String:
-		return s, nil
+		return reflect.ValueOf(s).Convert(target).Interface(), nil
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		bitSize := int(target.Size() * 8)
@@ -109,6 +109,16 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		return convertStringToMap(s, target, ew)
 
 	default:
+		// Pointer target that itself implements TextUnmarshaler (e.g. func() *T
+		// where *T has UnmarshalText). Allocate a non-nil T before invoking the
+		// method; calling it on reflect.Zero(target) would use a nil receiver.
+		if target.Kind() == reflect.Pointer && target.Implements(textUnmarshalerType) {
+			ptr := reflect.New(target.Elem())
+			if err := ptr.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
+				return nil, wrapErr(ew, err, 400, "UnmarshalText(%v) failed: %v", target, err)
+			}
+			return ptr.Interface(), nil
+		}
 		// Prefer pointer-receiver TextUnmarshaler (the common Go convention).
 		ptrType := reflect.PointerTo(target)
 		if ptrType.Implements(textUnmarshalerType) {
@@ -152,10 +162,16 @@ func convertStringToSlice(s string, target reflect.Type, ew ErrorWrapper) (inter
 	}
 
 	// Comma-separated values.
-	parts := strings.Split(s, ",")
+	rawParts := strings.Split(s, ",")
+	parts := make([]string, 0, len(rawParts))
+	for _, p := range rawParts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
 	slice := reflect.MakeSlice(target, len(parts), len(parts))
 	for i, p := range parts {
-		p = strings.TrimSpace(p)
 		elem, err := ConvertString(p, elemType, ew)
 		if err != nil {
 			return nil, wrapErr(ew, err, 400, "cannot convert slice[%d] %q: %v", i, p, err)
@@ -309,6 +325,14 @@ func convertNumeric(src reflect.Value, target reflect.Type) (interface{}, error)
 				return nil, fmt.Errorf("lossy numeric conversion: %v cannot fit exactly in %v", f, target)
 			}
 			v = int64(f)
+			// Round-trip check: Go's spec says float-to-int overflow is
+			// implementation-defined behavior. A value that passes the bounds
+			// check on one platform may not round-trip on another (e.g. wasm,
+			// 32-bit architectures, or future Go versions). Verify the
+			// conversion is exact by round-tripping through the integer type.
+			if float64(v) != f {
+				return nil, fmt.Errorf("lossy numeric conversion: %v cannot fit exactly in %v", f, target)
+			}
 		}
 		if out.OverflowInt(v) {
 			return nil, fmt.Errorf("numeric overflow: %d cannot fit in %v", v, target)
@@ -331,6 +355,9 @@ func convertNumeric(src reflect.Value, target reflect.Type) (interface{}, error)
 				return nil, fmt.Errorf("lossy numeric conversion: %v cannot fit exactly in %v", f, target)
 			}
 			v = uint64(f)
+			if float64(v) != f {
+				return nil, fmt.Errorf("lossy numeric conversion: %v cannot fit exactly in %v", f, target)
+			}
 		}
 		if out.OverflowUint(v) {
 			return nil, fmt.Errorf("numeric overflow: %d cannot fit in %v", v, target)

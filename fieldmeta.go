@@ -38,6 +38,17 @@ type fieldInfo struct {
 // place of a value whose field is tagged `secret:"true"`
 const maskedValue = "****"
 
+// provenanceValue returns the value to embed in a validation error's
+// provenance for key: the real value for ordinary fields, and the masked
+// placeholder for secret-tagged fields so error messages (which are logged and
+// surfaced in diagnostics) never carry the sensitive value
+func (c *Structure) provenanceValue(key string, value interface{}) interface{} {
+	if c.isSecretKey(key) {
+		return maskedValue
+	}
+	return value
+}
+
 // isSecretKey reports whether the field backing key is tagged `secret:"true"`
 func (c *Structure) isSecretKey(key string) bool {
 	if c.plan == nil {
@@ -64,7 +75,7 @@ func (c *Structure) unrecognizedKeys() []string {
 	var out []string
 	for _, k := range keys {
 		if c.plan != nil {
-			if _, ok := c.plan.byKey[k]; ok {
+			if leaf, ok := c.plan.byKey[k]; ok && leaf.info.IsAccessor {
 				continue
 			}
 		}

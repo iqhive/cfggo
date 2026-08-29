@@ -23,6 +23,40 @@ func withNoop() Option {
 	}
 }
 
+func withPrivateFlagSet(fs *flag.FlagSet) Option {
+	return func(c *Structure) error {
+		if fs == nil {
+			return c.WrapError(nil, ErrCodeInvalidArgument, "withPrivateFlagSet: flag set must not be nil")
+		}
+		c.flagSet = fs
+		c.externalFlagSet = false
+		return nil
+	}
+}
+
+// withBytesConfig makes the configuration load from an in-memory JSON
+// document instead of a file, reusing the whole file-loading path. Group uses
+// it to inject a member's slice of a combined configuration file.
+func withBytesConfig(handler *sources.HandlerBytes) Option {
+	return func(c *Structure) error {
+		if handler == nil {
+			return c.WrapError(nil, ErrCodeInvalidArgument, "withBytesConfig: handler must not be nil")
+		}
+		c.configHandler = handler
+		return nil
+	}
+}
+
+// withFlagNamePrefix prefixes the names this configuration registers on the
+// flag set (eg "auth." -> --auth.port), leaving configuration keys, accessors,
+// and file/env names untouched. Group uses it so members can share a flag set.
+func withFlagNamePrefix(prefix string) Option {
+	return func(c *Structure) error {
+		c.flagNamePrefix = prefix
+		return nil
+	}
+}
+
 // WithName sets the name of the configuration
 func WithName(name string) Option {
 	return func(c *Structure) error {
@@ -89,20 +123,29 @@ func WithFileConfigParamName(argName string) Option {
 	if filename == "" {
 		GlobalLogger().Debug("cfggo: no filename found for config argument", "arg", argName)
 		return func(c *Structure) error {
-			c.ensureFlagSet()
-			c.FlagSet.String(argName, "", "")
+			c.registerConfigPathFlag(argName)
 			return nil
 		}
 	}
 	wrap := WithFileConfig(filename)
 	return func(c *Structure) error {
-		c.ensureFlagSet()
-		c.FlagSet.String(argName, "", "")
+		c.registerConfigPathFlag(argName)
 		if err := wrap(c); err != nil {
 			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
 			return err
 		}
 		return nil
+	}
+}
+
+// registerConfigPathFlag registers the bootstrap config-path flag so it is not
+// reported as unknown during parsing. Registering a flag name twice on one set
+// panics in the standard flag package, so an already-registered name (eg the
+// host's own flag on a shared set, or a retried Init) is left as-is.
+func (c *Structure) registerConfigPathFlag(argName string) {
+	c.ensureFlagSet()
+	if c.flagSet.Lookup(argName) == nil {
+		c.flagSet.String(argName, "", "path to the configuration file")
 	}
 }
 
@@ -192,7 +235,7 @@ func WithFlagSet(fs *flag.FlagSet) Option {
 		if fs == nil {
 			return c.WrapError(nil, ErrCodeInvalidArgument, "WithFlagSet: flag set must not be nil")
 		}
-		c.FlagSet = fs
+		c.flagSet = fs
 		c.externalFlagSet = true
 		return nil
 	}
@@ -224,6 +267,18 @@ func WithStandardFlags() Option {
 func WithIgnoreUnknownVars() Option {
 	return func(c *Structure) error {
 		c.ignoreUnknownVars = true
+		return nil
+	}
+}
+
+// WithSnakeCaseFieldNames controls how this configuration names untagged
+// struct fields. When enabled, a field such as ServerPort is named
+// "server_port"; when disabled, cfggo preserves the Go field name ("ServerPort").
+// Explicit cfggo/cfg/config/json tags always take precedence.
+func WithSnakeCaseFieldNames(enabled bool) Option {
+	return func(c *Structure) error {
+		c.snakeCaseFieldNames = enabled
+		c.snakeCaseFieldNamesSet = true
 		return nil
 	}
 }

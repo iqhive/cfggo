@@ -7,6 +7,26 @@ Each example can be run from its own subdirectory with `go run main.go`.
 
 ## Examples
 
+The VHS tape tests for GIF generation are opt-in and do not run during normal
+`go test ./...`. When updating GIFs, run:
+
+```sh
+go test -tags vhs -run 'TestVHSTape|TestEveryRootTape' ./...
+```
+
+### `demo/` - Hot reload GIF demo
+
+Demonstrates:
+- Loading config from a JSON file.
+- `OnChange` callbacks when config values change.
+- Typed accessors returning updated values after reload.
+
+```sh
+cd demo && cp config.initial.json config.json && go run main.go
+```
+
+---
+
 ### `basic/` - Getting started
 
 Demonstrates:
@@ -23,11 +43,42 @@ Sample `config.json` is included to show how file-based values are loaded.
 
 ---
 
+### `conf-simple/` - Dependency-free `.conf` files
+
+Demonstrates:
+- Loading the opt-in `conf` file format through `WithConfigHandler`.
+- Root assignments and the special `[global]` section.
+- End-of-line `#` comments.
+- Schema-directed conversion of integers, booleans, and durations.
+
+```sh
+cd conf-simple && go run main.go
+```
+
+---
+
+### `conf-advanced/` - Grouped `.conf` configuration
+
+Demonstrates:
+- Group namespaces represented by `.conf` sections.
+- JSON arrays and objects as structured field values.
+- Custom parser resource limits.
+- Explicit deterministic rewriting with `conf.RewriteOnSave()`.
+
+The example rewrites `config.conf`; use a copy if you want to retain its
+comments and formatting.
+
+```sh
+cd conf-advanced && go run main.go
+```
+
+---
+
 ### `advanced/` - Custom loggers and error wrappers
 
 Demonstrates:
 - Implementing a fully custom `cfglogger.Logger`.
-- Custom `errwrapper.ErrorWrapper` for rich error formatting.
+- Custom `cfgerror.Wrapper` for rich error formatting.
 - Running multiple independent service configs in one process.
 - `WrapError` for error wrapping, then logging the returned error explicitly.
 
@@ -58,6 +109,9 @@ Demonstrates the full validator API:
 ```sh
 cd validation && go run main.go
 ```
+
+Sample `config.json` is included with valid values so the example runs from a
+clean checkout.
 
 ---
 
@@ -106,6 +160,6 @@ cfggo.SetLogLevel(cfggo.LogLevelDebug)
 
 1. `cfggo.DefaultValue(...)` set at struct literal time
 2. `default:"..."` struct tag
-3. JSON configuration file
+3. JSON or opt-in `.conf` configuration file
 4. Environment variables (`KEY` -> `KEY`, `nested.key` -> `NESTED_KEY`)
 5. Command-line flags (`--key=value`)

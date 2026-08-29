@@ -41,7 +41,7 @@ func (c *Structure) validateConfigShape() error {
 	c.validationMutex.RLock()
 	unknown := make([]string, 0)
 	for key := range c.validationMap {
-		if _, ok := c.plan.byKey[key]; !ok {
+		if leaf, ok := c.plan.byKey[key]; !ok || !leaf.info.IsAccessor {
 			unknown = append(unknown, key)
 		}
 	}
@@ -66,20 +66,24 @@ func (c *Structure) Validate() error {
 
 func (c *Structure) validate() error {
 	c.configMutex.RLock()
-	c.validationMutex.RLock()
-	defer c.configMutex.RUnlock()
-	defer c.validationMutex.RUnlock()
+	data := cloneInterfaceMap(c.configData)
+	provenance := cloneSourceMap(c.provenance)
+	c.configMutex.RUnlock()
 
-	if len(c.validationMap) == 0 {
+	c.validationMutex.RLock()
+	validators := cloneValidatorMap(c.validationMap)
+	c.validationMutex.RUnlock()
+
+	if len(validators) == 0 {
 		return nil
 	}
 
 	var errs validcfg.ValidationErrors
-	for key, value := range c.configData {
-		if validator, exists := c.validationMap[key]; exists {
+	for key, value := range data {
+		if validator, exists := validators[key]; exists {
 			if err := validator(value); err != nil {
 				ve := validcfg.ValidationError{Key: key, Err: err}
-				errs = append(errs, ve.WithProvenance(value, c.provenance[key].String()))
+				errs = append(errs, ve.WithProvenance(c.provenanceValue(key, value), provenance[key].String()))
 			}
 		}
 	}
@@ -95,16 +99,20 @@ func (c *Structure) ValidateKey(key string) error {
 	c.ensureInit()
 
 	c.configMutex.RLock()
-	c.validationMutex.RLock()
-	defer c.configMutex.RUnlock()
-	defer c.validationMutex.RUnlock()
-
 	value, exists := c.configData[key]
+	source := c.provenance[key]
+	c.configMutex.RUnlock()
 	if !exists {
 		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found%s", key, c.didYouMeanSuffix(key))
 	}
 
+	return c.validateValueForKey(key, value, source)
+}
+
+func (c *Structure) validateValueForKey(key string, value interface{}, source Source) error {
+	c.validationMutex.RLock()
 	validator, exists := c.validationMap[key]
+	c.validationMutex.RUnlock()
 	if !exists {
 		return nil
 	}
@@ -113,7 +121,7 @@ func (c *Structure) ValidateKey(key string) error {
 		// Wrap as a ValidationError so the result matches both ErrValidation
 		// (via errors.Is) and the underlying validator error. Provenance is
 		// attached so the message points at the source of the bad value.
-		ve := validcfg.ValidationError{Key: key, Err: err}.WithProvenance(value, c.provenance[key].String())
+		ve := validcfg.ValidationError{Key: key, Err: err}.WithProvenance(c.provenanceValue(key, value), source.String())
 		return c.WrapError(ve, ErrCodeNone, "")
 	}
 

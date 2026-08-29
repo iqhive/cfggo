@@ -3,6 +3,7 @@ package cfggo
 import (
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync/atomic"
 
@@ -18,6 +19,10 @@ import (
 //
 //	config.Init(config, cfggo.WithFileConfig("config.json"))
 func Init(parent interface{}, options ...Option) error {
+	if parent == nil || isNilInterfaceValue(parent) {
+		return GlobalErrorWrapper()(nil, ErrCodeInvalidArgument,
+			"cfggo.Init: parent must not be nil")
+	}
 	type initer interface {
 		Init(interface{}, ...Option) error
 	}
@@ -30,6 +35,16 @@ func Init(parent interface{}, options ...Option) error {
 			"cfggo.Init: parent (%T) must embed cfggo.Structure", parent)
 	}
 	return i.Init(parent, options...)
+}
+
+func isNilInterfaceValue(v interface{}) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // --- Logging helpers ----------------------------------------------------------

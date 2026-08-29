@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/iqhive/cfggo/internal/flags"
-	"github.com/iqhive/cfggo/validcfg"
 )
 
 // NewFlag creates a new configuration item, using the type of the defaultValue
@@ -27,24 +27,34 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.configData = make(map[string]interface{})
 	}
 
-	if c.FlagSet.Lookup(configVarName) != nil {
-		c.log().Error("cfggo: flag already registered, skipping", "flag", configVarName)
+	// The flag name may carry a prefix (set only by Group) so several
+	// configurations can share one flag set; the configuration key itself is
+	// never prefixed, so plans, accessors, and file/env keys are unaffected.
+	flagName := c.flagNamePrefix + configVarName
+
+	if c.flagSet.Lookup(flagName) != nil {
+		c.log().Error("cfggo: flag already registered, skipping", "flag", flagName)
 		return
 	}
 
 	// Special handling for boolean flags: register a bool-aware ConfigVar so the
 	// value propagates to the config map during Parse (whether cfggo parses its
-	// own private FlagSet or the host parses flag.CommandLine), and so the
+	// own private flag set or the host parses flag.CommandLine), and so the
 	// standard flag package allows the "--flag" / "--flag=true" forms.
 	if boolVal, isBool := defaultValue.(bool); isBool {
-		c.configData[configVarName] = boolVal
+		// Only seed the default when the key has no value yet, mirroring the
+		// non-bool path below: a value already loaded from a file, the
+		// environment, or a Set call must not be silently overwritten
+		if _, exists := c.configData[configVarName]; !exists {
+			c.configData[configVarName] = boolVal
+		}
 		dvar := &flags.ConfigVar{
 			Name:   configVarName,
 			Want:   reflect.TypeOf(boolVal),
 			Setter: c.createSetter(configVarName),
 			IsBool: true,
 		}
-		c.FlagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 		return
 	}
 
@@ -52,18 +62,20 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.log().Warn("cfggo: config key not set, using default value for type", "key", configVarName)
 		c.configData[configVarName] = defaultValue
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
-			Want:   reflect.TypeOf(defaultValue),
-			Setter: c.createSetter(configVarName),
+			Name:     configVarName,
+			Want:     reflect.TypeOf(defaultValue),
+			Setter:   c.createSetter(configVarName),
+			IsSecret: c.isSecretKey(configVarName),
 		}
-		c.FlagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 	} else {
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
-			Want:   reflect.TypeOf(c.configData[configVarName]),
-			Setter: c.createSetter(configVarName),
+			Name:     configVarName,
+			Want:     reflect.TypeOf(c.configData[configVarName]),
+			Setter:   c.createSetter(configVarName),
+			IsSecret: c.isSecretKey(configVarName),
 		}
-		c.FlagSet.Var(dvar, configVarName, configDescription)
+		c.flagSet.Var(dvar, flagName, configDescription)
 	}
 }
 
@@ -71,68 +83,26 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 // stores the value.
 func (c *Structure) createSetter(key string) func(interface{}) error {
 	return func(value interface{}) error {
+		if err := c.validateValueForKey(key, value, SourceFlag); err != nil {
+			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s failed validation", key, SourceFlag)
+		}
+
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
-		old, hadOld := c.configData[key]
-		oldSource, hadSource := c.provenance[key]
-		var oldTrail []Source
-		if trail, ok := c.provenanceTrail[key]; ok {
-			oldTrail = append([]Source(nil), trail...)
-		}
 		if err := c.set(key, value); err != nil {
 			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, SourceFlag)
 		}
 		c.markChangedLocked()
 		c.recordSourceLocked(key, SourceFlag)
-		if err := c.validateKeyLocked(key); err != nil {
-			if hadOld {
-				c.configData[key] = old
-			} else {
-				delete(c.configData, key)
-			}
-			if hadSource {
-				c.provenance[key] = oldSource
-			} else {
-				delete(c.provenance, key)
-			}
-			if oldTrail != nil {
-				if c.provenanceTrail == nil {
-					c.provenanceTrail = make(map[string][]Source)
-				}
-				c.provenanceTrail[key] = oldTrail
-			} else {
-				delete(c.provenanceTrail, key)
-			}
-			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s failed validation", key, SourceFlag)
-		}
 		return nil
 	}
-}
-
-// validateKeyLocked runs a single key's validator while configMutex is already
-// held by the caller.
-func (c *Structure) validateKeyLocked(key string) error {
-	c.validationMutex.RLock()
-	validator, exists := c.validationMap[key]
-	c.validationMutex.RUnlock()
-	if !exists {
-		return nil
-	}
-	value, exists := c.configData[key]
-	if !exists {
-		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found%s", key, c.didYouMeanSuffix(key))
-	}
-	if err := validator(value); err != nil {
-		return validcfg.ValidationError{Key: key, Err: err}.WithProvenance(value, c.provenance[key].String())
-	}
-	return nil
 }
 
 func (c *Structure) parseFlags() error {
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
 
-	if c.FlagSet.Parsed() {
+	if c.flagSet.Parsed() {
 		c.log().Info("cfggo: flags already parsed")
 		return nil
 	}
@@ -145,7 +115,7 @@ func (c *Structure) parseFlags() error {
 	// default flag.ExitOnError behaviour applies and an unknown flag aborts
 	if c.ignoreUnknownVars {
 		if !c.externalFlagSet {
-			c.FlagSet.Init(c.FlagSet.Name(), flag.ContinueOnError)
+			c.flagSet.Init(c.flagSet.Name(), flag.ContinueOnError)
 		}
 		args = c.filterKnownFlags(args)
 	} else if name, ok := c.firstUnknownFlag(args); ok {
@@ -167,7 +137,7 @@ func (c *Structure) parseFlags() error {
 	// Temporarily release the lock during parsing to avoid deadlocks with Set().
 	c.configMutex.Unlock()
 	var parseErr error
-	if parseErr = c.FlagSet.Parse(args); parseErr != nil {
+	if parseErr = c.flagSet.Parse(args); parseErr != nil {
 		c.log().Error("cfggo: error parsing flags", "err", parseErr)
 	}
 	c.configMutex.Lock()
@@ -175,7 +145,7 @@ func (c *Structure) parseFlags() error {
 	// Leftover positional arguments usually indicate a "--bool value" mistake
 	// (boolean flags require the "--bool=value" form) or a stray argument.
 	if parseErr == nil {
-		if rest := c.FlagSet.Args(); len(rest) > 0 {
+		if rest := c.flagSet.Args(); len(rest) > 0 {
 			c.log().Warn("cfggo: ignoring unexpected positional arguments after flag parsing "+
 				"(boolean flags must use the --flag=value form to set an explicit value)", "args", rest)
 		}
@@ -191,6 +161,12 @@ func (c *Structure) parseFlags() error {
 }
 
 func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
+	return firstUnknownFlagIn(c.flagSet, args)
+}
+
+// firstUnknownFlagIn returns the name of the first argument token that is not a
+// flag defined on fs.
+func firstUnknownFlagIn(fs *flag.FlagSet, args []string) (string, bool) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -199,8 +175,13 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 		if len(arg) < 2 || arg[0] != '-' {
 			return "", false
 		}
+		// A negative number (eg "-1" or "-2.5") is a value or positional
+		// argument, not a flag; the standard flag package would stop here too
+		if isNegativeNumber(arg) {
+			return "", false
+		}
 
-		name := strings.TrimLeft(arg, "-")
+		name := trimFlagDashes(arg)
 		if name == "" {
 			return "", false
 		}
@@ -210,7 +191,7 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 			hasInlineValue = true
 		}
 
-		f := c.FlagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f == nil {
 			return name, true
 		}
@@ -222,11 +203,19 @@ func (c *Structure) firstUnknownFlag(args []string) (string, bool) {
 }
 
 // filterKnownFlags returns only the argument tokens that correspond to flags
-// registered on c.FlagSet. Unknown flags (and their separate values) are
+// registered on c.flagSet. Unknown flags (and their separate values) are
 // dropped so they neither abort parsing nor terminate the process. This lets
 // cfggo coexist with libraries that register flags elsewhere (e.g. on
 // flag.CommandLine) when cfggo is using its own private flag set
 func (c *Structure) filterKnownFlags(args []string) []string {
+	return filterKnownFlagsIn(c.flagSet, args, func(arg string) {
+		c.log().Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
+	})
+}
+
+// filterKnownFlagsIn is filterKnownFlags against an explicit flag set, calling
+// onDrop for each token it discards.
+func filterKnownFlagsIn(fs *flag.FlagSet, args []string, onDrop func(string)) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -237,22 +226,24 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 			break
 		}
 
-		// Non-flag (positional) argument, or a bare "-".
-		if len(arg) < 2 || arg[0] != '-' {
+		// Non-flag (positional) argument, a bare "-", or a negative number.
+		if len(arg) < 2 || arg[0] != '-' || isNegativeNumber(arg) {
 			out = append(out, arg)
 			continue
 		}
 
-		name := strings.TrimLeft(arg, "-")
+		name := trimFlagDashes(arg)
 		hasInlineValue := false
 		if idx := strings.IndexByte(name, '='); idx != -1 {
 			name = name[:idx]
 			hasInlineValue = true
 		}
 
-		f := c.FlagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f == nil {
-			c.log().Debug("cfggo: ignoring unrecognized flag (not defined on this config)", "flag", arg)
+			if onDrop != nil {
+				onDrop(arg)
+			}
 			// For "--unknown value", also drop the following value token so it is
 			// not misread as a positional argument (which would stop parsing)
 			if !hasInlineValue && i+1 < len(args) {
@@ -283,6 +274,11 @@ func (c *Structure) filterKnownFlags(args []string) []string {
 // boolean literals are left untouched so genuinely stray arguments still
 // surface via the existing positional-argument warning.
 func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
+	return normalizeBoolFlagArgsIn(c.flagSet, args)
+}
+
+// normalizeBoolFlagArgsIn is normalizeBoolFlagArgs against an explicit flag set.
+func normalizeBoolFlagArgsIn(fs *flag.FlagSet, args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -293,20 +289,20 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 			break
 		}
 
-		// Non-flag (positional) argument, or a bare "-".
-		if len(arg) < 2 || arg[0] != '-' {
+		// Non-flag (positional) argument, a bare "-", or a negative number.
+		if len(arg) < 2 || arg[0] != '-' || isNegativeNumber(arg) {
 			out = append(out, arg)
 			continue
 		}
 
-		name := strings.TrimLeft(arg, "-")
+		name := trimFlagDashes(arg)
 		// Already in "--flag=value" form; nothing to collapse.
 		if strings.IndexByte(name, '=') != -1 {
 			out = append(out, arg)
 			continue
 		}
 
-		f := c.FlagSet.Lookup(name)
+		f := fs.Lookup(name)
 		if f != nil && isBoolFlag(f) && i+1 < len(args) {
 			// be flexible with the values we support for bool flags, because
 			// some config var names may cause end-users to supply "yes/no/y/n"
@@ -325,6 +321,25 @@ func (c *Structure) normalizeBoolFlagArgs(args []string) []string {
 		out = append(out, arg)
 	}
 	return out
+}
+
+// trimFlagDashes strips the leading "-" or "--" from a flag token, matching
+// the standard flag package (which accepts at most two dashes) instead of
+// stripping every leading dash
+func trimFlagDashes(arg string) string {
+	name := strings.TrimPrefix(arg, "-")
+	name = strings.TrimPrefix(name, "-")
+	return name
+}
+
+// isNegativeNumber reports whether arg is a negative numeric literal such as
+// "-1" or "-2.5", which is an argument value rather than a flag
+func isNegativeNumber(arg string) bool {
+	if len(arg) < 2 || arg[0] != '-' {
+		return false
+	}
+	_, err := strconv.ParseFloat(arg[1:], 64)
+	return err == nil
 }
 
 // replacement for strconv.ParseBool that also supports yes/y/no/n
@@ -353,21 +368,20 @@ func isBoolFlag(f *flag.Flag) bool {
 func (c *Structure) GetFlagSet() *flag.FlagSet {
 	c.ensureInit()
 	c.ensureFlagSet()
-	return c.FlagSet
+	return c.flagSet
 }
 
 // ensureFlagSet lazily creates the private flag set. It is a no-op once a set
 // exists (including a caller-supplied external one). This backs the WithoutFlags
-// path, where Init deliberately skips creating the set, while keeping the
-// exported FlagSet field and GetFlagSet/NewFlag usable if a caller still wants
-// flags afterwards
+// path, where Init deliberately skips creating the set, while keeping
+// GetFlagSet/NewFlag usable if a caller still wants flags afterwards.
 func (c *Structure) ensureFlagSet() {
-	if c.FlagSet != nil {
+	if c.flagSet != nil {
 		return
 	}
-	c.FlagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-	c.FlagSet.Usage = func() {
-		fmt.Fprintf(c.FlagSet.Output(), "Usage of %s:\n", os.Args[0])
-		c.FlagSet.PrintDefaults()
+	c.flagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	c.flagSet.Usage = func() {
+		fmt.Fprintf(c.flagSet.Output(), "Usage of %s:\n", os.Args[0])
+		c.flagSet.PrintDefaults()
 	}
 }

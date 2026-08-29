@@ -22,10 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: stable
           cache-dependency-path: |
@@ -33,7 +33,7 @@ jobs:
             benchmarks/comparison/go.sum
 
       - name: Run govulncheck
-        uses: golang/govulncheck-action@v1.0.4
+        uses: golang/govulncheck-action@v1.1.0
         with:
           go-package: ./...
           repo-checkout: false
@@ -46,7 +46,7 @@ jobs:
       security-events: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -69,12 +69,12 @@ jobs:
       security-events: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.4.3
+        uses: ossf/scorecard-action@v2.4.4
         with:
           results_file: scorecard.sarif
           results_format: sarif

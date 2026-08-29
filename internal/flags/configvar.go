@@ -15,6 +15,10 @@ type ConfigVar struct {
 	Name   string
 	Want   reflect.Type
 	Setter func(interface{}) error
+	// IsSecret marks the backing field as secret-tagged. Conversion errors
+	// quote the raw input, so they are redacted for secret flags: the error the
+	// flag package prints (and any log of it) must never carry the credential.
+	IsSecret bool
 	// IsBool marks this flag as boolean so the standard flag package treats it
 	// like the built-in bool flags (i.e. "--flag" without a value, and
 	// "--flag=true"/"--flag=false"). It also allows boolean values to be
@@ -54,6 +58,9 @@ func (d *ConfigVar) Set(s string) error {
 
 	value, err := convert.ConvertString(s, d.Want, nil)
 	if err != nil {
+		if d.IsSecret {
+			return fmt.Errorf("flag %q: invalid value (redacted: field is secret)", d.Name)
+		}
 		return fmt.Errorf("flag %q: %w", d.Name, err)
 	}
 	if err := d.Setter(value); err != nil {

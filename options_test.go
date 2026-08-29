@@ -46,7 +46,9 @@ func TestWithFileConfigParamName(t *testing.T) {
 			os.Args = tt.args
 
 			s := &Structure{}
-			s.FlagSet = flag.NewFlagSet("test", flag.ContinueOnError)
+			if err := WithFlagSet(flag.NewFlagSet("test", flag.ContinueOnError))(s); err != nil {
+				t.Fatalf("WithFlagSet() error = %v", err)
+			}
 			opt := WithFileConfigParamName(tt.argName)
 			err := opt(s)
 
@@ -76,9 +78,9 @@ func TestWithFileConfigParamName(t *testing.T) {
 }
 
 // TestWithFileConfigParamNameInit ensures WithFileConfigParamName works when
-// applied through Init (where c.FlagSet is still nil at option-application
+// applied through Init (where the flag set is still nil at option-application
 // time). This previously panicked with a nil pointer dereference because the
-// option dereferenced c.FlagSet before Init created it.
+// option dereferenced the internal flag set before Init created it
 func TestWithFileConfigParamNameInit(t *testing.T) {
 	for _, args := range [][]string{
 		{"prog"},                                // no config arg -> registers a String flag
@@ -95,10 +97,11 @@ func TestWithFileConfigParamNameInit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Init() with WithFileConfigParamName returned error for args %v: %v", args, err)
 		}
-		if cfg.FlagSet == nil {
+		fs := cfg.GetFlagSet()
+		if fs == nil {
 			t.Fatalf("expected FlagSet to be created for args %v", args)
 		}
-		if cfg.FlagSet.Lookup("config") == nil {
+		if fs.Lookup("config") == nil {
 			t.Errorf("expected 'config' flag to be registered for args %v", args)
 		}
 	}

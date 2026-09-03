@@ -145,7 +145,8 @@ func Range(min, max float64) validcfg.Validator { return validcfg.Range(min, max
 // OneOf checks that a value equals one of the provided options.
 func OneOf(options ...interface{}) validcfg.Validator { return validcfg.OneOf(options...) }
 
-// Regex validates a string against a regular expression pattern.
+// Regex validates a string against a regular expression pattern. It panics when
+// the pattern does not compile, like regexp.MustCompile
 func Regex(pattern string) validcfg.Validator { return validcfg.Regex(pattern) }
 
 // Email validates that a string is a valid email address.

@@ -16,7 +16,7 @@ import (
 func BenchmarkReloadMemHandler(b *testing.B) {
 	cfg := &mediumConfig{}
 	mustInit(b, cfg,
-		cfggo.WithSkipEnvironment(),
+		cfggo.WithoutEnv(),
 		cfggo.WithConfigHandler(newMemHandler(mediumJSON)),
 	)
 
@@ -38,7 +38,7 @@ func BenchmarkReloadFile(b *testing.B) {
 
 	cfg := &mediumConfig{}
 	mustInit(b, cfg,
-		cfggo.WithSkipEnvironment(),
+		cfggo.WithoutEnv(),
 		cfggo.WithFileConfig(file),
 	)
 
@@ -62,7 +62,7 @@ func BenchmarkReloadLargeMemHandler(b *testing.B) {
     }`
 	cfg := &largeConfig{}
 	mustInit(b, cfg,
-		cfggo.WithSkipEnvironment(),
+		cfggo.WithoutEnv(),
 		cfggo.WithConfigHandler(newMemHandler(largeJSON)),
 	)
 
@@ -83,7 +83,7 @@ func BenchmarkReloadWithListeners(b *testing.B) {
 		b.Run(fmt.Sprintf("listeners=%d", n), func(b *testing.B) {
 			cfg := &mediumConfig{}
 			mustInit(b, cfg,
-				cfggo.WithSkipEnvironment(),
+				cfggo.WithoutEnv(),
 				cfggo.WithConfigHandler(newMemHandler(mediumJSON)),
 			)
 			var fired int

@@ -113,7 +113,9 @@ func (h *HandlerHTTP) checkURLScheme(u *url.URL) error {
 		if h.AllowInsecureHTTP || isLoopbackHost(u.Hostname()) {
 			return nil
 		}
-		return fmt.Errorf("plaintext http URL %q refused for non-loopback host: use https, or set AllowInsecureHTTP to opt in", u.String())
+		// Redacted() masks any user:password embedded in the URL, since this
+		// message ends up in logs
+		return fmt.Errorf("plaintext http URL %q refused for non-loopback host: use https, or set AllowInsecureHTTP to opt in", u.Redacted())
 	default:
 		return fmt.Errorf("unsupported URL scheme %q", u.Scheme)
 	}

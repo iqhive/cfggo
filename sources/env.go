@@ -68,9 +68,13 @@ func (h *HandlerEnv) LoadConfig() (json.RawMessage, error) {
 		// "_" that becomes a leading "."; drop it so keys line up with config
 		configKey = strings.TrimPrefix(configKey, ".")
 
-		// Try to parse as JSON first, fallback to string
+		// Try to parse as JSON first, fallback to string. Numbers are kept as
+		// json.Number so the literal is re-emitted verbatim by json.Marshal and
+		// a 64-bit integer is not rounded through float64 on the way
 		var parsedValue interface{}
-		if err := json.Unmarshal([]byte(value), &parsedValue); err != nil {
+		dec := json.NewDecoder(strings.NewReader(value))
+		dec.UseNumber()
+		if err := dec.Decode(&parsedValue); err != nil || dec.More() {
 			parsedValue = value
 		}
 

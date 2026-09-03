@@ -96,7 +96,7 @@ func BenchmarkConcurrentIndependentInstances(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		cfg := &mediumConfig{}
-		if err := cfggo.Init(cfg, cfggo.WithSkipEnvironment()); err != nil {
+		if err := cfggo.Init(cfg, cfggo.WithoutEnv()); err != nil {
 			failed.Store(true)
 			return
 		}

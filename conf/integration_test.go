@@ -90,3 +90,31 @@ func TestGroupIntegration(t *testing.T) {
 		t.Fatalf("group values = %q, %d, %d", root.Region(), api.Port(), worker.Port())
 	}
 }
+
+func TestConfNumericTextLoadsIntoStringFields(t *testing.T) {
+	type textFields struct {
+		cfggo.Structure
+		Region  func() string      `cfggo:"region"`
+		Version func() string      `cfggo:"version"`
+		Flag    func() string      `cfggo:"flag"`
+		Any     func() interface{} `cfggo:"any"`
+	}
+	filename := filepath.Join(t.TempDir(), "text.conf")
+	if err := os.WriteFile(filename, []byte("region = 12\nversion = \"1.0\"\nflag = true\nany = 42\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := conf.NewFileHandler(filename, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &textFields{}
+	if err := cfg.Init(cfg, cfggo.WithConfigHandler(handler), cfggo.WithoutFlags(), cfggo.WithoutEnv()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if cfg.Region() != "12" || cfg.Version() != "1.0" || cfg.Flag() != "true" {
+		t.Fatalf("text fields = %q %q %q, want literal text", cfg.Region(), cfg.Version(), cfg.Flag())
+	}
+	if got := cfg.Any(); got != float64(42) {
+		t.Fatalf("Any() = %#v, want the typed number 42", got)
+	}
+}

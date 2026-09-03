@@ -169,7 +169,7 @@ const mediumJSON = `{
 func mustInit(b *testing.B, cfg interface{}, opts ...cfggo.Option) {
 	b.Helper()
 	if len(opts) == 0 {
-		opts = []cfggo.Option{cfggo.WithSkipEnvironment()}
+		opts = []cfggo.Option{cfggo.WithoutEnv()}
 	}
 	if err := cfggo.Init(cfg, opts...); err != nil {
 		b.Fatalf("Init: %v", err)

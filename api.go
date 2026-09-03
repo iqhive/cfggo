@@ -23,6 +23,7 @@ func Init(parent interface{}, options ...Option) error {
 		return GlobalErrorWrapper()(nil, ErrCodeInvalidArgument,
 			"cfggo.Init: parent must not be nil")
 	}
+	allocateEmbeddedStructure(parent)
 	type initer interface {
 		Init(interface{}, ...Option) error
 	}
@@ -35,6 +36,29 @@ func Init(parent interface{}, options ...Option) error {
 			"cfggo.Init: parent (%T) must embed cfggo.Structure", parent)
 	}
 	return i.Init(parent, options...)
+}
+
+// allocateEmbeddedStructure allocates a nil *cfggo.Structure embedded by
+// pointer in the struct parent points to, so a caller that embeds the
+// Structure by pointer does not have to remember to allocate it before Init.
+// Anything that is not a pointer to a struct with such a field is left alone
+func allocateEmbeddedStructure(parent interface{}) {
+	v := reflect.ValueOf(parent)
+	if v.Kind() != reflect.Pointer || v.IsNil() || v.Elem().Kind() != reflect.Struct {
+		return
+	}
+	v = v.Elem()
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.Anonymous || field.Type != structurePtrType {
+			continue
+		}
+		if fv := v.Field(i); fv.IsNil() && fv.CanSet() {
+			fv.Set(reflect.New(structureType))
+		}
+		return
+	}
 }
 
 func isNilInterfaceValue(v interface{}) bool {

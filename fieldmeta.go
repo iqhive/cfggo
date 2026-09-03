@@ -70,6 +70,7 @@ func (c *Structure) unrecognizedKeys() []string {
 	for k := range c.configData {
 		keys = append(keys, k)
 	}
+	extra := cloneStringMap(c.extraKeys)
 	c.configMutex.RUnlock()
 
 	var out []string
@@ -78,6 +79,9 @@ func (c *Structure) unrecognizedKeys() []string {
 			if leaf, ok := c.plan.byKey[k]; ok && leaf.info.IsAccessor {
 				continue
 			}
+		}
+		if _, ok := extra[k]; ok {
+			continue
 		}
 		if c.ignoredKeys[k] {
 			continue

@@ -2,6 +2,7 @@ package cfggo
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -79,9 +80,12 @@ func (c *Structure) DiagnoseData() Diagnostics {
 	c.ensureInit()
 
 	c.configMutex.RLock()
+	// Clone mutable values: KeyDiagnostic.Value is handed to the caller, and a
+	// map or slice shared with configData would let a caller (or a renderer)
+	// mutate live configuration behind the lock
 	data := make(map[string]interface{}, len(c.configData))
 	for k, v := range c.configData {
-		data[k] = v
+		data[k] = cloneMutableInterface(v)
 	}
 	prov := make(map[string]Source, len(c.provenance))
 	for k, v := range c.provenance {
@@ -96,6 +100,7 @@ func (c *Structure) DiagnoseData() Diagnostics {
 			chains[k] = cp
 		}
 	}
+	extra := cloneStringMap(c.extraKeys)
 	c.configMutex.RUnlock()
 
 	c.validationMutex.RLock()
@@ -120,6 +125,15 @@ func (c *Structure) DiagnoseData() Diagnostics {
 			if leaf, ok := c.plan.byKey[key]; ok {
 				info = leaf.info
 				recognized = leaf.info.IsAccessor
+			}
+		}
+		if help, ok := extra[key]; ok && !recognized {
+			// A key registered with NewFlag: recognized, with its own help and
+			// the type of its current value
+			recognized = true
+			info.Help = help
+			if data[key] != nil {
+				info.Type = reflect.TypeOf(data[key])
 			}
 		}
 		kd := KeyDiagnostic{

@@ -122,12 +122,16 @@ func parsePath(path string, maxDepth int) ([]string, error) {
 	return parts, nil
 }
 
+// parseValue interprets the text after "=". Quoted strings, arrays and objects
+// are JSON. The bare literals null, true and false and any bare JSON number
+// are JSON too, so a document Encode wrote (with JSON literals) decodes to the
+// types it was encoded from; quote such a value to keep it as text. Anything
+// else is text
 func parseValue(input string) (any, error) {
 	if input == "" {
 		return "", nil
 	}
-	structured := strings.HasPrefix(input, `"`) || strings.HasPrefix(input, "[") || strings.HasPrefix(input, "{")
-	if structured || input == "null" {
+	if isJSONLiteral(input) {
 		value, err := decodeJSONValue(input)
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid JSON value", ErrSyntax)
@@ -135,6 +139,26 @@ func parseValue(input string) (any, error) {
 		return value, nil
 	}
 	return input, nil
+}
+
+// isJSONLiteral reports whether a bare value is decoded as JSON rather than
+// kept as text: quoted strings, arrays, objects, null, true, false and JSON
+// numbers. Text that merely starts like a number (007, +5, 1.0.0) is not a
+// JSON number and stays text
+func isJSONLiteral(input string) bool {
+	switch input[0] {
+	case '"', '[', '{':
+		return true
+	case 'n':
+		return input == "null"
+	case 't':
+		return input == "true"
+	case 'f':
+		return input == "false"
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return json.Valid([]byte(input))
+	}
+	return false
 }
 
 func insertPath(root map[string]any, paths *pathNode, path []string, value any, line int) error {

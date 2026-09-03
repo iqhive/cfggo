@@ -101,35 +101,25 @@ func withFileConfig(filename string, funcName string, defaultConfig bool) Option
 // WithFileConfigParamName sets the config source/dest to a filename found by
 // sniffing os.Args before cfggo's normal flag parsing runs.
 //
-// It recognizes --<argName>=filename and --<argName> filename. Because this is
-// an early os.Args scan, it is best suited to simple bootstrap config flags. If
-// your application already owns flag parsing, prefer parsing the config path
-// yourself and passing it to WithFileConfig.
+// It recognizes -<argName>=filename, -<argName> filename and the same forms
+// with two dashes, matching the standard flag package. The flag itself is
+// registered together with cfggo's other flags, on whichever flag set is in
+// use, so it may be combined with WithFlagSet / WithStandardFlags in either
+// order. Because this is an early os.Args scan, it is best suited to simple
+// bootstrap config flags. If your application already owns flag parsing,
+// prefer parsing the config path yourself and passing it to WithFileConfig.
 func WithFileConfigParamName(argName string) Option {
-	var filename string
-	for i := 1; i < len(os.Args); i++ {
-		arg := os.Args[i]
-		// Handle --config=filename.json format
-		if strings.HasPrefix(arg, "--"+argName+"=") {
-			filename = strings.TrimPrefix(arg, "--"+argName+"=")
-			break
-		}
-		// Handle --config filename.json format
-		if arg == "--"+argName && i+1 < len(os.Args) {
-			filename = os.Args[i+1]
-			break
-		}
-	}
+	filename := configPathFromArgs(os.Args[1:], argName)
 	if filename == "" {
 		GlobalLogger().Debug("cfggo: no filename found for config argument", "arg", argName)
 		return func(c *Structure) error {
-			c.registerConfigPathFlag(argName)
+			c.configPathFlag = argName
 			return nil
 		}
 	}
-	wrap := WithFileConfig(filename)
+	wrap := withFileConfig(filename, "WithFileConfigParamName", false)
 	return func(c *Structure) error {
-		c.registerConfigPathFlag(argName)
+		c.configPathFlag = argName
 		if err := wrap(c); err != nil {
 			c.log().Warn("cfggo: failed to apply file config", "filename", filename, "err", err)
 			return err
@@ -138,15 +128,26 @@ func WithFileConfigParamName(argName string) Option {
 	}
 }
 
-// registerConfigPathFlag registers the bootstrap config-path flag so it is not
-// reported as unknown during parsing. Registering a flag name twice on one set
-// panics in the standard flag package, so an already-registered name (eg the
-// host's own flag on a shared set, or a retried Init) is left as-is.
-func (c *Structure) registerConfigPathFlag(argName string) {
-	c.ensureFlagSet()
-	if c.flagSet.Lookup(argName) == nil {
-		c.flagSet.String(argName, "", "path to the configuration file")
+// configPathFromArgs returns the value given for the flag argName in args,
+// accepting one or two leading dashes and both the "=value" and separate-token
+// forms; "" when absent. Scanning stops at a "--" terminator
+func configPathFromArgs(args []string, argName string) string {
+	for i, arg := range args {
+		if arg == "--" {
+			return ""
+		}
+		if len(arg) < 2 || arg[0] != '-' || isNegativeNumber(arg) {
+			continue
+		}
+		name := trimFlagDashes(arg)
+		if value, found := strings.CutPrefix(name, argName+"="); found {
+			return value
+		}
+		if name == argName && i+1 < len(args) {
+			return args[i+1]
+		}
 	}
+	return ""
 }
 
 // WithHTTPConfig sets the config source/dest to a filename
@@ -230,6 +231,16 @@ func WithAutoSave(ctx context.Context) Option {
 //
 // cfggo flag values still propagate automatically as the host parses, because
 // each flag is backed by a flag.Value that writes straight into the config map.
+//
+// Because the host parses after Init returns, Init cannot see values supplied
+// on the command line: validation failures for keys whose flag is present in
+// os.Args are deferred, and the host should call Validate() once its Parse has
+// completed. Each flag validates its own incoming value during Parse.
+//
+// When the configuration has secret-tagged keys, cfggo wraps the flag set's
+// output so the flag package's own error text cannot echo a secret value; the
+// error returned by a ContinueOnError Parse still can, so pass it through
+// RedactFlagError before logging it.
 func WithFlagSet(fs *flag.FlagSet) Option {
 	return func(c *Structure) error {
 		if fs == nil {
@@ -255,11 +266,11 @@ func WithStandardFlags() Option {
 // WithIgnoreUnknownVars makes cfggo ignore command-line flags it does not
 // define instead of treating them as an error.
 //
-// By default cfggo uses flag.ExitOnError for its private flag set, so an
-// unrecognized flag prints usage and terminates the process. Enabling this
-// option switches the private set to flag.ContinueOnError and drops any
-// unrecognized flags (and their separate values) before parsing, allowing cfggo
-// to coexist with flags owned by other libraries or to tolerate typos.
+// By default an unrecognized flag makes Init return an error (wrapping
+// ErrUnknownKey, with a "did you mean" hint when a close match exists).
+// Enabling this option drops any unrecognized flags (and their separate
+// values) before parsing, allowing cfggo to coexist with flags owned by other
+// libraries or to tolerate typos.
 //
 // This affects only cfggo's own (private) flag parsing. When an external flag
 // set is supplied via WithFlagSet/WithStandardFlags, the host owns parsing and

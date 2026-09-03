@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -13,22 +14,24 @@ import (
 // these (rather than calling reflect.TypeOf on every field) keeps plan
 // construction allocation-free for the common builtin accessor types
 var (
-	structureType = reflect.TypeOf(Structure{})
-	durationType  = reflect.TypeOf(time.Duration(0))
-	intType       = reflect.TypeOf(int(0))
-	int8Type      = reflect.TypeOf(int8(0))
-	int16Type     = reflect.TypeOf(int16(0))
-	int32Type     = reflect.TypeOf(int32(0))
-	int64Type     = reflect.TypeOf(int64(0))
-	uintType      = reflect.TypeOf(uint(0))
-	uint8Type     = reflect.TypeOf(uint8(0))
-	uint16Type    = reflect.TypeOf(uint16(0))
-	uint32Type    = reflect.TypeOf(uint32(0))
-	uint64Type    = reflect.TypeOf(uint64(0))
-	float32Type   = reflect.TypeOf(float32(0))
-	float64Type   = reflect.TypeOf(float64(0))
-	stringType    = reflect.TypeOf("")
-	boolType      = reflect.TypeOf(false)
+	structureType      = reflect.TypeOf(Structure{})
+	structurePtrType   = reflect.PointerTo(structureType)
+	emptyInterfaceType = reflect.TypeOf((*interface{})(nil)).Elem()
+	durationType       = reflect.TypeOf(time.Duration(0))
+	intType            = reflect.TypeOf(int(0))
+	int8Type           = reflect.TypeOf(int8(0))
+	int16Type          = reflect.TypeOf(int16(0))
+	int32Type          = reflect.TypeOf(int32(0))
+	int64Type          = reflect.TypeOf(int64(0))
+	uintType           = reflect.TypeOf(uint(0))
+	uint8Type          = reflect.TypeOf(uint8(0))
+	uint16Type         = reflect.TypeOf(uint16(0))
+	uint32Type         = reflect.TypeOf(uint32(0))
+	uint64Type         = reflect.TypeOf(uint64(0))
+	float32Type        = reflect.TypeOf(float32(0))
+	float64Type        = reflect.TypeOf(float64(0))
+	stringType         = reflect.TypeOf("")
+	boolType           = reflect.TypeOf(false)
 )
 
 // accessorKind classifies an accessor's return type so its read closure can be
@@ -126,6 +129,9 @@ type structPlan struct {
 type suspectField struct {
 	Key  string // the dotted config key the tag would have produced
 	Type string // the field's Go type, for the diagnostic message
+	// Reason, when set, replaces the default "not a func() T accessor"
+	// explanation (eg for an unexported field cfggo cannot wire)
+	Reason string
 }
 
 // structPlanCache memoises structPlan by struct type and fallback naming mode.
@@ -136,30 +142,44 @@ type structPlanCacheKey struct {
 	snakeCase bool
 }
 
-// planForType returns the cached plan for struct type t, building it once
-func planForType(t reflect.Type, snakeCaseFieldNames bool) *structPlan {
+// planForType returns the cached plan for struct type t, building it once. It
+// fails for struct shapes cfggo cannot represent, such as a config group that
+// (directly or through other groups) contains a field of its own type
+func planForType(t reflect.Type, snakeCaseFieldNames bool) (*structPlan, error) {
 	key := structPlanCacheKey{t: t, snakeCase: snakeCaseFieldNames}
 	if cached, ok := structPlanCache.Load(key); ok {
-		return cached.(*structPlan)
+		return cached.(*structPlan), nil
 	}
 
 	p := &structPlan{
 		byKey:   make(map[string]*planLeaf),
 		ignored: make(map[string]bool),
 	}
-	p.walk(t, "", nil, snakeCaseFieldNames)
+	if err := p.walk(t, "", nil, snakeCaseFieldNames, []reflect.Type{t}); err != nil {
+		return nil, err
+	}
 	for i := range p.leaves {
 		p.byKey[p.leaves[i].info.Key] = &p.leaves[i]
 	}
 
 	actual, _ := structPlanCache.LoadOrStore(key, p)
-	return actual.(*structPlan)
+	return actual.(*structPlan), nil
 }
 
-func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseFieldNames bool) {
+// isAccessorType reports whether t is the func() T shape that backs a
+// configuration value
+func isAccessorType(t reflect.Type) bool {
+	return t.Kind() == reflect.Func && t.NumIn() == 0 && t.NumOut() == 1
+}
+
+// walk records every leaf of t under prefix. path holds the struct types
+// currently being walked, root first, and is used to reject recursive shapes:
+// without it a group such as `Next *Node` inside Node would recurse until the
+// process ran out of stack
+func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseFieldNames bool, path []reflect.Type) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.Anonymous && field.Type == structureType {
+		if field.Anonymous && (field.Type == structureType || field.Type == structurePtrType) {
 			continue
 		}
 
@@ -190,12 +210,38 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 			fullKey = prefix + "." + configVarName
 		}
 
+		// An unexported field cannot be written through reflection, so cfggo
+		// could register a key, flag and env var for it but never install the
+		// accessor; calling the field would then dereference a nil func. Skip
+		// such fields entirely (an unexported *embedded* struct is still
+		// walked, because its exported fields remain settable) and warn when
+		// the field was evidently meant to be a configuration value
+		if field.PkgPath != "" && !field.Anonymous {
+			if isAccessorType(field.Type) || hasExplicitConfigTag(field) {
+				p.suspects = append(p.suspects, suspectField{
+					Key:    fullKey,
+					Type:   field.Type.String(),
+					Reason: "field is unexported, so cfggo cannot install its accessor (export the field)",
+				})
+			}
+			continue
+		}
+
 		// Nested struct / *struct fields are config groups: recurse
 		if groupT, isPtr, ok := groupType(field); ok {
+			for _, seen := range path {
+				if seen == groupT {
+					return fmt.Errorf("recursive configuration struct: field %s (key %q) has type %s, "+
+						"which already contains this group; cfggo cannot represent unbounded nesting",
+						field.Name, fullKey, field.Type)
+				}
+			}
 			if isPtr {
 				p.ptrGroups = append(p.ptrGroups, fieldIndex)
 			}
-			p.walk(groupT, fullKey, fieldIndex, snakeCaseFieldNames)
+			if err := p.walk(groupT, fullKey, fieldIndex, snakeCaseFieldNames, append(path, groupT)); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -214,7 +260,7 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 
 		// Only zero-arg, single-return funcs (func() T) back a config value
 		ft := field.Type
-		if ft.Kind() == reflect.Func && ft.NumIn() == 0 && ft.NumOut() == 1 {
+		if isAccessorType(ft) {
 			out := ft.Out(0)
 			leaf.info.IsAccessor = true
 			leaf.info.Type = out
@@ -230,6 +276,7 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 
 		p.leaves = append(p.leaves, leaf)
 	}
+	return nil
 }
 
 // groupType reports whether field is a nested config group (a struct or
@@ -421,9 +468,11 @@ func (c *Structure) applyPlan() error {
 		}
 		c.recordSourceLocked(leaf.info.Key, SourceDefault)
 	}
+	// Keep an independent copy of every default so the snapshot Reload
+	// restores from can never be reached through a value handed to a caller
 	c.defaultData = make(map[string]interface{}, len(c.configData))
 	for k, v := range c.configData {
-		c.defaultData[k] = v
+		c.defaultData[k] = cloneMutableInterface(v)
 	}
 
 	// Wire the accessor func fields. This takes the write lock to match the
@@ -536,9 +585,77 @@ func cloneMutableReflectValue(v reflect.Value) reflect.Value {
 		cp := reflect.New(v.Type().Elem())
 		cp.Elem().Set(cloneMutableReflectValue(v.Elem()))
 		return cp
+	case reflect.Interface:
+		// A container held behind an interface (eg the nested objects and
+		// arrays of a map[string]interface{} decoded from JSON) must be cloned
+		// too, or the copy handed to a caller still aliases live config.
+		// Pointers behind an interface keep their identity: an interface{}
+		// value is a common place to park a shared client or handle
+		if v.IsNil() {
+			return v
+		}
+		if elem := v.Elem(); elem.Kind() == reflect.Map || elem.Kind() == reflect.Slice {
+			return cloneMutableReflectValue(elem)
+		}
+		return v
+	case reflect.Struct:
+		if cp, cloned := cloneStructValue(v); cloned {
+			return cp
+		}
+		return v
 	default:
 		return v
 	}
+}
+
+// cloneStructValue copies v and deep-clones its exported map, slice and
+// interface-held-container fields (recursively through nested structs), so a
+// struct-typed accessor such as func() Options cannot leak a slice that
+// aliases live config. Unexported fields are copied as-is because reflection
+// cannot assign to them. It reports false, returning v itself, when no field
+// needed cloning, which keeps plain value structs (time.Time, ...) free
+func cloneStructValue(v reflect.Value) (reflect.Value, bool) {
+	t := v.Type()
+	var out reflect.Value
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).PkgPath != "" {
+			continue
+		}
+		fv := v.Field(i)
+		var cp reflect.Value
+		switch fv.Kind() {
+		case reflect.Map, reflect.Slice:
+			if fv.IsNil() {
+				continue
+			}
+			cp = cloneMutableReflectValue(fv)
+		case reflect.Interface:
+			if fv.IsNil() {
+				continue
+			}
+			if elem := fv.Elem(); elem.Kind() != reflect.Map && elem.Kind() != reflect.Slice {
+				continue
+			}
+			cp = cloneMutableReflectValue(fv)
+		case reflect.Struct:
+			nested, cloned := cloneStructValue(fv)
+			if !cloned {
+				continue
+			}
+			cp = nested
+		default:
+			continue
+		}
+		if !out.IsValid() {
+			out = reflect.New(t).Elem()
+			out.Set(v)
+		}
+		out.Field(i).Set(cp)
+	}
+	if !out.IsValid() {
+		return v, false
+	}
+	return out, true
 }
 
 // readTyped reads the live value for key as T. The common case (the stored

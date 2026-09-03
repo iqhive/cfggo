@@ -52,7 +52,7 @@ func BenchmarkInitWithMemHandler(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cfg := &mediumConfig{}
 		mustInit(b, cfg,
-			cfggo.WithSkipEnvironment(),
+			cfggo.WithoutEnv(),
 			cfggo.WithConfigHandler(newMemHandler(mediumJSON)),
 		)
 	}
@@ -72,7 +72,7 @@ func BenchmarkInitWithFile(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cfg := &mediumConfig{}
 		mustInit(b, cfg,
-			cfggo.WithSkipEnvironment(),
+			cfggo.WithoutEnv(),
 			cfggo.WithFileConfig(file),
 		)
 	}

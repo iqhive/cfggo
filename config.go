@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"errors"
 	"reflect"
 
 	iconvert "github.com/iqhive/cfggo/internal/convert"
@@ -41,7 +42,7 @@ func (c *Structure) Set(key string, value interface{}) error {
 	c.reloadMutex.RUnlock()
 
 	if err != nil {
-		return c.WrapError(err, ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
+		return c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
 	}
 	// Only assemble the change set when someone is listening,
 	// so a plain Set stays allocation-free in the common case
@@ -74,28 +75,41 @@ func (c *Structure) validateForSet(key string, value interface{}) error {
 	if existingType := reflect.TypeOf(existing); existingType != nil {
 		converted, err := iconvert.ConvertValue(value, existingType, c)
 		if err != nil {
-			return c.WrapError(err, ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
+			return c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
 		}
 		checked = converted
 	}
 	return c.validateValueForKey(key, checked, SourceSet)
 }
 
-// applyLoaded stores key=value originating from a loading layer (a default
-// tag, an environment variable, ...). It takes the write lock, records
-// provenance, and marks the config changed, but deliberately does NOT fire
-// OnChange callbacks: those are reserved for Set and Reload.
+// redactSecretValueError replaces a conversion error for a secret-tagged key
+// with a generic one. Conversion errors quote the rejected input, and an
+// error is routinely logged, so it must never carry the credential
+func (c *Structure) redactSecretValueError(key string, err error) error {
+	if err == nil || !c.isSecretKey(key) {
+		return err
+	}
+	return errors.New("invalid value (redacted: field is secret)")
+}
+
+// applyLoaded stores key=value originating from a loading layer (an
+// environment variable, a command-line flag, a re-asserted override during
+// Reload). It takes the write lock and records provenance, but deliberately
+// does NOT fire OnChange callbacks (those are reserved for Set and Reload) and
+// does not mark the configuration dirty: values that arrive from a source are
+// re-applied from that source on every start, so there is nothing to persist
 func (c *Structure) applyLoaded(key string, value interface{}, src Source) error {
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
 	if err := c.set(key, value); err != nil {
 		return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, src)
 	}
-	c.markChangedLocked()
 	c.recordSourceLocked(key, src)
 	return nil
 }
 
+// markChangedLocked flags the configuration as having unsaved programmatic
+// changes. Only Set calls it: loading layers never make the config dirty
 func (c *Structure) markChangedLocked() {
 	c.changed = true
 	c.changeVersion++

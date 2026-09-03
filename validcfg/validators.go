@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"unicode/utf8"
 )
 
 // Common validators
@@ -32,7 +33,9 @@ func Required() Validator {
 	}
 }
 
-// MinLength returns a validator that checks if a string or slice has at least min elements
+// MinLength returns a validator that checks if a string has at least min
+// characters (Unicode code points, not bytes) or a slice, map or array has at
+// least min elements
 func MinLength(min int) Validator {
 	return func(value interface{}) error {
 		if value == nil {
@@ -42,7 +45,7 @@ func MinLength(min int) Validator {
 
 		switch v.Kind() {
 		case reflect.String:
-			if v.Len() < min {
+			if utf8.RuneCountInString(v.String()) < min {
 				return fmt.Errorf("length must be at least %d characters", min)
 			}
 		case reflect.Slice, reflect.Map, reflect.Array:
@@ -57,7 +60,9 @@ func MinLength(min int) Validator {
 	}
 }
 
-// MaxLength returns a validator that checks if a string or slice has at most max elements
+// MaxLength returns a validator that checks if a string has at most max
+// characters (Unicode code points, not bytes) or a slice, map or array has at
+// most max elements
 func MaxLength(max int) Validator {
 	return func(value interface{}) error {
 		if value == nil {
@@ -67,7 +72,7 @@ func MaxLength(max int) Validator {
 
 		switch v.Kind() {
 		case reflect.String:
-			if v.Len() > max {
+			if utf8.RuneCountInString(v.String()) > max {
 				return fmt.Errorf("length must be at most %d characters", max)
 			}
 		case reflect.Slice, reflect.Map, reflect.Array:
@@ -123,7 +128,11 @@ func OneOf(options ...interface{}) Validator {
 	}
 }
 
-// Regex returns a validator that checks if a string matches a regular expression
+// Regex returns a validator that checks if a string matches a regular
+// expression. Like regexp.MustCompile it panics when pattern does not compile:
+// patterns are expected to be program constants. To validate against a pattern
+// that comes from input, compile it with regexp.Compile and wrap the check in
+// Custom
 func Regex(pattern string) Validator {
 	re, err := regexp.Compile(pattern)
 	if err != nil {

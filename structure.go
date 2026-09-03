@@ -2,16 +2,19 @@ package cfggo
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/iqhive/cfggo/cfgerror"
 	"github.com/iqhive/cfggo/cfglogger"
 	"github.com/iqhive/cfggo/internal/env"
+	iflags "github.com/iqhive/cfggo/internal/flags"
 	"github.com/iqhive/cfggo/sources"
 	"github.com/iqhive/cfggo/validcfg"
 )
@@ -37,8 +40,16 @@ type Structure struct {
 	parent        interface{}
 	configData    map[string]interface{}
 	defaultData   map[string]interface{}
-	autoSave      bool
-	autoSaveCtx   context.Context
+	// loadedData holds, per key, the value most recently supplied by the
+	// configuration source (file, HTTP, bytes) so Save can write it back for a
+	// key whose live value is a runtime override from the environment or a
+	// command-line flag. Guarded by configMutex
+	loadedData  map[string]interface{}
+	autoSave    bool
+	autoSaveCtx context.Context
+	// autoSaveStop ends the auto-save goroutine of a reverted Init so a retried
+	// Group.Init does not leave the earlier attempt's goroutine behind
+	autoSaveStop chan struct{}
 
 	flagSet *flag.FlagSet
 	// externalFlagSet is true when the caller supplied the FlagSet (e.g. via
@@ -48,8 +59,8 @@ type Structure struct {
 	externalFlagSet bool
 	// ignoreUnknownVars, when true, makes cfggo ignore command-line flags it
 	// doesn't define instead of treating them as an error. Enabled via
-	// WithIgnoreUnknownVars. The default (false) preserves the historical
-	// behaviour of exiting on unknown flags
+	// WithIgnoreUnknownVars. The default (false) makes Init return an error
+	// for an unknown flag
 	ignoreUnknownVars bool
 	// noFlags, when true (via WithoutFlags), skips command-line flag
 	// registration and parsing entirely. Programs that configure cfggo purely
@@ -62,6 +73,11 @@ type Structure struct {
 	// without colliding (eg "auth.port"). It is set only by Group; it is empty
 	// for every standalone configuration and then costs nothing.
 	flagNamePrefix string
+
+	// configPathFlag is the bootstrap flag name supplied to
+	// WithFileConfigParamName. It is registered together with the other flags,
+	// on whichever flag set is final, so a later WithFlagSet cannot discard it
+	configPathFlag string
 
 	// lenient, when true (via WithLenientLoad), downgrades configuration load
 	// and validation failures during Init from hard errors to logged warnings.
@@ -115,18 +131,32 @@ type Structure struct {
 	// entry, so the common case stays allocation-free. Guarded by configMutex
 	provenanceTrail map[string][]Source
 
+	// extraKeys holds the keys registered with NewFlag (key -> help text).
+	// They are not backed by a struct field but take part in every layer and
+	// are not reported as unrecognized. Guarded by configMutex
+	extraKeys map[string]string
+
 	// ignoredKeys holds configuration keys that should be exempt from the
 	// "unrecognized key" diagnostics (eg command-line-only flags). Populated via
 	// WithIgnoreKeys. It replaces the previous process-global IgnoreFlags so the
 	// exemptions are scoped to this instance
 	ignoredKeys map[string]bool
 
-	// lazyInitWarn ensures the "lazy initialisation" warning emitted by
+	// lazyInitWarn ensures the "used before Init" warning emitted by
 	// ensureInit is logged at most once per instance
 	lazyInitWarn sync.Once
 	initMutex    sync.Mutex
 	initializing atomic.Bool
 	initialized  atomic.Bool
+
+	// initSnapshot is the state captured before the last successful Init. It
+	// lets Group revert a member when a later member fails, so the whole group
+	// can be initialised again
+	initSnapshot *initStateSnapshot
+
+	// metaMutex guards logger and errorWrapper, which SetLogger and
+	// SetErrorWrapper may replace while other goroutines are logging
+	metaMutex sync.RWMutex
 
 	// validationMap holds the registered validators keyed by config key. It is
 	// per-instance (a Structure has exactly one configuration), so it is a flat
@@ -178,6 +208,10 @@ func cloneDefaultValue[T any](x T) T {
 // Init initialises the configuration and returns an error on failure
 // parent must be a pointer to the struct that embeds Structure
 func (c *Structure) Init(parent interface{}, options ...Option) error {
+	if c == nil {
+		return GlobalErrorWrapper()(nil, ErrCodeInvalidArgument,
+			"Init: the embedded *cfggo.Structure is nil; embed cfggo.Structure by value, allocate it, or initialise through cfggo.Init")
+	}
 	c.initMutex.Lock()
 	defer c.initMutex.Unlock()
 	if c.initialized.Load() {
@@ -191,8 +225,27 @@ func (c *Structure) Init(parent interface{}, options ...Option) error {
 		c.restoreInitState(snapshot)
 		return err
 	}
+	c.initSnapshot = &snapshot
 	c.initialized.Store(true)
 	return nil
+}
+
+// revertInit returns a successfully initialised Structure to its pre-Init
+// state so Init can be called again. Group uses it when a later member fails,
+// so a failed Group.Init can be retried. Accessor closures already installed
+// in the parent struct keep working and read the restored default values
+func (c *Structure) revertInit() {
+	c.initMutex.Lock()
+	defer c.initMutex.Unlock()
+	if !c.initialized.Load() || c.initSnapshot == nil {
+		return
+	}
+	c.restoreInitState(*c.initSnapshot)
+	c.initSnapshot = nil
+	if c.autoSaveStop != nil {
+		close(c.autoSaveStop)
+		c.autoSaveStop = nil
+	}
 }
 
 type initStateSnapshot struct {
@@ -206,6 +259,7 @@ type initStateSnapshot struct {
 	parent            interface{}
 	configData        map[string]interface{}
 	defaultData       map[string]interface{}
+	loadedData        map[string]interface{}
 	autoSave          bool
 	autoSaveCtx       context.Context
 	flagSet           *flag.FlagSet
@@ -213,6 +267,7 @@ type initStateSnapshot struct {
 	ignoreUnknownVars bool
 	noFlags           bool
 	flagNamePrefix    string
+	configPathFlag    string
 	lenient           bool
 	strictKeys        bool
 	snakeCaseNames    bool
@@ -223,6 +278,7 @@ type initStateSnapshot struct {
 	provenance        map[string]Source
 	provenanceTrail   map[string][]Source
 	ignoredKeys       map[string]bool
+	extraKeys         map[string]string
 	validationMap     map[string]validcfg.Validator
 }
 
@@ -230,13 +286,19 @@ func (c *Structure) snapshotInitState() initStateSnapshot {
 	c.configMutex.RLock()
 	configData := cloneInterfaceMap(c.configData)
 	defaultData := cloneInterfaceMap(c.defaultData)
+	loadedData := cloneInterfaceMap(c.loadedData)
 	provenance := cloneSourceMap(c.provenance)
 	provenanceTrail := cloneSourceTrailMap(c.provenanceTrail)
+	extraKeys := cloneStringMap(c.extraKeys)
 	c.configMutex.RUnlock()
 
 	c.validationMutex.RLock()
 	validationMap := cloneValidatorMap(c.validationMap)
 	c.validationMutex.RUnlock()
+
+	c.metaMutex.RLock()
+	logger, errorWrapper := c.logger, c.errorWrapper
+	c.metaMutex.RUnlock()
 
 	return initStateSnapshot{
 		name:              c.name,
@@ -249,6 +311,7 @@ func (c *Structure) snapshotInitState() initStateSnapshot {
 		parent:            c.parent,
 		configData:        configData,
 		defaultData:       defaultData,
+		loadedData:        loadedData,
 		autoSave:          c.autoSave,
 		autoSaveCtx:       c.autoSaveCtx,
 		flagSet:           c.flagSet,
@@ -256,18 +319,31 @@ func (c *Structure) snapshotInitState() initStateSnapshot {
 		ignoreUnknownVars: c.ignoreUnknownVars,
 		noFlags:           c.noFlags,
 		flagNamePrefix:    c.flagNamePrefix,
+		configPathFlag:    c.configPathFlag,
 		lenient:           c.lenient,
 		strictKeys:        c.strictKeys,
 		snakeCaseNames:    c.snakeCaseFieldNames,
 		snakeCaseNamesSet: c.snakeCaseFieldNamesSet,
-		logger:            c.logger,
-		errorWrapper:      c.errorWrapper,
+		logger:            logger,
+		errorWrapper:      errorWrapper,
 		plan:              c.plan,
 		provenance:        provenance,
 		provenanceTrail:   provenanceTrail,
 		ignoredKeys:       cloneBoolMap(c.ignoredKeys),
+		extraKeys:         extraKeys,
 		validationMap:     validationMap,
 	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
@@ -284,12 +360,15 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 	c.ignoreUnknownVars = snapshot.ignoreUnknownVars
 	c.noFlags = snapshot.noFlags
 	c.flagNamePrefix = snapshot.flagNamePrefix
+	c.configPathFlag = snapshot.configPathFlag
 	c.lenient = snapshot.lenient
 	c.strictKeys = snapshot.strictKeys
 	c.snakeCaseFieldNames = snapshot.snakeCaseNames
 	c.snakeCaseFieldNamesSet = snapshot.snakeCaseNamesSet
+	c.metaMutex.Lock()
 	c.logger = snapshot.logger
 	c.errorWrapper = snapshot.errorWrapper
+	c.metaMutex.Unlock()
 	c.plan = snapshot.plan
 	c.parent = snapshot.parent
 	c.initialized.Store(false)
@@ -300,6 +379,7 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 		c.changeVersion = snapshot.changeVersion
 		c.configData = snapshot.configData
 		c.defaultData = snapshot.defaultData
+		c.loadedData = snapshot.loadedData
 		c.provenance = snapshot.provenance
 		c.provenanceTrail = snapshot.provenanceTrail
 	} else if c.defaultData != nil {
@@ -310,6 +390,7 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 		c.configData = make(map[string]interface{}, len(c.defaultData))
 		c.provenance = make(map[string]Source, len(c.defaultData))
 		c.provenanceTrail = nil
+		c.loadedData = nil
 		for k, v := range c.defaultData {
 			c.configData[k] = cloneMutableInterface(v)
 			c.provenance[k] = SourceDefault
@@ -321,10 +402,12 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 		c.changeVersion = snapshot.changeVersion
 		c.configData = snapshot.configData
 		c.defaultData = snapshot.defaultData
+		c.loadedData = snapshot.loadedData
 		c.provenance = snapshot.provenance
 		c.provenanceTrail = snapshot.provenanceTrail
 	}
 	c.ignoredKeys = snapshot.ignoredKeys
+	c.extraKeys = snapshot.extraKeys
 	c.configMutex.Unlock()
 
 	c.validationMutex.Lock()
@@ -408,12 +491,14 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 		c.validationMap = make(map[string]validcfg.Validator)
 	}
 
+	c.metaMutex.Lock()
 	if c.logger == nil {
 		c.logger = GlobalLogger()
 	}
 	if c.errorWrapper == nil {
 		c.errorWrapper = GlobalErrorWrapper()
 	}
+	c.metaMutex.Unlock()
 
 	if parent == nil {
 		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must not be nil")
@@ -449,14 +534,22 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	// Bind the (now-final) configuration name onto the instance logger so every
 	// line this Structure emits is attributable to it without each call site
 	// repeating the name. No-op for loggers that cannot attach attributes
-	c.logger = bindConfigName(c.log(), c.name)
+	c.SetLogger(bindConfigName(c.log(), c.name))
 
 	parentType := reflect.TypeOf(c.parent)
 	for parentType.Kind() == reflect.Ptr {
 		parentType = parentType.Elem()
 	}
-	c.plan = planForType(parentType, c.useSnakeCaseFieldNames())
+	plan, err := planForType(parentType, c.useSnakeCaseFieldNames())
+	if err != nil {
+		return c.WrapError(err, ErrCodeInvalidArgument, "Init: unsupported configuration struct")
+	}
+	c.plan = plan
 	for _, s := range c.plan.suspects {
+		if s.Reason != "" {
+			c.log().Warn("cfggo: "+s.Reason+"; the field will be ignored", "key", s.Key, "type", s.Type)
+			continue
+		}
 		c.log().Warn("cfggo: field has a cfggo tag but is not a func() T accessor; "+
 			"it will be ignored (did you mean func() "+s.Type+"?)", "key", s.Key, "type", s.Type)
 	}
@@ -497,16 +590,11 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	if c.externalFlagSet {
 		c.createFlags()
 	} else if !c.noFlags {
-		if c.flagSet == nil {
-			// Default behaviour: an unrecognized flag terminates the process
-			// with usage output (flag.ExitOnError). Use WithIgnoreUnknownVars to
-			// instead ignore flags cfggo doesn't define.
-			c.flagSet = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-			c.flagSet.Usage = func() {
-				fmt.Fprintf(c.flagSet.Output(), "Usage of %s:\n", os.Args[0])
-				c.flagSet.PrintDefaults()
-			}
-		}
+		// The private flag set uses flag.ContinueOnError so every flag problem
+		// (unknown flag, bad value, --help) is returned from Init as an error
+		// rather than terminating the process. Use WithIgnoreUnknownVars to
+		// tolerate flags cfggo doesn't define
+		c.ensureFlagSet()
 		c.createFlags()
 		if err := c.parseFlags(); err != nil {
 			return err
@@ -517,7 +605,7 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 		return err
 	}
 
-	if err := c.validate(); err != nil {
+	if err := c.validateAtInit(); err != nil {
 		if !c.lenient {
 			c.log().Error("cfggo: configuration validation failed", "err", err)
 			return err
@@ -527,6 +615,45 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 
 	c.startAutoSave()
 	return nil
+}
+
+// validateAtInit runs the registered validators at the end of Init.
+//
+// When the host owns the flag set (WithFlagSet / WithStandardFlags) and has not
+// parsed it yet, values supplied on the command line are not visible to cfggo
+// until the host calls Parse. A failure for a key whose flag is present in
+// os.Args is therefore deferred instead of reported: the flag's own Set
+// validates the incoming value during Parse, and Validate() should be called
+// afterwards to confirm the final state. Keys with no pending flag are
+// validated as usual, so a bad file or environment value still fails Init
+func (c *Structure) validateAtInit() error {
+	err := c.validate()
+	if err == nil || !c.externalFlagSet || c.flagSet == nil || c.flagSet.Parsed() {
+		return err
+	}
+	var errs validcfg.ValidationErrors
+	if !errors.As(err, &errs) {
+		return err
+	}
+	args := iflags.FilterTestFlags(os.Args[1:])
+	var remaining validcfg.ValidationErrors
+	var deferred []string
+	for _, ve := range errs {
+		if flagPresentInArgs(args, c.flagNamePrefix+ve.Key) {
+			deferred = append(deferred, ve.Key)
+			continue
+		}
+		remaining = append(remaining, ve)
+	}
+	if len(deferred) > 0 {
+		sort.Strings(deferred)
+		c.log().Info("cfggo: validation deferred for keys supplied on the command line; "+
+			"call Validate() after the host parses its flag set", "keys", deferred)
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	return remaining
 }
 
 // checkUnrecognizedKeys surfaces configuration keys that are not backed by a
@@ -552,28 +679,59 @@ func (c *Structure) checkUnrecognizedKeys() error {
 
 // WrapError wraps an error using the instance's error wrapper.
 func (c *Structure) WrapError(err error, errorcode int, msg string, args ...interface{}) error {
-	if c.errorWrapper == nil {
-		c.errorWrapper = GlobalErrorWrapper()
+	c.metaMutex.RLock()
+	wrapper := c.errorWrapper
+	c.metaMutex.RUnlock()
+	if wrapper == nil {
+		wrapper = GlobalErrorWrapper()
 	}
-	return c.errorWrapper(err, errorcode, msg, args...)
+	return wrapper(err, errorcode, msg, args...)
 }
 
-// SetLogger sets the instance-specific logger.
+// SetLogger sets the instance-specific logger. It is safe to call while other
+// goroutines are using the configuration
 func (c *Structure) SetLogger(logger cfglogger.Logger) {
+	c.metaMutex.Lock()
 	c.logger = logger
+	c.metaMutex.Unlock()
 }
 
-// SetErrorWrapper sets the instance-specific error wrapper.
+// SetErrorWrapper sets the instance-specific error wrapper. It is safe to call
+// while other goroutines are using the configuration
 func (c *Structure) SetErrorWrapper(wrapper cfgerror.Wrapper) {
+	c.metaMutex.Lock()
 	c.errorWrapper = wrapper
+	c.metaMutex.Unlock()
 }
 
 // GetLogger returns the instance's logger, falling back to the global logger
 func (c *Structure) GetLogger() cfglogger.Logger {
-	if c.logger == nil {
-		return GlobalLogger()
+	return c.log()
+}
+
+// declaredType returns the accessor return type declared for key by the parent
+// struct (the T of func() T), or nil when key is not backed by an accessor. A
+// key registered with NewFlag has no declared type and yields interface{}, so
+// the env and flag layers infer a value for it. It gives those layers a target
+// type for a key whose current value is an untyped nil, such as a func()
+// interface{} field with no default
+func (c *Structure) declaredType(key string) reflect.Type {
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
+	return c.declaredTypeLocked(key)
+}
+
+// declaredTypeLocked is declaredType for callers that already hold configMutex
+func (c *Structure) declaredTypeLocked(key string) reflect.Type {
+	if c.plan != nil {
+		if leaf, ok := c.plan.byKey[key]; ok && leaf.info.IsAccessor {
+			return leaf.info.Type
+		}
 	}
-	return c.logger
+	if _, ok := c.extraKeys[key]; ok {
+		return emptyInterfaceType
+	}
+	return nil
 }
 
 // structure returns the embedded Structure. It lets Group treat any config
@@ -586,44 +744,24 @@ func (c *Structure) InitSelf(options ...Option) error {
 	return c.Init(c, options...)
 }
 
-// ensureInit lazily initialises the configuration via InitSelf when an accessor
-// (Get, Set, Explain, Diagnose, ...) is called before Init.
+// ensureInit is called by the public accessors (Get, Set, Explain, Diagnose,
+// ...) so a Structure used before Init behaves predictably: it warns once and
+// the method then operates on the empty, uninitialised state (Get reports the
+// key as absent, dumps are empty, Set reports an unknown key).
 //
-// IMPORTANT: this is a convenience safety net, not the intended path. Lazy
-// initialisation runs with NO options (no config source, no validators, no
-// custom logger) and the resulting error can only be logged, because the
-// calling method has no way to return it. A program that relies on lazy init
-// therefore silently runs on struct/tag defaults only. Always call Init (or
-// InitSelf) explicitly at startup so configuration sources are loaded and load
-// errors are surfaced
+// It deliberately initialises nothing. The embedded Structure cannot locate
+// the struct that embeds it, so an implicit initialisation could only ever
+// produce an empty configuration, and marking the instance initialised would
+// then make the application's real Init call fail with ErrAlreadyInitialized.
+// Always call Init (or InitSelf) explicitly at startup
 func (c *Structure) ensureInit() {
-	if c.initialized.Load() {
+	if c.initialized.Load() || c.initializing.Load() {
 		return
 	}
-	if c.initializing.Load() {
-		return
-	}
-	c.initMutex.Lock()
-	defer c.initMutex.Unlock()
-	if c.initialized.Load() {
-		return
-	}
-	if c.parent != nil {
-		c.initialized.Store(true)
-		return
-	}
-	// Surface the fallback exactly once so a forgotten Init shows up in the
-	// logs instead of silently running on struct/tag defaults only
 	c.lazyInitWarn.Do(func() {
-		c.log().Warn("cfggo: configuration used before Init; falling back to lazy " +
-			"initialisation with no options (no config source, validators, or custom logger). " +
-			"Call Init/InitSelf explicitly at startup to load sources and surface load errors")
+		c.log().Warn("cfggo: configuration used before Init; lookups return zero values and " +
+			"accessors are not wired until Init/InitSelf is called explicitly at startup")
 	})
-	if err := c.initLocked(c); err != nil {
-		c.log().Error("cfggo: lazy initialisation failed: " + err.Error())
-		return
-	}
-	c.initialized.Store(true)
 }
 
 // ReloadConfig reloads the configuration from all sources.

@@ -3,7 +3,6 @@ package flags
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 
 	"github.com/iqhive/cfggo/internal/convert"
 )
@@ -40,22 +39,8 @@ func (d *ConfigVar) Set(s string) error {
 		return fmt.Errorf("ConfigVar has nil type")
 	}
 
-	// For interface{} targets, infer a concrete Go type from the string so that
-	// callers get a typed value (int, float64, bool, or string) rather than a
-	// bare string.
-	if d.Want.Kind() == reflect.Interface {
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			if float64(int(f)) == f {
-				return d.Setter(int(f))
-			}
-			return d.Setter(f)
-		}
-		if b, err := strconv.ParseBool(s); err == nil {
-			return d.Setter(b)
-		}
-		return d.Setter(s)
-	}
-
+	// interface{} targets are handled by ConvertString, which infers a typed
+	// value (int, float64, bool, JSON container, or string) from the text
 	value, err := convert.ConvertString(s, d.Want, nil)
 	if err != nil {
 		if d.IsSecret {

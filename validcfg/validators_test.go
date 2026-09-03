@@ -177,3 +177,22 @@ func TestValidationErrorsFormattingAndSentinelMatching(t *testing.T) {
 		}
 	}
 }
+
+func TestLengthValidatorsCountCharactersNotBytes(t *testing.T) {
+	const s = "ñé" // 2 characters, 4 bytes
+	if err := MinLength(3)(s); err == nil {
+		t.Error("MinLength(3) accepted a 2-character string (counted bytes)")
+	}
+	if err := MinLength(2)(s); err != nil {
+		t.Errorf("MinLength(2) rejected a 2-character string: %v", err)
+	}
+	if err := MaxLength(2)(s); err != nil {
+		t.Errorf("MaxLength(2) rejected a 2-character string: %v", err)
+	}
+	if err := MaxLength(1)(s); err == nil {
+		t.Error("MaxLength(1) accepted a 2-character string")
+	}
+	if err := MaxLength(3)([]int{1, 2}); err != nil {
+		t.Errorf("MaxLength on a slice: %v", err)
+	}
+}

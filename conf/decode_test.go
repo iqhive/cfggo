@@ -29,11 +29,11 @@ func TestDecodeSectionsGlobalsCommentsAndValues(t *testing.T) {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	want := map[string]any{
-		"app": "gateway", "port": "8080", "debug": "true", "empty": "",
+		"app": "gateway", "port": float64(8080), "debug": true, "empty": "",
 		"database": map[string]any{
 			"host":   "db.internal",
 			"labels": map[string]any{"tier": "primary"},
-			"pool":   map[string]any{"size": "12"},
+			"pool":   map[string]any{"size": float64(12)},
 		},
 	}
 	if !reflect.DeepEqual(document, want) {
@@ -131,5 +131,59 @@ func TestDecodeLimitsAndLocations(t *testing.T) {
 func TestDecodeRejectsInvalidUTF8(t *testing.T) {
 	if _, err := Decode([]byte{0xff, '=', 'x'}); !errors.Is(err, ErrSyntax) {
 		t.Fatalf("error = %v, want ErrSyntax", err)
+	}
+}
+
+func TestDecodeBareJSONLiteralsAreTyped(t *testing.T) {
+	got, err := Decode([]byte("n=8080\nf=1.5\nneg=-3\nexp=1e3\nt=true\nfl=false\nq=\"8080\"\n" +
+		"lead=007\nplus=+5\nword=truex\nver=1.0.0\nbig=9007199254740993\n"))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(got, &document); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"n": float64(8080), "f": 1.5, "neg": float64(-3), "exp": float64(1000), "t": true, "fl": false,
+		"q": "8080", "lead": "007", "plus": "+5", "word": "truex", "ver": "1.0.0", "big": float64(9007199254740992),
+	}
+	if !reflect.DeepEqual(document, want) {
+		t.Fatalf("decoded = %#v\nwant    = %#v", document, want)
+	}
+	// The exact literal is preserved in the canonical JSON even when float64 cannot hold it
+	if !strings.Contains(string(got), `"big":9007199254740993`) {
+		t.Fatalf("canonical JSON = %s, want the exact big literal", got)
+	}
+}
+
+func TestEncodeDecodeRoundTripPreservesTypes(t *testing.T) {
+	for _, doc := range []string{
+		"o={\"n\":1,\"b\":true,\"s\":\"x\",\"t\":\"1\"}\n",
+		"port=8080\nname=api\n[db]\nsize=12\nhost=h\n",
+		"items=[1,\"two\",true]\nempty=\n",
+	} {
+		first, err := Decode([]byte(doc))
+		if err != nil {
+			t.Fatalf("Decode(%q): %v", doc, err)
+		}
+		encoded, err := Encode(first)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		second, err := Decode(encoded)
+		if err != nil {
+			t.Fatalf("Decode(encoded %q): %v", encoded, err)
+		}
+		var a, b any
+		if err := json.Unmarshal(first, &a); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(second, &b); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(a, b) {
+			t.Fatalf("round trip changed %q:\nfirst  = %s\nsecond = %s\nvia    = %q", doc, first, second, encoded)
+		}
 	}
 }

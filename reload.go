@@ -37,20 +37,33 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	// file/env layers below have been reloaded (see the restore step)
 	var oldProvenance map[string]Source
 	var oldTrail map[string][]Source
+	var oldLoaded map[string]interface{}
 	var oldChanged bool
 	var oldChangeVersion uint64
 
-	// Get a snapshot of the current configuration
+	// Get a snapshot of the current configuration. The dirty flag is left
+	// alone: a reload neither creates nor discards unsaved Set values (they
+	// are re-asserted below), so whatever was pending stays pending
 	c.configMutex.Lock()
 	oldChanged = c.changed
 	oldChangeVersion = c.changeVersion
 	oldConfig = cloneInterfaceMap(c.configData)
 	oldProvenance = cloneSourceMap(c.provenance)
 	oldTrail = cloneSourceTrailMap(c.provenanceTrail)
+	oldLoaded = cloneInterfaceMap(c.loadedData)
 	c.resetToDefaultsLocked()
-	// Reset the changed flag
-	c.changed = false
 	c.configMutex.Unlock()
+
+	rollback := func() {
+		c.configMutex.Lock()
+		c.configData = oldConfig
+		c.provenance = oldProvenance
+		c.provenanceTrail = oldTrail
+		c.loadedData = oldLoaded
+		c.changed = oldChanged
+		c.changeVersion = oldChangeVersion
+		c.configMutex.Unlock()
+	}
 
 	var err error
 
@@ -61,13 +74,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 
 			// Rollback to old configuration on error. Restore provenance too so
 			// it stays consistent with the values after a failed reload
-			c.configMutex.Lock()
-			c.configData = oldConfig
-			c.provenance = oldProvenance
-			c.provenanceTrail = oldTrail
-			c.changed = oldChanged
-			c.changeVersion = oldChangeVersion
-			c.configMutex.Unlock()
+			rollback()
 			return nil, err
 		}
 	}
@@ -75,13 +82,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	// Reload from environment variables
 	if err = c.loadFromEnv(); err != nil {
 		c.log().Error("cfggo: failed to reload environment variables", "err", err)
-		c.configMutex.Lock()
-		c.configData = oldConfig
-		c.provenance = oldProvenance
-		c.provenanceTrail = oldTrail
-		c.changed = oldChanged
-		c.changeVersion = oldChangeVersion
-		c.configMutex.Unlock()
+		rollback()
 		return nil, err
 	}
 
@@ -116,13 +117,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 
 	if err = c.checkUnrecognizedKeys(); err != nil {
 		c.log().Warn("cfggo: unrecognized configuration keys after reload; keeping previous values", "err", err)
-		c.configMutex.Lock()
-		c.configData = oldConfig
-		c.provenance = oldProvenance
-		c.provenanceTrail = oldTrail
-		c.changed = oldChanged
-		c.changeVersion = oldChangeVersion
-		c.configMutex.Unlock()
+		rollback()
 		return nil, err
 	}
 
@@ -137,13 +132,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	// service has already been poisoned by bad config.
 	if err = c.Validate(); err != nil {
 		c.log().Warn("cfggo: configuration validation failed after reload; keeping previous values", "err", err)
-		c.configMutex.Lock()
-		c.configData = oldConfig
-		c.provenance = oldProvenance
-		c.provenanceTrail = oldTrail
-		c.changed = oldChanged
-		c.changeVersion = oldChangeVersion
-		c.configMutex.Unlock()
+		rollback()
 		return nil, err
 	}
 
@@ -157,6 +146,7 @@ func (c *Structure) resetToDefaultsLocked() {
 	c.configData = make(map[string]interface{}, len(c.defaultData))
 	c.provenance = make(map[string]Source, len(c.defaultData))
 	c.provenanceTrail = nil
+	c.loadedData = nil
 	for k, v := range c.defaultData {
 		// Clone mutable values (maps, slices, pointers) so that a subsequent
 		// mutation via an accessor or Set does not corrupt c.defaultData.

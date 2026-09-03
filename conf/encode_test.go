@@ -27,8 +27,8 @@ func TestEncodeDeterministicRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantDecoded := map[string]any{
-		"z": "last", "port": "8080", "items": []any{"a", "b"},
-		"database": map[string]any{"host": "db#1", "pool": map[string]any{"size": "12"}},
+		"z": "last", "port": float64(8080), "items": []any{"a", "b"},
+		"database": map[string]any{"host": "db#1", "pool": map[string]any{"size": float64(12)}},
 	}
 	if !reflect.DeepEqual(after, wantDecoded) {
 		t.Fatalf("round trip = %#v, want %#v", after, wantDecoded)

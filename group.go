@@ -2,6 +2,7 @@ package cfggo
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -42,7 +43,15 @@ import (
 // Service packages need no changes and stay standalone-compatible: a Group is
 // purely an orchestrator around the normal Structure lifecycle.
 type Group struct {
+	// mu guards registration and initialisation. Operations that call into
+	// members (Save, Reload, Validate, Diagnose, ...) take it only to copy the
+	// member list, so a member's OnChange callback or auto-save can call back
+	// into the group without deadlocking
 	mu sync.Mutex
+
+	// saveMu serialises writes through the handler; reloadMu serialises reloads
+	saveMu   sync.Mutex
+	reloadMu sync.Mutex
 
 	handler     sources.ConfigHandler
 	envPrefix   string
@@ -50,7 +59,13 @@ type Group struct {
 	ownFlagSet  bool
 	noFlags     bool
 	ignoreFlags bool
+	strictKeys  bool
 	logger      cfglogger.Logger
+
+	// ignoredSections names top-level sections of the combined document that
+	// belong to other programs sharing the file; they are neither reported
+	// as unclaimed nor delivered to a root member
+	ignoredSections map[string]bool
 
 	members    []*groupMember
 	namespaces map[string]int
@@ -178,6 +193,36 @@ func GroupWithIgnoreUnknownFlags() GroupOption {
 	}
 }
 
+// GroupWithStrictKeys makes Init fail when the combined document has a
+// top-level section that no member claims (usually a misspelt namespace), and
+// applies WithStrictKeys to every member so unknown keys inside a section are
+// errors too. Without it such a section is only logged, with the closest
+// registered namespace suggested; the section is never applied to the
+// suggested member.
+func GroupWithStrictKeys() GroupOption {
+	return func(g *Group) error {
+		g.strictKeys = true
+		return nil
+	}
+}
+
+// GroupWithIgnoredSections names top-level sections of the combined document
+// that this program does not use, typically because several programs share
+// one file and each registers only its own namespaces. Such a section is not
+// reported as unclaimed (see GroupWithStrictKeys) and is not delivered to a
+// member registered at the root.
+func GroupWithIgnoredSections(names ...string) GroupOption {
+	return func(g *Group) error {
+		if g.ignoredSections == nil {
+			g.ignoredSections = make(map[string]bool, len(names))
+		}
+		for _, name := range names {
+			g.ignoredSections[name] = true
+		}
+		return nil
+	}
+}
+
 // GroupWithLogger sets the logger used for group-level messages. Members keep
 // their own loggers.
 func GroupWithLogger(logger cfglogger.Logger) GroupOption {
@@ -217,6 +262,7 @@ func (g *Group) Register(namespace string, cfg interface{}, options ...Option) {
 			"Register: configuration for namespace %q must not be nil", namespace))
 		return
 	}
+	allocateEmbeddedStructure(cfg)
 	member, ok := cfg.(groupConfig)
 	if !ok {
 		g.regErrs = append(g.regErrs, g.wrapError(nil, ErrCodeInvalidArgument,
@@ -243,7 +289,9 @@ func (g *Group) Register(namespace string, cfg interface{}, options ...Option) {
 // combined configuration document is split per namespace, environment lookups
 // are namespaced, and all flags are registered on one shared flag set which is
 // parsed exactly once. It is the group equivalent of calling Init on each
-// member, and returns the first failure it encounters.
+// member, and returns the first failure it encounters. On failure, members
+// initialised so far are reverted, so Init can be called again once the
+// problem is fixed.
 func (g *Group) Init() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -275,23 +323,47 @@ func (g *Group) Init() error {
 		}
 	}
 
+	// Members initialised so far are reverted when a later step fails, so the
+	// group can be initialised again once the problem is fixed
+	var initialised []*groupMember
+	fail := func(err error) error {
+		for _, member := range initialised {
+			member.structure.revertInit()
+		}
+		if g.ownFlagSet {
+			// A private flag set that has already been parsed would be skipped
+			// on retry; start from a fresh one
+			g.flagSet = nil
+			g.ownFlagSet = false
+		}
+		return err
+	}
+
 	for _, member := range g.members {
 		if err := g.initMember(member, document); err != nil {
-			return err
+			return fail(err)
 		}
+		initialised = append(initialised, member)
+	}
+
+	if err := g.checkUnclaimedSections(document, g.unclaimedSectionsAreErrors()); err != nil {
+		return fail(err)
+	}
+	if err := g.checkSurfaceCollisions(); err != nil {
+		return fail(err)
 	}
 
 	// Flags are registered by every member but parsed once, here, so a flag
 	// belonging to one member is never "unknown" to another.
 	if g.ownFlagSet {
 		if err := g.parseFlags(); err != nil {
-			return err
+			return fail(err)
 		}
 		// Member Init ran its key and validation checks before any flag was
 		// parsed, so re-run them now that command-line values are applied.
 		for _, member := range g.members {
 			if err := g.recheckMember(member); err != nil {
-				return err
+				return fail(err)
 			}
 		}
 	}
@@ -300,14 +372,157 @@ func (g *Group) Init() error {
 	return nil
 }
 
+// checkSurfaceCollisions reports two members that would read the same
+// environment variable or register the same flag. The namespace prefix cannot
+// prevent every clash: env names are derived by upper-casing and mapping "."
+// and "-" to "_", so root key "auth_port" and member "auth" key "port" both
+// become AUTH_PORT, as do member "auth" key "x_y" and member "auth_x" key "y".
+// It runs after member Init, when each member's effective env prefix and flag
+// set (which per-member options may change) are known
+func (g *Group) checkSurfaceCollisions() error {
+	envOwner := make(map[string]string)
+	flagOwner := make(map[string]string)
+	for _, member := range g.members {
+		s := member.structure
+		if s.plan == nil {
+			continue
+		}
+		name := g.memberName(member)
+		for _, key := range g.memberKeys(member) {
+			if !s.skipEnv {
+				env := s.envVarName(key)
+				if other, exists := envOwner[env]; exists && other != name {
+					return g.wrapError(nil, ErrCodeInvalidArgument,
+						"Group.Init: environment variable %s would be read for key %q of %s and for a key of %s; rename one of the keys or use a different namespace or prefix",
+						env, key, name, other)
+				}
+				envOwner[env] = name
+			}
+			if !s.noFlags && s.flagSet != nil && s.flagSet == g.flagSet {
+				flagName := s.flagNamePrefix + key
+				if other, exists := flagOwner[flagName]; exists && other != name {
+					return g.wrapError(nil, ErrCodeInvalidArgument,
+						"Group.Init: flag -%s would be registered for key %q of %s and for a key of %s",
+						flagName, key, name, other)
+				}
+				flagOwner[flagName] = name
+			}
+		}
+	}
+	return nil
+}
+
+// unclaimedSectionsAreErrors reports whether an unclaimed top-level section
+// should fail Init: when the group is strict, or when every member was
+// initialised with WithStrictKeys (the members' stance is known only after
+// their Init)
+func (g *Group) unclaimedSectionsAreErrors() bool {
+	if g.strictKeys {
+		return true
+	}
+	for _, member := range g.members {
+		if !member.structure.strictKeys {
+			return false
+		}
+	}
+	return len(g.members) > 0
+}
+
+// checkUnclaimedSections reports top-level keys of the combined document that
+// no member claims: neither a registered namespace nor the first segment of a
+// root member's key. Such a key is almost always a misspelt namespace, so the
+// closest registered namespace is named as a suggestion. The suggestion is
+// advisory: the section is never applied to the suggested member. Unclaimed
+// sections are logged, or returned as an error when strict is set
+func (g *Group) checkUnclaimedSections(document map[string]json.RawMessage, strict bool) error {
+	if len(document) == 0 {
+		return nil
+	}
+	claimed := make(map[string]bool, len(g.namespaces))
+	for namespace := range g.namespaces {
+		claimed[namespace] = true
+	}
+	for _, member := range g.members {
+		if member.namespace != "" {
+			continue
+		}
+		for _, key := range g.memberKeys(member) {
+			first, _, _ := strings.Cut(key, ".")
+			claimed[first] = true
+		}
+	}
+
+	var problems []string
+	for _, key := range sortedDocumentKeys(document) {
+		if claimed[key] || g.ignoredSections[key] {
+			continue
+		}
+		message := fmt.Sprintf("section %q matches no registered namespace", key)
+		if suggestion := g.suggestNamespace(key); suggestion != "" {
+			message += fmt.Sprintf(" (did you mean %q?)", suggestion)
+		}
+		if strict {
+			problems = append(problems, message)
+			continue
+		}
+		g.log().Warn("cfggo: unclaimed configuration section in the combined document; it is ignored", "section", key, "detail", message)
+	}
+	if len(problems) > 0 {
+		return g.wrapError(wrapKind(ErrUnknownKey, fmt.Errorf("%s", strings.Join(problems, "; "))), ErrCodeNotFound,
+			"Group.Init: combined configuration has sections no member claims")
+	}
+	return nil
+}
+
+// suggestNamespace returns the registered namespace closest to name, or "" when
+// none is a confident match
+func (g *Group) suggestNamespace(name string) string {
+	best := ""
+	bestDistance := 0
+	for namespace := range g.namespaces {
+		distance := editDistance(name, namespace)
+		if best == "" || distance < bestDistance || (distance == bestDistance && namespace < best) {
+			best = namespace
+			bestDistance = distance
+		}
+	}
+	if best == "" || bestDistance > suggestionDistanceLimit(name, best) {
+		return ""
+	}
+	return best
+}
+
+func sortedDocumentKeys(document map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(document))
+	for key := range document {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// membersSnapshot returns the member list without holding mu while the members
+// are used
+func (g *Group) membersSnapshot() []*groupMember {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]*groupMember(nil), g.members...)
+}
+
 func (g *Group) initMember(member *groupMember, document map[string]json.RawMessage) error {
 	options := make([]Option, 0, len(member.options)+4)
 
 	if g.handler != nil {
 		member.bytes = sources.NewHandlerBytes(g.memberDocument(member, document), g.handler.IsDefault())
+		// A member's own Save / SaveIfChanged / auto-save persists the combined
+		// document rather than silently recording it in memory
+		member.bytes.OnSave(g.Save)
 		options = append(options, withBytesConfig(member.bytes))
 	}
 	options = append(options, WithEnvPrefix(g.memberEnvPrefix(member.namespace)))
+	if g.strictKeys {
+		options = append(options, WithStrictKeys())
+	}
 	if g.noFlags {
 		options = append(options, WithoutFlags())
 	} else {
@@ -355,10 +570,18 @@ func (g *Group) checkRootCollisions() error {
 					"Group.Init: root-namespace key %q is defined by both %s and %s; register one of them under a namespace",
 					key, other, name)
 			}
-			if _, exists := g.namespaces[key]; exists {
+			// A root key whose first segment names a namespace ("auth.port"
+			// beside namespace "auth") would share that member's --auth.port
+			// flag, <PREFIX>AUTH_PORT variable and "auth" file section, so it
+			// is as ambiguous as an exact match and is rejected the same way
+			segment := key
+			if first, _, found := strings.Cut(key, "."); found {
+				segment = first
+			}
+			if _, exists := g.namespaces[segment]; exists {
 				return g.wrapError(nil, ErrCodeInvalidArgument,
-					"Group.Init: root-namespace key %q of %s collides with namespace %q",
-					key, name, key)
+					"Group.Init: root-namespace key %q of %s collides with namespace %q; register %s under a namespace or rename the field",
+					key, name, segment, name)
 			}
 			owner[key] = name
 		}
@@ -366,8 +589,9 @@ func (g *Group) checkRootCollisions() error {
 	return nil
 }
 
-// memberKeys returns a member's configuration keys without initialising it, by
-// reusing the cached per-type plan.
+// memberKeys returns a member's configuration keys (accessor-backed fields
+// only; a plain field the struct happens to carry is not a key) without
+// initialising it, by reusing the cached per-type plan.
 func (g *Group) memberKeys(member *groupMember) []string {
 	parentType := reflect.TypeOf(member.parent)
 	for parentType.Kind() == reflect.Ptr {
@@ -377,10 +601,16 @@ func (g *Group) memberKeys(member *groupMember) []string {
 		return nil
 	}
 	s := member.structure
-	plan := planForType(parentType, s.useSnakeCaseFieldNames())
+	plan, err := planForType(parentType, s.useSnakeCaseFieldNames())
+	if err != nil {
+		// The member's own Init reports the unsupported shape
+		return nil
+	}
 	keys := make([]string, 0, len(plan.byKey))
-	for key := range plan.byKey {
-		keys = append(keys, key)
+	for key, leaf := range plan.byKey {
+		if leaf.info.IsAccessor {
+			keys = append(keys, key)
+		}
 	}
 	sort.Strings(keys)
 	return keys
@@ -448,7 +678,7 @@ func (g *Group) memberDocument(member *groupMember, document map[string]json.Raw
 
 	root := make(map[string]json.RawMessage, len(document))
 	for key, value := range document {
-		if _, isNamespace := g.namespaces[key]; isNamespace {
+		if _, isNamespace := g.namespaces[key]; isNamespace || g.ignoredSections[key] {
 			continue
 		}
 		root[key] = value
@@ -471,13 +701,15 @@ func (g *Group) parseFlags() error {
 	args := iflags.FilterTestFlags(os.Args[1:])
 
 	if g.ignoreFlags {
-		args = filterKnownFlagsIn(g.flagSet, args, func(arg string) {
-			g.log().Debug("cfggo: ignoring unrecognized flag (not defined by any group member)", "flag", arg)
+		args = filterKnownFlagsIn(g.flagSet, args, func(name string) {
+			g.log().Debug("cfggo: ignoring unrecognized flag (not defined by any group member)", "flag", name)
 		})
 	} else if name, ok := firstUnknownFlagIn(g.flagSet, args); ok {
 		suffix := ""
 		if suggestion := g.suggestFlag(name); suggestion != "" {
 			suffix = fmt.Sprintf(" (did you mean -%s?)", suggestion)
+		} else if g.flagSet.Usage != nil {
+			g.flagSet.Usage()
 		}
 		return g.wrapError(
 			wrapKind(ErrUnknownKey, fmt.Errorf("flag provided but not defined: -%s%s", name, suffix)),
@@ -487,11 +719,19 @@ func (g *Group) parseFlags() error {
 	args = normalizeBoolFlagArgsIn(g.flagSet, args)
 
 	if err := g.flagSet.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return g.wrapError(err, ErrCodeInvalidArgument, "Group: help requested")
+		}
+		// Each member scrubs the raw value of its own secret flags out of the
+		// flag package's error text before it is returned or logged
+		for _, member := range g.members {
+			err = member.structure.redactFlagError(err)
+		}
 		return g.wrapError(err, ErrCodeInvalidArgument, "Group: failed to parse command-line flags")
 	}
 	if rest := g.flagSet.Args(); len(rest) > 0 {
 		g.log().Warn("cfggo: ignoring unexpected positional arguments after flag parsing "+
-			"(boolean flags must use the --flag=value form to set an explicit value)", "args", rest)
+			"(boolean flags must use the --flag=value form to set an explicit value)", "count", len(rest))
 	}
 	return nil
 }
@@ -518,11 +758,33 @@ func (g *Group) suggestFlag(name string) string {
 	return ""
 }
 
+// Validate runs every member's registered validators against its current
+// values and returns the first failure.
+//
+// Call it after the host parses an external flag set (GroupWithFlagSet /
+// GroupWithStandardFlags): a member's Init defers validation for keys whose
+// flag is present on the command line, because their values only arrive when
+// the host calls Parse. A group that owns its flag set re-validates every
+// member inside Init and does not need this
+func (g *Group) Validate() error {
+	for _, member := range g.membersSnapshot() {
+		if err := member.structure.Validate(); err != nil {
+			return g.wrapError(err, ErrorCode(err), "Group.Validate: member %q failed validation", g.memberName(member))
+		}
+	}
+	return nil
+}
+
 // Save writes every member's configuration back through the group's handler as
-// one combined document, with a section per namespace.
+// one combined document, with a section per namespace, and clears every
+// member's dirty flag. As for a standalone Structure, values currently
+// overridden by the environment or a flag are written with the value the
+// document last supplied (or the default), so runtime overrides and
+// environment-injected secrets are not persisted. A member's own Save is
+// forwarded here
 func (g *Group) Save() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.saveMu.Lock()
+	defer g.saveMu.Unlock()
 	return g.save()
 }
 
@@ -530,9 +792,12 @@ func (g *Group) save() error {
 	if g.handler == nil {
 		return nil
 	}
-	document := make(map[string]json.RawMessage, len(g.members))
-	for _, member := range g.members {
-		data, err := member.structure.GetJSONBytes()
+	members := g.membersSnapshot()
+	versions := make([]uint64, len(members))
+	document := make(map[string]json.RawMessage, len(members))
+	for i, member := range members {
+		_, versions[i] = member.structure.changedState()
+		data, err := member.structure.persistableJSONBytes()
 		if err != nil {
 			return g.wrapError(err, ErrorCode(err), "Group.Save: member %q could not be marshalled", g.memberName(member))
 		}
@@ -556,50 +821,56 @@ func (g *Group) save() error {
 	if err := g.handler.SaveConfig(data); err != nil {
 		return g.wrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument, "Group.Save: failed to write combined configuration")
 	}
+	for i, member := range members {
+		member.structure.clearChangedIf(versions[i])
+	}
 	return nil
 }
 
 // SaveIfChanged saves the combined configuration only when at least one member
-// changed since it was last loaded or saved.
+// has a value changed with Set since it was last saved.
 func (g *Group) SaveIfChanged() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	g.saveMu.Lock()
+	defer g.saveMu.Unlock()
 
-	versions := make([]uint64, len(g.members))
 	changed := false
-	for i, member := range g.members {
-		memberChanged, version := member.structure.changedState()
-		versions[i] = version
+	for _, member := range g.membersSnapshot() {
+		memberChanged, _ := member.structure.changedState()
 		changed = changed || memberChanged
 	}
 	if !changed {
 		return nil
 	}
-	if err := g.save(); err != nil {
-		return err
-	}
-	for i, member := range g.members {
-		member.structure.clearChangedIf(versions[i])
-	}
-	return nil
+	return g.save()
 }
 
 // Reload re-reads the combined configuration document and reloads every member
 // from its section, preserving each member's own reload semantics: rollback on
 // failure, command-line and programmatic overrides re-asserted, and OnChange
 // callbacks fired per member.
+//
+// Only the document load and hand-out is serialised; the per-member reloads
+// run without a group lock (each member serialises its own), so an OnChange
+// callback may itself call Group.Reload, as it may call Structure.Reload.
+// Unclaimed sections are logged but never make a reload fail
 func (g *Group) Reload() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	members := g.membersSnapshot()
 
+	g.reloadMu.Lock()
 	document, err := g.loadDocument()
 	if err != nil {
+		g.reloadMu.Unlock()
 		return err
 	}
-	for _, member := range g.members {
+	_ = g.checkUnclaimedSections(document, false)
+	for _, member := range members {
 		if member.bytes != nil {
 			member.bytes.SetData(g.memberDocument(member, document))
 		}
+	}
+	g.reloadMu.Unlock()
+
+	for _, member := range members {
 		if err := member.structure.Reload(); err != nil {
 			return g.wrapError(err, ErrorCode(err), "Group.Reload: member %q failed to reload", g.memberName(member))
 		}
@@ -630,10 +901,9 @@ func (g *Group) FlagSet() *flag.FlagSet {
 // Diagnose returns each member's diagnostics keyed by namespace (the root
 // member, if any, under ""). It is the structured form of Report.
 func (g *Group) Diagnose() map[string]Diagnostics {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	out := make(map[string]Diagnostics, len(g.members))
-	for _, member := range g.members {
+	members := g.membersSnapshot()
+	out := make(map[string]Diagnostics, len(members))
+	for _, member := range members {
 		out[member.namespace] = member.structure.DiagnoseData()
 	}
 	return out
@@ -652,10 +922,8 @@ func (g *Group) String() string {
 }
 
 func (g *Group) render(render func(*groupMember) string) string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
 	var sb strings.Builder
-	for _, member := range g.members {
+	for _, member := range g.membersSnapshot() {
 		fmt.Fprintf(&sb, "=== %s ===\n", g.memberName(member))
 		sb.WriteString(render(member))
 		sb.WriteString("\n")

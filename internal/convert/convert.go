@@ -2,7 +2,9 @@ package convert
 
 import (
 	"encoding"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -42,7 +44,7 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 	// Empty string for bool is false (not an error), because flag packages can
 	// invoke Set("") for bare boolean flags.
 	if target.Kind() == reflect.Bool && s == "" {
-		return false, nil
+		return reflect.ValueOf(false).Convert(target).Interface(), nil
 	}
 
 	// Time types first so they are not caught by the int64/float64 branches.
@@ -61,13 +63,23 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		return t, nil
 	}
 
+	// An empty interface target has no declared shape: infer the most specific
+	// Go value the text describes (int, float64, bool, a JSON object or array,
+	// or the string itself) so callers get a typed value rather than bare text
+	if target.Kind() == reflect.Interface && target.NumMethod() == 0 {
+		return inferInterfaceValue(s), nil
+	}
+
 	switch target.Kind() {
 	case reflect.Bool:
+		// Convert to the target so a named bool type (type Toggle bool) gets a
+		// Toggle, not a bare bool: the slice and map builders assign the result
+		// with reflection, which panics on a type mismatch
 		switch strings.ToLower(s) {
 		case "true", "t", "yes", "y", "1":
-			return true, nil
+			return reflect.ValueOf(true).Convert(target).Interface(), nil
 		case "false", "f", "no", "n", "0":
-			return false, nil
+			return reflect.ValueOf(false).Convert(target).Interface(), nil
 		default:
 			return nil, wrapErr(ew, nil, 400, "cannot parse bool %q", s)
 		}
@@ -145,7 +157,44 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 	}
 }
 
-// convertStringToSlice parses s as a JSON array or comma-separated list.
+// inferInterfaceValue picks a Go value for text destined for an interface{}
+// slot: an int when the text is an integer literal that fits (int64 beyond
+// that), a float64 for other numbers (an integral float such as 1e3 becomes an
+// int), a bool for true/false, a decoded JSON object or array, else the string
+func inferInterfaceValue(s string) interface{} {
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if int64(int(i)) == i {
+			return int(i)
+		}
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		if isWholeFinite(f) && f >= -9223372036854775808.0 && f < 9223372036854775808.0 {
+			if i := int64(f); int64(int(i)) == i {
+				return int(i)
+			}
+		}
+		return f
+	}
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	if trimmed := strings.TrimSpace(s); strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		var v interface{}
+		dec := json.NewDecoder(strings.NewReader(trimmed))
+		dec.UseNumber()
+		if err := dec.Decode(&v); err == nil && !dec.More() {
+			if normalised, err := NormalizeJSONNumbers(v); err == nil {
+				return normalised
+			}
+		}
+	}
+	return s
+}
+
+// convertStringToSlice parses s as a JSON array or comma-separated list. A byte
+// slice is the exception: its text form is base64, which is what encoding/json
+// (and therefore Save) produces, so a saved value loads back unchanged.
 func convertStringToSlice(s string, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
 	elemType := target.Elem()
 
@@ -159,6 +208,10 @@ func convertStringToSlice(s string, target reflect.Type, ew ErrorWrapper) (inter
 
 	if s == "" {
 		return reflect.MakeSlice(target, 0, 0).Interface(), nil
+	}
+
+	if elemType.Kind() == reflect.Uint8 {
+		return convertStringToBytes(s, target, ew)
 	}
 
 	// Comma-separated values.
@@ -176,9 +229,26 @@ func convertStringToSlice(s string, target reflect.Type, ew ErrorWrapper) (inter
 		if err != nil {
 			return nil, wrapErr(ew, err, 400, "cannot convert slice[%d] %q: %v", i, p, err)
 		}
-		slice.Index(i).Set(reflect.ValueOf(elem))
+		slice.Index(i).Set(valueForType(elem, elemType))
 	}
 	return slice.Interface(), nil
+}
+
+// convertStringToBytes decodes the text form of a []byte (or a slice of a
+// named byte type): standard base64 with or without padding. A JSON array of
+// numbers is handled by the caller. Raw text is deliberately not accepted, so
+// a value that merely looks like base64 is never silently decoded into
+// garbage; a field that holds free text should be a string
+func convertStringToBytes(s string, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
+	decoded, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		if decoded, err = base64.RawStdEncoding.DecodeString(s); err != nil {
+			return nil, wrapErr(ew, err, 400, "cannot parse %v: text must be base64 (as Save writes it) or a JSON array of numbers", target)
+		}
+	}
+	out := reflect.MakeSlice(target, len(decoded), len(decoded))
+	reflect.Copy(out, reflect.ValueOf(decoded))
+	return out.Interface(), nil
 }
 
 // convertStringToMap parses s as a JSON object or "k:v,k:v" pairs.
@@ -211,7 +281,7 @@ func convertStringToMap(s string, target reflect.Type, ew ErrorWrapper) (interfa
 		if err != nil {
 			return nil, err
 		}
-		m.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(v))
+		m.SetMapIndex(valueForType(k, keyType), valueForType(v, valType))
 	}
 	return m.Interface(), nil
 }
@@ -234,10 +304,37 @@ func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (inte
 
 	srcType := reflect.TypeOf(value)
 
-	// Fast path: identical or directly assignable types.
+	// Fast path: identical types.
 	if srcType == target {
 		return value, nil
 	}
+
+	// A text target accepts a scalar as its literal text (a JSON number keeps
+	// its exact spelling), so `region = 12` or `debug = true` in a
+	// text-oriented file still loads into a string field. Integers are never
+	// turned into runes: 65 becomes "65", not "A"
+	if target.Kind() == reflect.String {
+		if text, ok := scalarText(value); ok {
+			return reflect.ValueOf(text).Convert(target).Interface(), nil
+		}
+	}
+
+	// A json.Number (from a decoder with UseNumber) carries the exact literal.
+	// Normalise it to a Go numeric value first so integers beyond 2^53 reach an
+	// int64/uint64 target without passing through a lossy float64, and so the
+	// value stored for an untyped destination is never a json.Number
+	if n, ok := value.(json.Number); ok {
+		normalised, err := normalizeJSONNumber(n)
+		if err != nil {
+			return nil, wrapErr(ew, err, 400, "cannot parse number %q: %v", string(n), err)
+		}
+		value = normalised
+		srcType = reflect.TypeOf(value)
+		if srcType == target {
+			return value, nil
+		}
+	}
+
 	if srcType.AssignableTo(target) {
 		return value, nil
 	}
@@ -248,8 +345,10 @@ func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (inte
 	}
 
 	// String source: delegate to ConvertString which knows all the formats.
+	// reflect.Value.String (rather than a type assertion) also covers named
+	// string types such as `type Level string`.
 	if srcType.Kind() == reflect.String {
-		return ConvertString(value.(string), target, ew)
+		return ConvertString(reflect.ValueOf(value).String(), target, ew)
 	}
 
 	// time.Duration target with a numeric source.
@@ -279,7 +378,11 @@ func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (inte
 	}
 
 	// Standard reflect conversion (handles same-kind numeric aliases, etc.).
-	if srcType.ConvertibleTo(target) {
+	// reflect treats integer -> string as a valid conversion that yields the
+	// rune with that code point ("A" for 65), which is never what a
+	// configuration caller means, so that pairing is excluded and falls through
+	// to the (failing) JSON round-trip below
+	if srcType.ConvertibleTo(target) && !(isInteger(srcType) && target.Kind() == reflect.String) {
 		return reflect.ValueOf(value).Convert(target).Interface(), nil
 	}
 
@@ -293,6 +396,98 @@ func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (inte
 		return nil, wrapErr(ew, nil, 400, "type mismatch: %T cannot be converted to %v", value, target)
 	}
 	return ptr.Elem().Interface(), nil
+}
+
+// scalarText renders a number or boolean as the text a string field should
+// receive: the exact literal for a json.Number, strconv formatting otherwise.
+// It reports false for anything that is not such a scalar
+func scalarText(value interface{}) (string, bool) {
+	if n, ok := value.(json.Number); ok {
+		return string(n), true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Bool:
+		return strconv.FormatBool(v.Bool()), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(v.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(v.Uint(), 10), true
+	case reflect.Float32:
+		return strconv.FormatFloat(v.Float(), 'g', -1, 32), true
+	case reflect.Float64:
+		return strconv.FormatFloat(v.Float(), 'g', -1, 64), true
+	}
+	return "", false
+}
+
+func isInteger(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
+}
+
+// normalizeJSONNumber converts a json.Number literal to the Go value cfggo
+// stores for an untyped destination. Integers that float64 can represent
+// exactly (|n| <= 2^53) become float64, matching what encoding/json produces
+// without UseNumber, so the dynamic type seen by callers is unchanged for
+// ordinary values. Larger integers become int64 (or uint64 above MaxInt64) so
+// no precision is lost; everything else is a float64
+func normalizeJSONNumber(n json.Number) (interface{}, error) {
+	s := string(n)
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if f := float64(i); int64(f) == i && f >= -(1<<53) && f <= 1<<53 {
+			return f, nil
+		}
+		return i, nil
+	} else if errors.Is(err, strconv.ErrRange) {
+		if u, err := strconv.ParseUint(s, 10, 64); err == nil {
+			return u, nil
+		}
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// NormalizeJSONNumbers walks a value decoded by a json.Decoder with UseNumber
+// and replaces every json.Number (including those nested in
+// map[string]interface{} and []interface{} containers) with the Go numeric
+// value described by normalizeJSONNumber. Containers are rebuilt, so the input
+// is not modified. It is used by the JSON load path so untyped configuration
+// keys never hold a json.Number
+func NormalizeJSONNumbers(v interface{}) (interface{}, error) {
+	switch x := v.(type) {
+	case json.Number:
+		return normalizeJSONNumber(x)
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(x))
+		for k, elem := range x {
+			n, err := NormalizeJSONNumbers(elem)
+			if err != nil {
+				return nil, fmt.Errorf("key %q: %w", k, err)
+			}
+			out[k] = n
+		}
+		return out, nil
+	case []interface{}:
+		out := make([]interface{}, len(x))
+		for i, elem := range x {
+			n, err := NormalizeJSONNumbers(elem)
+			if err != nil {
+				return nil, fmt.Errorf("index %d: %w", i, err)
+			}
+			out[i] = n
+		}
+		return out, nil
+	default:
+		return v, nil
+	}
 }
 
 func isNumeric(t reflect.Type) bool {

@@ -24,7 +24,7 @@ func TestFileHandlerLoadAndReadOnlySave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if string(loaded) != `{"port":"8080"}` {
+	if string(loaded) != `{"port":8080}` {
 		t.Fatalf("loaded = %s", loaded)
 	}
 	if err := handler.SaveConfig(json.RawMessage(`{"port":9090}`)); !errors.Is(err, ErrReadOnly) {

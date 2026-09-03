@@ -11,10 +11,7 @@
 
 **Status:** `v1.x` · production-ready · follows [Semantic Versioning](https://semver.org).
 
-`cfggo` loads configuration from files, environment variables, command-line
-flags, and HTTP endpoints, and gives you **compile-time type safety** and
-**runtime hot reloading** — without the stringly-typed key lookups you get from
-most config libraries.
+`cfggo` loads configuration from files, environment variables, command-line flags, and HTTP endpoints, and gives you **compile-time type safety** and **runtime hot reloading** and config groups, without the stringly-typed key lookups you get from most config libraries.
 
 ```go
 type Config struct {
@@ -28,23 +25,22 @@ if err := cfggo.Init(config, cfggo.WithFileConfig("config.json")); err != nil {
     log.Fatal(err)
 }
 
-// No config.GetInt("server_port") — just call the typed accessor:
+// No config.GetInt("server_port"), instead just call the typed accessor:
 port := config.ServerPort() // returns int, checked at compile time
 ```
 
-> ℹ️ Yes, accessors are **functions** (`config.ServerPort()`), not plain fields —
-> that's exactly what makes typed access survive a hot reload, with built-in
+> ℹ️ Yes, accessors are **functions** (`config.ServerPort()`), not plain fields.
+> That is exactly what makes typed access survive a hot reload, with built-in
 > locking and no half-initialised zero values. See
 > [Why functions instead of struct fields?](#why-functions-instead-of-struct-fields).
 
-> ℹ️ **Used in production at [iQ Hive](https://github.com/iqhive).** API is
-> stable and follows [Semantic Versioning](https://semver.org) — `v1.x` will not
-> make breaking changes.
+> ℹ️ **Used in production at [IQ Hive](https://github.com/iqhive) **
+> The API is stable and follows [Semantic Versioning](https://semver.org)
+> i.e. `v1.x` will not make breaking changes.
 
 ![cfggo hot reload in action](demo.gif)
 
-> *Editing `config.json` while the app runs — the typed accessors return the new
-> values instantly, no restart.*
+> *Editing `config.json` while the app runs - the typed accessors return the new values instantly, no restart.*
 
 ---
 
@@ -68,7 +64,8 @@ accessors that stay correct across a live reload**:
 
 **Pick cfggo** if you want strongly-typed config access that *stays typed across live reloads*, plus provenance and validation.
 
-**Reach for Viper** if you need its large built-in format ecosystem (YAML/TOML/HCL/INI/etc.) out of the box and don't mind untyped lookups. *(cfggo reads JSON natively; other formats are a few lines via a custom `ConfigHandler` — see the [FAQ](#faq).)*
+**Reach for Viper** if you need its large built-in format ecosystem (YAML/TOML/HCL/INI/etc.) out of the box and don't mind untyped lookups.
+> *(cfggo reads JSON natively; other formats are a few lines via a custom `ConfigHandler` - see the [FAQ](#faq).)*
 
 ---
 
@@ -207,17 +204,10 @@ cfggo accessors are functions (`config.ServerPort()`), not plain fields
 (`config.ServerPort`). This looks unusual at first, but it's the whole point of
 the design:
 
-- **Always current, never half-initialised.** A plain field can be read *before*
-  config is loaded and silently hand you a zero value. A function call always
-  returns the fully-resolved, current value.
-- **Hot reload is transparent.** After a reload, `config.ServerPort()` returns
-  the new value with **zero changes to your call sites** — no re-unmarshalling,
-  no stale copies passed around your app.
-- **Thread-safe by construction.** The accessor takes the read lock for you, so
-  a concurrent reload and read can never race. You can't forget to lock.
-- **Still fully type-safe.** The function's return type *is* the value's type,
-  checked by the compiler. Rename or retype a field and mismatched call sites
-  fail to build — unlike string-keyed `Get`/`GetInt` lookups.
+- **Always current, never half-initialised.** A plain field can be read *before* config is loaded and silently hand you a zero value. A function call always returns the fully-resolved, current value.
+- **Hot reload is transparent.** After a reload, `config.ServerPort()` returns the new value with **zero changes to your call sites** - no re-unmarshalling, no stale copies passed around your app.
+- **Thread-safe by construction.** The accessor takes the read lock for you, so a concurrent reload and read can never race. You can't forget to lock.
+- **Still fully type-safe.** The function's return type *is* the value's type, checked by the compiler. Rename or retype a field and mismatched call sites fail to build - unlike string-keyed `Get`/`GetInt` lookups.
 
 In short: the function indirection is what buys you *typed* access and *live*
 reload at the same time.
@@ -226,19 +216,8 @@ reload at the same time.
 
 Because each field is a `func() T`, two mistakes are worth knowing about:
 
-- **Don't call an accessor before `Init`.** cfggo installs the reading closures
-  during `Init`, so a field left at its nil zero value (no `DefaultValue`
-  assigned) is a nil function and `config.ServerPort()` will panic. Always call
-  `Init`/`InitSelf` at startup before reading. Assigning
-  `ServerPort: cfggo.DefaultValue(8080)` makes a field safe to read even before
-  `Init`, since it already holds a real function. For mutable defaults,
-  `DefaultValue` returns a fresh top-level map, slice, or pointer value on each
-  call.
-- **Declare fields as `func() T`, not plain `T`.** A field written as
-  `ServerPort int` with a `cfggo` tag is silently *not* a config field — it is
-  never loaded or reloaded. cfggo now logs a warning during `Init` for any
-  `cfggo`/`cfg`/`config`-tagged field that is not a `func() T`, so this shows up
-  in your logs instead of failing mysteriously at runtime.
+- **Don't call an accessor before `Init`.** cfggo installs the reading closures during `Init`, so a field left at its nil zero value (no `DefaultValue` assigned) is a nil function and `config.ServerPort()` will panic. Always call `Init`/`InitSelf` at startup before reading. Assigning `ServerPort: cfggo.DefaultValue(8080)` makes a field safe to read even before `Init`, since it already holds a real function. For mutable defaults, `DefaultValue` returns a fresh top-level map, slice, or pointer value on each call.
+- **Declare fields as `func() T`, not plain `T`.** A field written as `ServerPort int` with a `cfggo` tag is silently *not* a config field - it is never loaded or reloaded. cfggo now logs a warning during `Init` for any `cfggo`/`cfg`/`config`-tagged field that is not a `func() T`, so this shows up in your logs instead of failing mysteriously at runtime.
 
 ## How It Works
 
@@ -253,7 +232,7 @@ Because each field is a `func() T`, two mistakes are worth knowing about:
 
 - **Type-safe configuration**: All values are accessed through strongly-typed functions.
 - **Hot reloadable**: Reload at runtime without restarting your application.
-- **Multiple configuration sources**: JSON files, environment variables, command-line flags, and HTTP endpoints — or plug in your own.
+- **Multiple configuration sources**: JSON files, environment variables, command-line flags, and HTTP endpoints, or write your own plugin loader.
 - **Command-line flag integration**: Seamless integration with Go's `flag` package, including coexisting with `flag.CommandLine`.
 - **Thread-safe**: All operations are protected by per-instance mutexes.
 - **Validation support**: Register per-key validators, with a rich set of built-in validators included.
@@ -274,10 +253,7 @@ cfggo recognises these struct tags on your config fields:
 | `help:"text"` | Description shown in `--help` output, `String()`, and `Explain()`. |
 | `secret:"true"` | Marks the value sensitive so human-readable diagnostics redact it. |
 
-**Choosing the config key.** If no `cfggo` tag is present, cfggo falls back —
-in order — to the `cfg`, `config`, and `json` tags, and finally to the Go field
-name. Comma options (e.g. `json:"name,omitempty"`) are stripped, so existing
-JSON-tagged structs work without changes:
+**Choosing the config key.** If no `cfggo` tag is present, cfggo falls back in order to the `cfg`, `config`, and `json` tags, and finally to the Go field name. Comma options (e.g `json:"name,omitempty"`) are stripped, so existing JSON-tagged structs work without changes:
 
 ```go
 type MyConfig struct {
@@ -335,8 +311,19 @@ into the field's declared type automatically:
 | Scalars | `string`, `bool`, all sized `int`/`uint`, `float32`, `float64` |
 | Time | `time.Duration` (e.g. `"1h30m"`), `time.Time` (RFC 3339) |
 | Slices | `[]string`, `[]int`, `[]bool`, `[]float32`, `[]float64`, … |
+| Bytes | `[]byte`: base64 text (what `Save` writes) or a JSON array of numbers |
 | Maps | `map[string]string`, `map[string]interface{}`, … |
 | Custom | Any type implementing `encoding.TextUnmarshaler`; otherwise JSON-decoded |
+
+JSON integers are decoded exactly: a value beyond 2^53 reaches an `int64` or
+`uint64` field unchanged instead of being rounded through `float64`. Untyped
+destinations (`func() interface{}`, `map[string]interface{}` values, unknown
+keys) keep the usual `float64` for ordinary numbers and receive an `int64` or
+`uint64` only when `float64` could not represent the value exactly. A number or
+boolean given for a string field becomes its literal text (`8080` → `"8080"`,
+never the rune `"A"` for `65`). A document that spells the same key both flat
+(`"db.host"`) and nested (`"db": {"host": …}`) is rejected; under
+`WithLenientLoad` the first in key order wins and a warning is logged.
 
 **String formats for collections.** When a value arrives as a single string
 (common for flags and environment variables), slices accept a JSON array, a
@@ -365,7 +352,8 @@ value.
 Environment variables are automatically mapped from your configuration keys:
 
 - Keys are converted to uppercase.
-- Dots (`.`) are replaced with underscores (`_`).
+- Dots (`.`) and dashes (`-`) are replaced with underscores (`_`), so every
+  key yields a name a shell can export.
 - Use `cfggo.WithEnvConfig()` to read raw, unprefixed variables such as `PORT`.
 - Use `cfggo.WithEnvPrefix("MYAPP_")` to read the automatic env layer from a
   prefixed namespace such as `MYAPP_PORT`.
@@ -375,6 +363,7 @@ For example:
 
 - `server_port` → `SERVER_PORT`
 - `db.url` → `DB_URL`
+- `db-host` → `DB_HOST`
 - with `WithEnvPrefix("MYAPP_")`, `server_port` → `MYAPP_SERVER_PORT`
 
 ## Command-Line Flags
@@ -410,23 +399,26 @@ By default, cfggo creates its own private `*flag.FlagSet` and parses
 `os.Args` for you inside `Init()`. In this mode:
 
 - You do **not** need to (and should **not**) call `flag.Parse()` yourself.
-- A flag that cfggo doesn't define prints usage and terminates the process
-  (`flag.ExitOnError`). Pass `cfggo.WithIgnoreUnknownVars()` to instead ignore
-  unrecognized flags (and their separate values) and continue:
+- cfggo never terminates the process from `Init`. A flag that cfggo doesn't
+  define, a value a flag rejects, and `-h`/`--help` are all returned as errors
+  (`errors.Is(err, cfggo.ErrUnknownKey)` and `errors.Is(err, flag.ErrHelp)`
+  respectively), so your program decides how to exit. Pass
+  `cfggo.WithIgnoreUnknownVars()` to instead ignore unrecognized flags (and
+  their separate values) and continue:
 
   ```go
   err := cfggo.Init(config, cfggo.WithIgnoreUnknownVars())
   ```
 
-If an unrecognized flag has a close match, cfggo reports the likely intended
-flag before the process exits, for example:
+If an unrecognized flag has a close match, the error names the likely intended
+flag, for example:
 
 ```text
 flag provided but not defined: -verbse (did you mean -verbose?)
 ```
 
-When there is no close match, cfggo falls back to the standard `flag` package
-behavior and prints the full usage listing with every known cfggo flag.
+When there is no close match, cfggo prints the full usage listing with every
+known cfggo flag before returning the error.
 
 If you want cfggo to coexist with the idiomatic "register flags, call
 `flag.Parse()` once" pattern, register cfggo's flags on a flag set you control
@@ -446,10 +438,30 @@ if err := cfggo.Init(config, cfggo.WithStandardFlags()); err != nil {
 flag.Parse()
 ```
 
-When an external flag set is supplied via `WithFlagSet`/`WithStandardFlags`,
-cfggo registers its flags but does **not** parse during `Init()` — the host owns
-the single `Parse()` call. cfggo flag values still propagate automatically as the
-host parses, because each flag writes directly into the config map.
+When an external flag set is supplied via `WithFlagSet`/`WithStandardFlags`, cfggo registers its flags but does **not** parse during `Init()` - the host owns the single `Parse()` call. cfggo flag values still propagate automatically as the host parses, because each flag writes directly into the config map.
+
+Because the host parses after `Init` returns, `Init` cannot see values supplied
+on the command line. Validation failures for keys whose flag is present in
+`os.Args` are therefore deferred (each flag still validates its own value as
+the host parses), so call `config.Validate()` once `flag.Parse()` has
+completed:
+
+```go
+err := cfggo.Init(config,
+    cfggo.WithStandardFlags(),
+    cfggo.WithValidation("token", cfggo.Required()), // supplied as --token
+)
+if err != nil {
+    log.Fatal(err)
+}
+flag.Parse()
+if err := config.Validate(); err != nil {
+    log.Fatal(err)
+}
+```
+
+A `Group` registered on a host-owned flag set works the same way: call
+`group.Validate()` after `flag.Parse()`.
 
 Use `WithoutFlags()` when a program should not register or parse cfggo command
 line flags at all. This keeps startup focused on defaults, files, environment
@@ -489,22 +501,53 @@ port, ok := cfggo.Value[int](&config.Structure, "server_port") // ok=false if ab
 dsn := cfggo.MustValue[string](&config.Structure, "db_dsn")     // zero value if absent
 ```
 
+### Runtime keys
+
+A key that is not backed by a struct field can be registered with `NewFlag`.
+Call it before `Init` and the key takes part in every layer exactly like a
+struct-backed key: file, environment variable, command-line flag, `Set`, `Save`
+and `Reload`, and it is not reported as unrecognized. The default fixes the
+key's type (`nil` means "infer from the text"); read it with `Get`, `Value` or
+`MustValue`:
+
+```go
+config.NewFlag("worker_count", 4, "number of background workers")
+if err := cfggo.Init(config, cfggo.WithFileConfig("config.json")); err != nil {
+    log.Fatal(err)
+}
+workers := cfggo.MustValue[int](&config.Structure, "worker_count") // --worker_count, WORKER_COUNT, or the file
+```
+
+After `Init` the key is added with its default, its environment variable is
+read once, and `Set` can change it; a private flag set that `Init` has already
+parsed is not parsed again.
+
 ## Saving Configuration
 
 When a `ConfigHandler` is configured (e.g. via `WithFileConfig`), you can persist
-the current configuration back to it:
+the configuration back to it:
 
 ```go
-// Always write the current configuration through the handler.
+// Write the configuration through the handler (clears the dirty flag).
 if err := config.Save(); err != nil {
     log.Fatal(err)
 }
 
-// Write only if something changed since the last load/save (clears the dirty flag).
+// Write only if a value was changed with Set since the last save.
 if err := config.SaveIfChanged(); err != nil {
     log.Fatal(err)
 }
 ```
+
+`Save` persists the durable layers: defaults, values from the configuration
+source, and values changed with `Set`. A key whose live value is a runtime
+override from an environment variable or a command-line flag is written with
+the value the source last supplied for it (or its default), never with the
+override. Overrides are re-applied from their own sources on every start, so
+persisting them would freeze a one-off flag into the file and copy a secret
+injected through the environment onto disk. For the same reason only `Set`
+marks the configuration dirty: loading a file, the environment or flags never
+makes `SaveIfChanged` write.
 
 You can also inspect the configuration without a handler:
 
@@ -517,7 +560,8 @@ _ = raw
 fmt.Println(config.String())      // aligned key: value listing with help text
 ```
 
-> ⚠️ `GetJSONBytes()` writes **raw** values (so config round-trips). `String()`
+> ⚠️ `GetJSONBytes()` is the full live state: **raw** values, including
+> environment and flag overrides that `Save` leaves out. `String()`
 > and `Explain()` mask fields tagged `secret:"true"`. Either way, see
 > [Secrets and Redaction](#secrets-and-redaction) before logging or printing.
 
@@ -624,17 +668,19 @@ config.AddValidator("website", cfggo.URL())
 
 Available validators:
 
-- `Required()` — Ensures a value is not nil or empty.
-- `MinLength(min)` — Checks a string, slice, or map has at least `min` elements.
-- `MaxLength(max)` — Checks a string, slice, or map has at most `max` elements.
-- `Range(min, max)` — Ensures a numeric value is within the specified range.
-- `OneOf(options...)` — Checks if a value is one of the provided options.
-- `Regex(pattern)` — Validates a string against a regular expression.
-- `Email()` — Validates that a string is a valid email address.
-- `URL()` — Validates that a string is a valid URL.
-- `Custom(func)` — Creates a validator from a custom function.
-- `All(validators...)` — Ensures all validators pass.
-- `Any(validators...)` — Ensures at least one validator passes.
+| Validator             | Description                                                                                                  |
+|-----------------------|--------------------------------------------------------------------------------------------------------------|
+| `Required()`          | Ensures a value is not nil or empty.                                                                         |
+| `MinLength(min)`      | Checks a string has at least `min` characters (Unicode safe), or a slice/map at least `min` elements.        |
+| `MaxLength(max)`      | Checks a string has at most `max` characters, or a slice/map at most `max` elements.                         |
+| `Range(min, max)`     | Ensures a numeric value is within the specified range.                                                       |
+| `OneOf(options...)`   | Checks if a value is one of the provided options.                                                            |
+| `Regex(pattern)`      | Validates a string against a regular expression.                                                             |
+| `Email()`             | Validates that a string is a valid email address.                                                            |
+| `URL()`               | Validates that a string is a valid URL.                                                                      |
+| `Custom(func)`        | Creates a validator from a custom function.                                                                  |
+| `All(validators...)`  | Ensures all validators pass.                                                                                 |
+| `Any(validators...)`  | Ensures at least one validator passes.                                                                       |
 
 ### Detecting validation errors
 
@@ -662,19 +708,12 @@ type AppConfig struct {
 }
 ```
 
-Secret values (and any secret `default` tag) are **masked** as `****` in every
-human-readable / diagnostic output and in error messages: validation failures
-report `****` instead of the offending value, and a secret value that cannot be
-parsed from a config file, an environment variable, or a command-line flag is
-redacted from the resulting error rather than echoed back. Masking applies to
-`Explain()`, `String()`, `Diagnose()` / `DiagnoseData()`, `ConfigReference()`,
-and `Report()` — so a config dump pasted into a log or bug report does not leak
-credentials. Validation still runs against the real value, so a bad secret is
+Secret values (and any secret `default` tag) are **masked** as `****` in every human-readable / diagnostic output and in error messages: validation failures report `****` instead of the offending value, and a secret value that cannot be parsed from a config file, an environment variable, or a command-line flag is redacted from the resulting error rather than echoed back. Masking applies to `Explain()`, `String()`, `Diagnose()` / `DiagnoseData()`, `ConfigReference()`, and `Report()` - so a config dump pasted into a log or bug report does not leak credentials. Validation still runs against the real value, so a bad secret is
 still reported as invalid.
 
-Masking is for display only. `Save()` and `GetJSONBytes()` deliberately write
-the **real** values so configuration round-trips correctly — do not log their
-output as-is in production.
+Command-line flags need one extra step. The standard `flag` package reports a rejected value as `invalid value "RAW" for flag -name`, echoing the raw text. cfggo masks that message in its own `Init` error and in the usage output the flag package prints, but when your program parses an external flag set with `flag.ContinueOnError`, the error `Parse` returns is built by the flag package: pass it through `config.RedactFlagError(err)` before logging it.
+
+Masking is for display only. `Save()` and `GetJSONBytes()` deliberately write the **real** values so configuration round-trips correctly - do not log their output as-is in production.
 
 Recommended practices:
 
@@ -730,7 +769,7 @@ override chain in brackets, so you can see at a glance that (for example) a flag
 overrode a file value over the struct default.
 
 For a one-stop, programmatic snapshot (ideal for a `--config-check` command),
-use `DiagnoseData()`. It returns structured data — every key with its value,
+use `DiagnoseData()`. It returns structured data - every key with its value,
 source, override chain, type, default, help text, validation result, plus any
 unrecognized keys. It is the single data model every built-in report
 (`Diagnose`, `ConfigReference`, `Report`) is rendered from, so you can build your
@@ -748,9 +787,7 @@ for _, k := range d.Keys {   // or render it however you like
 }
 ```
 
-`ConfigReference()` prints a reference table of every field (key, type,
-environment variable, default, help) generated from the struct definition —
-handy for documentation or a `--help`-style listing:
+`ConfigReference()` prints a reference table of every field (key, type, environment variable, default, help) generated from the struct definition - handy for documentation or a `--help`-style listing:
 
 ```go
 fmt.Println(config.ConfigReference())
@@ -833,16 +870,19 @@ it with `errors.Is` (e.g. `errors.Is(err, cfggo.ErrSource)`).
 
 ## Performance
 
-cfggo's runtime performance is exceptional: **accessor function calls have virtually zero overhead**. Each call does only two things — grabs a read lock and returns an already-cached, type-safe value. There is **no reflection or parsing** during normal use: all configuration values are converted, validated, and stored at load/reload time, not on access.
+cfggo's runtime performance is exceptional:
 
-**Numbers speak:** in [our benchmarks](benchmarks/comparison), accessing an integer or string value via a cfggo accessor takes about **10–14 ns/op** (nanoseconds per operation), with zero allocations — the cost is only that of a read-locked pointer dereference. For comparison:
+**accessor function calls have virtually zero overhead**. Each call does only two things - grabs a read lock and returns an already-cached, type-safe value.
+There is **no reflection or parsing** during normal use: all configuration values are converted, validated, and stored at load/reload time, not on access.
 
-- cfggo: **~10 ns/op** (0 allocs/op) for reads
+**Numbers speak:** in [our benchmarks](benchmarks/comparison), accessing an integer or string value via a cfggo accessor takes about **10–14 ns/op**, with zero allocations. For comparison:
+
+- cfggo: **~14 ns/op** (0 allocs/op) for reads
 - Viper: ~130–135 ns/op (2 allocs/op)
 - koanf: ~65–175 ns/op (1–2 allocs/op)
 - envconfig: (for static fields) as low as 0.3 ns/op (no locking, not reloadable, environment vars only)
 
-For any runtime-intensive workload — configuration access in request handlers, hot code paths, or metrics polling — **cfggo delivers near-zero latency**. If you need to access a config value repeatedly in a hot loop, you can hoist it to a local variable to eliminate even the mutex overhead:
+For any runtime-intensive workload, configuration access in request handlers, hot code paths, or metrics polling, **cfggo delivers near-zero latency**. If you need to access a config value repeatedly in a hot loop, you can hoist it to a local variable to eliminate even the mutex overhead:
 
 ```go
 port := config.ServerPort()
@@ -868,8 +908,7 @@ own `flag.FlagSet` and parses `os.Args`, so service A's parser sees service B's
 flags as unknown (and exits the process), identically named keys such as `port`
 collide across flags, env vars, and files, and each service wants its own file.
 
-`cfggo.Group` composes those services instead. Service packages stay exactly as
-they are — still standalone-compatible, with no struct or tag changes:
+`cfggo.Group` composes those services instead. Service packages stay exactly as they are - still standalone-compatible, with no struct or tag changes:
 
 ```go
 // package authsvc
@@ -912,8 +951,13 @@ surface, and only the external surfaces:
 
 A member registered with an empty namespace (`group.Register("", cfg)`) is merged
 at the root with no prefix, reading the file's non-namespaced top-level keys.
-`Init` then reports an error if two root members (or a root member and a
-namespace) claim the same name, instead of silently mis-parsing.
+`Init` then reports an error if two root members claim the same key, or if a
+root member's key is (or starts with) a namespace, instead of silently
+mis-parsing: a root key `auth.port` beside a namespace `auth` would otherwise
+share the `--auth.port` flag, the `MYAPP_AUTH_PORT` variable and the `"auth"`
+file section. Two members whose keys map onto the same environment variable
+are rejected the same way (`auth_port` at the root and `port` under `auth` both
+become `AUTH_PORT`).
 
 `Group.Init` loads the combined document once and splits it per namespace,
 initialises each member with its own section, its namespaced env prefix, and the
@@ -931,12 +975,30 @@ group.String()        // per-member dump, secrets masked
 group.Diagnose()      // map[namespace]Diagnostics
 group.Namespaces()    // registered namespaces, in registration order
 group.FlagSet()       // the shared flag set (for host-owned parsing)
+group.Validate()      // re-run every member's validators (after a host-owned flag.Parse)
 ```
+
+A member's own `Save`, `SaveIfChanged` or `WithAutoSave` writes the combined
+document through the group, so a service package that saves its configuration
+keeps working when it is grouped. A failed `Group.Init` reverts the members it
+had already initialised, so it can be called again once the problem is fixed.
+
+A top-level section of the combined document that no member claims (neither a
+registered namespace nor a root member's key) is almost always a misspelt
+namespace. `Group.Init` logs it together with the closest registered namespace,
+for example `section "billng" matches no registered namespace (did you mean
+"billing"?)`, and never applies it to the suggested member. Pass
+`GroupWithStrictKeys()` (or register every member with `WithStrictKeys()`) to
+make such a section an error instead. When several programs share one file and
+each registers only its own namespaces, name the others' sections with
+`GroupWithIgnoredSections("billing", "worker")`: they are neither reported nor
+delivered to a root member.
 
 Group options: `GroupWithFileConfig`, `GroupWithDefaultFileConfig`,
 `GroupWithConfigHandler`, `GroupWithEnvPrefix`, `GroupWithFlagSet`,
 `GroupWithStandardFlags`, `GroupWithoutFlags`, `GroupWithIgnoreUnknownFlags`,
-`GroupWithLogger`. Per-member `Option`s are passed to `Register` and are applied
+`GroupWithStrictKeys`, `GroupWithIgnoredSections`, `GroupWithLogger`.
+Per-member `Option`s are passed to `Register` and are applied
 after the group's, so a member can override any of them (for example its own
 `WithEnvPrefix`).
 
@@ -967,24 +1029,19 @@ type ConfigHandler interface {
 }
 ```
 
-cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`)
-and HTTP endpoints (`WithHTTPConfig`). `WithHTTPConfig` accepts separate loader
-and saver requests, so a config can be load-only, save-only, or both; a missing
-side is a no-op and successful HTTP operations must return `200 OK`.
-The handlers can also be constructed directly from the `sources` package
-(`sources.NewHandlerFile`, `sources.NewHandlerHTTP`, `sources.NewHandlerEnv`,
-`sources.NewHandlerBytes`) and passed to `WithConfigHandler` — useful when you
-need handler-level control, an in-memory config (`HandlerBytes`), or a custom
-`*http.Client`.
+cfggo ships with handlers for files (`WithFileConfig` / `WithDefaultFileConfig`) and HTTP endpoints (`WithHTTPConfig`). `WithHTTPConfig` accepts separate loader and saver requests, so a config can be load-only, save-only, or both; a missing side is a no-op and successful HTTP operations must return `200 OK`. The handlers can also be constructed directly from the `sources` package (`sources.NewHandlerFile`, `sources.NewHandlerHTTP`, `sources.NewHandlerEnv`, `sources.NewHandlerBytes`) and passed to `WithConfigHandler` - useful when you need handler-level control, an in-memory config (`HandlerBytes`), or a custom `*http.Client`.
 
 The built-in handlers apply security hardening by default:
 
 - **HTTP**: plaintext `http://` URLs are rejected unless the host is loopback
   (`localhost`, `127.0.0.0/8`, `::1`), so configuration (which may include
   secrets on save) never transits a network unencrypted; opt out explicitly by
-  setting the handler's `AllowInsecureHTTP` field. Redirects that downgrade
+  building the handler with `sources.NewHandlerHTTP` (which `WithHTTPConfig`
+  does not expose), setting its `AllowInsecureHTTP` field, and passing it to
+  `WithConfigHandler`. Redirects that downgrade
   HTTPS to HTTP are refused, redirect chains are capped at 10 hops, responses
-  are capped at 10 MiB, and the default client uses a 30 s timeout. Supplying
+  are capped at 10 MiB (as are configuration files: raise
+  `HandlerFile.MaxBytes` for a larger one), and the default client uses a 30 s timeout. Supplying
   your own client via the handler's `Client` field gives you full ownership of
   the redirect policy and timeouts.
 - **File**: saves are atomic (write to a temp file, fsync, rename) so a crash
@@ -1032,9 +1089,15 @@ pool.size = 20
 debug = true
 ```
 
-Bare scalar values remain strings until cfggo converts them against the typed
-destination field. Quoted strings, arrays, and objects use JSON syntax. `null`
-clears a value. A `#` always starts a comment, including inside apparent quotes;
+A value is text unless it is a JSON literal: a quoted string, an array, an
+object, `null`, `true`, `false` or a number. So `port = 8080` is the number
+8080 and `name = api` is the string `api`; quote a value (`version = "1.0"`) to
+keep a number-like literal as text. Either way cfggo converts the value to the
+destination field's type, and a number or boolean loads into a string field as
+its literal text, so `region = 12` still works for a `func() string`. Because
+`Encode` writes JSON literals, a rewritten file decodes to the same types it
+was encoded from. `null` clears a value. A `#` always starts a comment,
+including inside apparent quotes;
 use the JSON escape `\u0023` for a literal hash in a quoted string.
 
 Duplicate keys, malformed structured values, and scalar/object path conflicts
@@ -1073,11 +1136,7 @@ type MyConfig struct {
 }
 ```
 
-Nested fields are flattened into dotted keys (`database.host`, `database.port`),
-which is also how they map to environment variables (`DATABASE_HOST`) and flags
-(`--database.host`). Pointer sub-structs (`Database *DatabaseConfig`) work too —
-cfggo allocates a nil pointer sub-struct during `Init` so its accessor functions
-are wired up and safe to call.
+Nested fields are flattened into dotted keys (`database.host`, `database.port`), which is also how they map to environment variables (`DATABASE_HOST`) and flags (`--database.host`). Pointer sub-structs (`Database *DatabaseConfig`) work too - cfggo allocates a nil pointer sub-struct during `Init` so its accessor functions are wired up and safe to call.
 
 ### Detecting Unrecognized Configuration
 
@@ -1174,6 +1233,7 @@ err = cfggo.Init(config, cfggo.WithDefaultFileConfig("config.json"))
 // For apps that own flag parsing, parse this bootstrap flag yourself and pass
 // the result to WithFileConfig instead.
 err = cfggo.Init(config, cfggo.WithFileConfigParamName("config"))
+// (accepts -config FILE, -config=FILE and the -- forms; combine with WithFlagSet in any order)
 
 // Load configuration from HTTP endpoints.
 err = cfggo.Init(config, cfggo.WithHTTPConfig(httpLoader, httpSaver))
@@ -1204,7 +1264,7 @@ err = cfggo.Init(config, cfggo.WithFlagSet(myFlagSet))
 // Register cfggo's flags on the global flag.CommandLine, then call flag.Parse().
 err = cfggo.Init(config, cfggo.WithStandardFlags())
 
-// Ignore (instead of exiting on) command-line flags cfggo doesn't define.
+// Ignore (instead of returning an error for) command-line flags cfggo doesn't define.
 err = cfggo.Init(config, cfggo.WithIgnoreUnknownVars())
 
 // Disable cfggo's automatic command-line flag registration and parsing.
@@ -1267,31 +1327,27 @@ Unrecognized keys are now surfaced automatically during `Init` (and via
 `DiagnoseData().Unrecognized`); exempt intentional keys with the per-instance
 `WithIgnoreKeys(...)` option instead.
 
-`GetJSONBytes()` now returns `([]byte, error)` instead of `[]byte` — a
-marshalling failure is both logged and returned. `OnChange` callbacks now
-receive `[]cfggo.Change` (key, old, new, source) instead of `[]string`.
+`GetJSONBytes()` now returns `([]byte, error)` instead of `[]byte`.
+Marshalling failures are both logged and returned.
+`OnChange` callbacks now receive `[]cfggo.Change` (key, old, new, source) instead of `[]string`.
 
 ## Thread Safety
 
-All operations in `cfggo` are protected by per-instance mutexes, making it safe
-to use in concurrent applications. You can access and update configuration values
-from multiple goroutines — including from within `OnChange` callbacks — without
-worrying about race conditions. Independent `Structure` instances never contend
-on a shared lock.
+All operations in `cfggo` are protected by per-instance mutexes, making it safe to use in concurrent applications. You can access and update configuration values from multiple goroutines - including from within `OnChange` callbacks - without worrying about race conditions. Independent `Structure` instances never contend on a shared lock. `SetLogger` and `SetErrorWrapper` may also be called while other goroutines are using the configuration.
 
 ## Examples
 
 Runnable examples live in the [`examples/`](examples) directory:
 
-- [`examples/basic`](examples/basic) — minimal setup with file, env, and flag loading.
+- [`examples/basic`](examples/basic) - minimal setup with file, env, and flag loading.
 
-- [`examples/advanced`](examples/advanced) — multiple instances with custom loggers and error wrappers.
+- [`examples/advanced`](examples/advanced) - multiple instances with custom loggers and error wrappers.
 ![cfggo advanced example](advanced.gif)
 
-- [`examples/validation`](examples/validation) — built-in and custom validators.
+- [`examples/validation`](examples/validation) - built-in and custom validators.
 ![cfggo validation example](validation.gif)
 
-- [`examples/debugging`](examples/debugging) — startup checks, failure modes, provenance, and redaction.
+- [`examples/debugging`](examples/debugging) - startup checks, failure modes, provenance, and redaction.
 ![cfggo debugging example](debugging.gif)
 
 
@@ -1318,34 +1374,23 @@ func (h yamlFile) LoadConfig() (json.RawMessage, error) {
 ```
 
 **Is it safe to log the whole config? Does it redact secrets?**
-Tag sensitive fields `secret:"true"` and they are masked in `String()`,
-`Explain()`, `Diagnose()`, `ConfigReference()`, and `Report()`. `GetJSONBytes()`
-and `Save()` still write real values, so don't log those verbatim. See
-[Secrets and Redaction](#secrets-and-redaction).
+Tag sensitive fields `secret:"true"` and they are masked in `String()`, `Explain()`, `Diagnose()`, `ConfigReference()`, and `Report()`. `GetJSONBytes()` and `Save()` still write real values, so don't log those verbatim. See [Secrets and Redaction](#secrets-and-redaction).
 
 **Does it coexist with glog/klog/OpenTelemetry flags?**
-Yes. Use `WithStandardFlags()` (or `WithFlagSet`) so cfggo registers on a flag set
-you own and you make the single `flag.Parse()` call. See
-[Parsing model and interop](#parsing-model-and-interop-with-the-standard-flag-package).
+Yes. Use `WithStandardFlags()` (or `WithFlagSet`) so cfggo registers on a flag set you own and you make the single `flag.Parse()` call. See [Parsing model and interop](#parsing-model-and-interop-with-the-standard-flag-package).
 
 **Does `Init` exit the process on failure?**
-No. `Init` (and `InitSelf`) returns an `error` — handle it
-yourself. (The old `InitE` variants are deprecated; `Init` now returns the error
-directly.)
+No. `Init` (and `InitSelf`) returns an `error` - handle it yourself. (The old `InitE` variants are deprecated; `Init` now returns the error directly.)
 
 **What's the performance cost of the function accessors?**
-Negligible per call — values are cached and pre-converted. See
-[Performance](#performance).
+Negligible per call - values are cached and pre-converted. See [Performance](#performance).
 
 **Is the API stable?**
-Yes. `v1.x` follows SemVer and won't introduce breaking changes; deprecated
-symbols are listed under [Deprecations](#deprecations).
+Yes. `v1.x` follows SemVer and won't introduce breaking changes; deprecated symbols are listed under [Deprecations](#deprecations).
 
 ## Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for new
-features, please open an issue or submit a pull request on the
-[GitHub repository](https://github.com/iqhive/cfggo).
+Contributions are welcome! If you find any issues or have suggestions for new features, please open an issue or submit a pull request on the [GitHub repository](https://github.com/iqhive/cfggo).
 
 ## License
 

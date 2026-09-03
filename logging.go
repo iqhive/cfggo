@@ -73,8 +73,14 @@ func SetGlobalErrorWrapper(w cfgerror.Wrapper) {
 // otherwise the global logger. Internal cfggo code logs through
 // this so that a per-instance WithLogger is consistently honoured
 func (c *Structure) log() cfglogger.Logger {
-	if c != nil && c.logger != nil {
-		return c.logger
+	if c == nil {
+		return GlobalLogger()
+	}
+	c.metaMutex.RLock()
+	logger := c.logger
+	c.metaMutex.RUnlock()
+	if logger != nil {
+		return logger
 	}
 	return GlobalLogger()
 }

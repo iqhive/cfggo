@@ -8,18 +8,6 @@ import (
 	"time"
 )
 
-type dynamicVarStruct struct {
-	Structure
-	Bool     func() bool
-	String   func() string
-	Int      func() int
-	Int64    func() int64
-	Float32  func() float32
-	Float64  func() float64
-	Time     func() time.Time
-	Duration func() time.Duration
-}
-
 type dynamicVartestCase struct {
 	name     string
 	input    string

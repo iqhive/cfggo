@@ -16,6 +16,7 @@ type HandlerBytes struct {
 	data          json.RawMessage
 	saved         json.RawMessage
 	defaultConfig bool
+	onSave        func() error
 }
 
 // NewHandlerBytes creates an in-memory configuration handler over data. When
@@ -34,13 +35,27 @@ func (h *HandlerBytes) LoadConfig() (json.RawMessage, error) {
 	return h.data, nil
 }
 
-// SaveConfig records the document instead of persisting it; retrieve it with
-// Saved. The owner of the handler decides where (and whether) it is written.
+// SaveConfig records the document (retrieve it with Saved) and then runs the
+// OnSave callback, if any, so the owner of the handler can persist it. Without
+// a callback the document is only recorded.
 func (h *HandlerBytes) SaveConfig(data json.RawMessage) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.saved = data
+	onSave := h.onSave
+	h.mu.Unlock()
+	if onSave != nil {
+		return onSave()
+	}
 	return nil
+}
+
+// OnSave registers fn to run after SaveConfig has recorded a document. Group
+// uses it so that a member's own Save writes the combined configuration file
+// instead of silently recording the document in memory.
+func (h *HandlerBytes) OnSave(fn func() error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onSave = fn
 }
 
 // SetData replaces the document returned by LoadConfig, so a subsequent Reload

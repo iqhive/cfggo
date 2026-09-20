@@ -70,6 +70,15 @@ func (c *Structure) validate() error {
 	provenance := cloneSourceMap(c.provenance)
 	c.configMutex.RUnlock()
 
+	return c.validateSnapshot(data, provenance)
+}
+
+// validateSnapshot runs all registered validators against previously snapshotted
+// data. It takes no config or reload lock around the validator loop: validators
+// are arbitrary user code that may call Set or Reload, so they must never run
+// with a cfggo lock held (sync.RWMutex is not reentrant). The validator-map
+// snapshot is taken under validationMutex and released before any validator runs
+func (c *Structure) validateSnapshot(data map[string]interface{}, provenance map[string]Source) error {
 	c.validationMutex.RLock()
 	validators := cloneValidatorMap(c.validationMap)
 	c.validationMutex.RUnlock()
@@ -82,6 +91,7 @@ func (c *Structure) validate() error {
 	for key, value := range data {
 		if validator, exists := validators[key]; exists {
 			if err := validator(value); err != nil {
+				err = c.redactSecretValueError(key, err)
 				ve := validcfg.ValidationError{Key: key, Err: err}
 				errs = append(errs, ve.WithProvenance(c.provenanceValue(key, value), provenance[key].String()))
 			}
@@ -118,6 +128,10 @@ func (c *Structure) validateValueForKey(key string, value interface{}, source So
 	}
 
 	if err := validator(value); err != nil {
+		// Substitute (never substring-scrub) the validator error for
+		// secret-tagged keys: validators may embed the checked value, and
+		// the ValidationError message is logged and surfaced in diagnostics
+		err = c.redactSecretValueError(key, err)
 		// Wrap as a ValidationError so the result matches both ErrValidation
 		// (via errors.Is) and the underlying validator error. Provenance is
 		// attached so the message points at the source of the bad value.

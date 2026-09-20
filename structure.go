@@ -121,6 +121,13 @@ type Structure struct {
 	// before invoking OnChange callbacks so a callback may safely call Set
 	reloadMutex sync.RWMutex
 
+	// reloadGen counts successful Reload commits. It is guarded by reloadMutex:
+	// every stage captures it and every commit compares-and-increments it, so a
+	// reload whose validation window overlapped another reload's commit can
+	// detect that its candidate was staged from a stale baseline and stand
+	// down instead of clobbering the fresher live state (see Reload)
+	reloadGen uint64
+
 	// provenance records, per key, where the current value came from. Guarded
 	// by configMutex.
 	provenance map[string]Source

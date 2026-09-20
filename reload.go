@@ -6,16 +6,37 @@ import "reflect"
 func (c *Structure) Reload() error {
 	c.ensureInit()
 
-	// Hold reloadMutex for the whole multi-phase reload so a concurrent Set
-	// cannot land between the snapshot and a rollback (where it would be
-	// silently lost) or between the reload and the runtime-override restore
-	// (where the pre-reload snapshot would overwrite it). It is released
+	// Hold reloadMutex for the snapshot/reset, loader, and stage phases so a
+	// concurrent Set cannot land mid-reload (where it would be silently lost
+	// to a rollback or overwritten by the override restore). The lock is
+	// released before validators run so a validator may safely call Set or
+	// Reload, and re-acquired only for the atomic commit. It is released
 	// before OnChange callbacks run so a callback may safely call Set
 	c.reloadMutex.Lock()
-	oldConfig, err := c.reloadLocked()
+	oldConfig, cand, err := c.reloadLocked()
 	c.reloadMutex.Unlock()
 	if err != nil {
 		return err
+	}
+
+	// Validate the private candidate with no cfggo lock held: validators are
+	// arbitrary user code that may call Set or Reload. Live state is already
+	// the last-known-good snapshot at this point, so a failed validation is
+	// a plain return — nothing was published, no rollback is needed
+	if err := c.validateSnapshot(cand.data, cand.prov); err != nil {
+		c.log().Warn("cfggo: configuration validation failed after reload; keeping previous values", "err", err)
+		return err
+	}
+
+	// Commit the validated candidate atomically, re-applying any Set deltas
+	// that landed during the validation window. A false return reports that this
+	// reload was superseded by a newer commit (optimistic-concurrency loss) and
+	// must neither commit nor notify: live state is already fresher
+	c.reloadMutex.Lock()
+	committed := c.commitReloadLocked(cand)
+	c.reloadMutex.Unlock()
+	if !committed {
+		return nil
 	}
 
 	// Notify OnChange listeners with the aggregate set of keys whose values
@@ -28,9 +49,31 @@ func (c *Structure) Reload() error {
 	return nil
 }
 
+// reloadCandidate holds the staged reloaded state while validators run
+// unlocked. It is private to the reload and never aliased with live state
+type reloadCandidate struct {
+	data       map[string]interface{}
+	prov       map[string]Source
+	trail      map[string][]Source
+	loaded     map[string]interface{}
+	changed    bool
+	ver        uint64
+	preChanged bool
+	preVer     uint64
+	// gen is the reload generation captured at stage (under reloadMutex). When
+	// the committer finds c.reloadGen != gen, another reload committed during
+	// this reload's validation window and this candidate is stale
+	gen uint64
+	// preSet snapshots the pre-reload values of SourceSet keys so commit can
+	// tell a validation-window Set (live value differs) from an untouched
+	// pre-reload override (live value identical)
+	preSet map[string]interface{}
+}
+
 // reloadLocked performs the reload phases. The caller must hold reloadMutex.
-// It returns the pre-reload snapshot for change notification
-func (c *Structure) reloadLocked() (map[string]interface{}, error) {
+// It returns the pre-reload snapshot (for change notification), the staged
+// candidate, and any loader error (with live already rolled back)
+func (c *Structure) reloadLocked() (map[string]interface{}, reloadCandidate, error) {
 	// First, make a copy of the current configuration for potential rollback
 	var oldConfig map[string]interface{}
 	// oldProvenance lets us re-assert command-line flag precedence after the
@@ -75,7 +118,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 			// Rollback to old configuration on error. Restore provenance too so
 			// it stays consistent with the values after a failed reload
 			rollback()
-			return nil, err
+			return nil, reloadCandidate{}, err
 		}
 	}
 
@@ -83,7 +126,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	if err = c.loadFromEnv(); err != nil {
 		c.log().Error("cfggo: failed to reload environment variables", "err", err)
 		rollback()
-		return nil, err
+		return nil, reloadCandidate{}, err
 	}
 
 	// Check if flags have been parsed before calling parseFlags
@@ -118,7 +161,7 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	if err = c.checkUnrecognizedKeys(); err != nil {
 		c.log().Warn("cfggo: unrecognized configuration keys after reload; keeping previous values", "err", err)
 		rollback()
-		return nil, err
+		return nil, reloadCandidate{}, err
 	}
 
 	// The accessor closures installed during Init read c.configData live on
@@ -127,16 +170,99 @@ func (c *Structure) reloadLocked() (map[string]interface{}, error) {
 	// struct func fields, racing with any goroutine currently calling an
 	// accessor (and with a concurrent reload)
 
-	// Validate configuration after reloading. A failed reload must leave the
-	// last known-good values live; otherwise validators only report that the
-	// service has already been poisoned by bad config.
-	if err = c.Validate(); err != nil {
-		c.log().Warn("cfggo: configuration validation failed after reload; keeping previous values", "err", err)
-		rollback()
-		return nil, err
+	// Stage: extract the reloaded candidate into private maps and restore the
+	// pre-reload snapshot as live, in a single configMutex critical section.
+	// From here on live is last-known-good; validation runs unlocked against
+	// the candidate map. The snapshot maps are returned to live by ownership
+	// transfer (no second clone): from the snapshot point to here nothing
+	// outside this critical section can observe or mutate them — loaders run
+	// under reloadMutex (held), readers/Sets take configMutex (held), and no
+	// reader handle was published — so they are still uniquely owned. The
+	// notify baseline keeps its own clone because a validation-window Set
+	// mutates live in place after this section releases the lock.
+	var cand reloadCandidate
+	c.configMutex.Lock()
+	cand.gen = c.reloadGen
+	cand.data = c.configData
+	cand.prov = c.provenance
+	cand.trail = c.provenanceTrail
+	cand.loaded = c.loadedData
+	cand.changed = c.changed
+	cand.ver = c.changeVersion
+	cand.preChanged = oldChanged
+	cand.preVer = oldChangeVersion
+	for key, src := range oldProvenance {
+		if src == SourceSet {
+			if v, ok := oldConfig[key]; ok {
+				if cand.preSet == nil {
+					cand.preSet = make(map[string]interface{})
+				}
+				cand.preSet[key] = cloneMutableInterface(v)
+			}
+		}
 	}
+	notify := cloneInterfaceMap(oldConfig)
+	c.configData = oldConfig
+	c.provenance = oldProvenance
+	c.provenanceTrail = oldTrail
+	c.loadedData = oldLoaded
+	c.changed = oldChanged
+	c.changeVersion = oldChangeVersion
+	c.configMutex.Unlock()
 
-	return oldConfig, nil
+	return notify, cand, nil
+}
+
+// commitReloadLocked publishes the validated candidate atomically and
+// re-applies any SourceSet writes that landed during the validation window
+// (a Set then targets last-known-good and would otherwise be overwritten by
+// the commit). The caller must hold reloadMutex. It reports whether the
+// candidate was committed: false means another reload committed during this
+// reload's unlocked validation window (c.reloadGen advanced past cand.gen),
+// so this candidate was staged from a stale baseline and is discarded —
+// committing it would clobber the fresher live state (lost update). The
+// superseded caller returns success without notifying: live is already newer
+// than what it staged, and changeSet(oldConfig) would misreport the diff
+func (c *Structure) commitReloadLocked(cand reloadCandidate) bool {
+	if c.reloadGen != cand.gen {
+		return false
+	}
+	c.reloadGen++
+	c.configMutex.Lock()
+	defer c.configMutex.Unlock()
+	var delta map[string]interface{}
+	for key, v := range c.configData {
+		if c.provenance[key] != SourceSet {
+			continue
+		}
+		if pre, ok := cand.preSet[key]; ok && reflect.DeepEqual(pre, v) {
+			continue
+		}
+		if delta == nil {
+			delta = make(map[string]interface{})
+		}
+		delta[key] = cloneMutableInterface(v)
+	}
+	windowTouched := c.changeVersion != cand.preVer
+	liveChanged := c.changed
+	c.configData = cand.data
+	c.provenance = cand.prov
+	c.provenanceTrail = cand.trail
+	c.loadedData = cand.loaded
+	c.changed = cand.changed || liveChanged
+	c.changeVersion = cand.ver
+	if windowTouched {
+		c.changed = true
+	}
+	for key, v := range delta {
+		if err := c.set(key, v); err != nil {
+			c.log().Warn("cfggo: failed to set value", "key", key, "err", c.redactSecretValueError(key, err))
+			continue
+		}
+		c.markChangedLocked()
+		c.recordSourceLocked(key, SourceSet)
+	}
+	return true
 }
 
 func (c *Structure) resetToDefaultsLocked() {

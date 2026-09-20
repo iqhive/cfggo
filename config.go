@@ -102,7 +102,7 @@ func (c *Structure) applyLoaded(key string, value interface{}, src Source) error
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
 	if err := c.set(key, value); err != nil {
-		return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, src)
+		return c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "key %q from %s", key, src)
 	}
 	c.recordSourceLocked(key, src)
 	return nil

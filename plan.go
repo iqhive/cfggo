@@ -438,10 +438,18 @@ func (c *Structure) applyPlan() error {
 		}
 	}
 
-	// Seed values and record provenance. This mirrors the original
-	// setupConfigData/setDefaultsFromTags and runs without the config lock: a
-	// caller-supplied default func is arbitrary code that may itself read
-	// config, so it must not run while the lock is held
+	// Seed values and record provenance. Computing each initial value and
+	// applying it via c.set are split into two phases: caller-supplied
+	// default funcs (fv.Call) and `default`-tag parsing (ConvertString) are
+	// arbitrary/user-driven code that may itself read config, so they run
+	// with the lock released. Every state write (configData, provenance,
+	// defaultData) then lands under one short critical section so no reader
+	// can observe a half-applied seed.
+	type seedValue struct {
+		key string
+		val interface{}
+	}
+	var seeded []seedValue
 	for i := range c.plan.leaves {
 		leaf := &c.plan.leaves[i]
 		if !leaf.info.IsAccessor {
@@ -451,29 +459,37 @@ func (c *Structure) applyPlan() error {
 
 		if !fv.IsNil() && fv.CanInterface() {
 			// A caller-supplied default func wins; call it for the initial value
-			if err := c.set(leaf.info.Key, fv.Call(nil)[0].Interface()); err != nil {
-				c.log().Warn("cfggo: failed to set value", "key", leaf.info.Key, "err", err)
-			}
-		} else {
-			if err := c.set(leaf.info.Key, leaf.zero); err != nil {
-				c.log().Warn("cfggo: failed to set default value", "key", leaf.info.Key, "err", err)
-			}
-			if leaf.info.HasDefault && leaf.info.DefaultTag != "" {
-				if val, err := iconvert.ConvertString(leaf.info.DefaultTag, leaf.info.Type, c); err != nil {
-					return c.WrapError(err, ErrCodeInvalidArgument, "invalid default value for key %q", leaf.info.Key)
-				} else if err := c.set(leaf.info.Key, val); err != nil {
-					c.log().Warn("cfggo: could not apply default value", "key", leaf.info.Key, "err", err)
-				}
+			seeded = append(seeded, seedValue{key: leaf.info.Key, val: fv.Call(nil)[0].Interface()})
+			continue
+		}
+		val := leaf.zero
+		if leaf.info.HasDefault && leaf.info.DefaultTag != "" {
+			if parsed, err := iconvert.ConvertString(leaf.info.DefaultTag, leaf.info.Type, c); err != nil {
+				return c.WrapError(c.redactSecretValueError(leaf.info.Key, err), ErrCodeInvalidArgument, "invalid default value for key %q", leaf.info.Key)
+			} else {
+				val = parsed
 			}
 		}
-		c.recordSourceLocked(leaf.info.Key, SourceDefault)
+		seeded = append(seeded, seedValue{key: leaf.info.Key, val: val})
 	}
-	// Keep an independent copy of every default so the snapshot Reload
-	// restores from can never be reached through a value handed to a caller
-	c.defaultData = make(map[string]interface{}, len(c.configData))
-	for k, v := range c.configData {
-		c.defaultData[k] = cloneMutableInterface(v)
-	}
+	// All seed writes land in one critical section; the deferred unlock keeps
+	// the mutex from staying held if c.set panics on a hostile default value
+	func() {
+		c.configMutex.Lock()
+		defer c.configMutex.Unlock()
+		for _, s := range seeded {
+			if err := c.set(s.key, s.val); err != nil {
+				c.log().Warn("cfggo: failed to set value", "key", s.key, "err", c.redactSecretValueError(s.key, err))
+			}
+			c.recordSourceLocked(s.key, SourceDefault)
+		}
+		// Keep an independent copy of every default so the snapshot Reload
+		// restores from can never be reached through a value handed to a caller
+		c.defaultData = make(map[string]interface{}, len(c.configData))
+		for k, v := range c.configData {
+			c.defaultData[k] = cloneMutableInterface(v)
+		}
+	}()
 
 	// Wire the accessor func fields. This takes the write lock to match the
 	// original replaceConfigFuncs contract: the installed closures read

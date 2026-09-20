@@ -3,6 +3,7 @@ package conf
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,10 +17,13 @@ type encodedEntry struct {
 // Encode renders canonical JSON as deterministic conf text.
 func (c *Codec) Encode(input json.RawMessage) ([]byte, error) {
 	if int64(len(input)) > c.limits.MaxInputBytes {
-		return nil, ErrLimitExceeded
+		return nil, &ParseError{Err: ErrLimitExceeded}
 	}
-	value, err := decodeJSONValue(string(input))
+	value, err := decodeJSONValue(string(input), c.limits.MaxDepth)
 	if err != nil {
+		if errors.Is(err, ErrLimitExceeded) {
+			return nil, &ParseError{Err: err}
+		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidJSON, err)
 	}
 	root, ok := value.(map[string]any)
@@ -65,7 +69,7 @@ func (c *Codec) Encode(input json.RawMessage) ([]byte, error) {
 		output.Write(encoded)
 		output.WriteByte('\n')
 		if int64(output.Len()) > c.limits.MaxOutputBytes {
-			return ErrLimitExceeded
+			return &ParseError{Err: ErrLimitExceeded}
 		}
 		return nil
 	}
@@ -93,14 +97,14 @@ func (c *Codec) Encode(input json.RawMessage) ([]byte, error) {
 		}
 	}
 	if int64(output.Len()) > c.limits.MaxOutputBytes {
-		return nil, ErrLimitExceeded
+		return nil, &ParseError{Err: ErrLimitExceeded}
 	}
 	return output.Bytes(), nil
 }
 
 func flattenObject(object map[string]any, prefix []string, entries *[]encodedEntry, limits Limits, depth int) error {
-	if depth > limits.MaxDepth {
-		return ErrLimitExceeded
+	if depthExceeded(depth, limits.MaxDepth) {
+		return &ParseError{Err: ErrLimitExceeded}
 	}
 	keys := make([]string, 0, len(object))
 	for key := range object {
@@ -123,7 +127,7 @@ func flattenObject(object map[string]any, prefix []string, entries *[]encodedEnt
 			*entries = append(*entries, encodedEntry{path: path, value: object[key]})
 		}
 		if len(*entries) > limits.MaxEntries {
-			return ErrLimitExceeded
+			return &ParseError{Err: ErrLimitExceeded}
 		}
 	}
 	return nil

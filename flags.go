@@ -488,6 +488,8 @@ func isBoolFlag(f *flag.Flag) bool {
 func (c *Structure) GetFlagSet() *flag.FlagSet {
 	c.ensureInit()
 	c.ensureFlagSet()
+	c.configMutex.RLock()
+	defer c.configMutex.RUnlock()
 	return c.flagSet
 }
 
@@ -499,7 +501,24 @@ func (c *Structure) GetFlagSet() *flag.FlagSet {
 // The set uses flag.ContinueOnError: cfggo never terminates the process from
 // inside Init, so unknown flags, rejected values and --help are all returned
 // as errors (the last one wrapping flag.ErrHelp)
+//
+// The check-and-create is published under configMutex: GetFlagSet, newFlag
+// and Init all reach here without holding the lock, and reload.go reads
+// c.flagSet under configMutex.RLock, so an unlocked write here would race
+// with concurrent readers. Callers that already hold configMutex (none today;
+// newFlag releases it before calling, see below) must use
+// ensureFlagSetLocked instead to avoid self-deadlock, since sync.RWMutex is
+// not reentrant.
 func (c *Structure) ensureFlagSet() {
+	c.configMutex.Lock()
+	defer c.configMutex.Unlock()
+	c.ensureFlagSetLocked()
+}
+
+// ensureFlagSetLocked is ensureFlagSet for callers that already hold
+// configMutex for writing (sync.RWMutex is not reentrant, so the locking
+// variant would self-deadlock there).
+func (c *Structure) ensureFlagSetLocked() {
 	if c.flagSet != nil {
 		return
 	}

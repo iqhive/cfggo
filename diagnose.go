@@ -156,8 +156,9 @@ func (c *Structure) DiagnoseData() Diagnostics {
 		// Validate against the real value before masking,
 		// so a bad secret is still reported as invalid
 		if v, ok := validators[key]; ok {
-			if err := v(data[key]); err != nil {
-				kd.Err = validcfg.ValidationError{Key: key, Err: err}.WithProvenance(c.provenanceValue(key, data[key]), prov[key].String())
+			if verr := v(data[key]); verr != nil {
+				verr = c.redactSecretValueError(key, verr)
+				kd.Err = validcfg.ValidationError{Key: key, Err: verr}.WithProvenance(c.provenanceValue(key, data[key]), prov[key].String())
 				valid = false
 			}
 		}

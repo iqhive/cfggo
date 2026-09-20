@@ -3,6 +3,7 @@ package conf
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -78,7 +79,7 @@ func (c *Codec) decode(input []byte, filename string) (json.RawMessage, error) {
 		}
 		fullPath := append(append([]string(nil), section...), parts...)
 		valueText := strings.TrimSpace(line[equals+1:])
-		value, err := parseValue(valueText)
+		value, err := parseValue(valueText, c.limits.MaxDepth)
 		if err != nil {
 			return nil, &ParseError{Filename: filename, Line: lineNumber, Column: equals + 2, Err: err}
 		}
@@ -127,13 +128,16 @@ func parsePath(path string, maxDepth int) ([]string, error) {
 // are JSON too, so a document Encode wrote (with JSON literals) decodes to the
 // types it was encoded from; quote such a value to keep it as text. Anything
 // else is text
-func parseValue(input string) (any, error) {
+func parseValue(input string, maxDepth int) (any, error) {
 	if input == "" {
 		return "", nil
 	}
 	if isJSONLiteral(input) {
-		value, err := decodeJSONValue(input)
+		value, err := decodeJSONValue(input, maxDepth)
 		if err != nil {
+			if errors.Is(err, ErrLimitExceeded) {
+				return nil, err
+			}
 			return nil, fmt.Errorf("%w: invalid JSON value", ErrSyntax)
 		}
 		return value, nil

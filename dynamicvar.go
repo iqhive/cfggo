@@ -31,7 +31,7 @@ func (d *dynamicVar) Set(s string) error {
 		if src == SourceUnknown {
 			src = SourceSet
 		}
-		return d.config.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", d.name, src)
+		return d.config.WrapError(d.config.redactSecretValueError(d.name, err), ErrCodeInvalidArgument, "key %q from %s", d.name, src)
 	}
 	src := d.source
 	if src == SourceUnknown {
@@ -47,6 +47,9 @@ func (d *dynamicVar) String() string {
 	val, ok := d.config.Get(d.name)
 	if !ok {
 		return ""
+	}
+	if d.config.isSecretKey(d.name) {
+		return maskedValue
 	}
 	return fmt.Sprint(val)
 }

@@ -99,10 +99,15 @@ func Encode(input json.RawMessage) ([]byte, error) {
 	return codec.Encode(input)
 }
 
-func decodeJSONValue(input string) (any, error) {
+// depthExceeded reports whether entering another nested level would exceed
+// the configured depth limit. Decode and Encode share it so both reject the
+// identical depth: nesting of maxDepth levels succeeds, maxDepth+1 fails.
+func depthExceeded(depth, maxDepth int) bool { return depth >= maxDepth }
+
+func decodeJSONValue(input string, maxDepth int) (any, error) {
 	decoder := json.NewDecoder(bytes.NewBufferString(input))
 	decoder.UseNumber()
-	value, err := decodeJSONToken(decoder)
+	value, err := decodeJSONToken(decoder, maxDepth, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +120,7 @@ func decodeJSONValue(input string) (any, error) {
 	return value, nil
 }
 
-func decodeJSONToken(decoder *json.Decoder) (any, error) {
+func decodeJSONToken(decoder *json.Decoder, maxDepth, depth int) (any, error) {
 	token, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -123,6 +128,9 @@ func decodeJSONToken(decoder *json.Decoder) (any, error) {
 	delim, ok := token.(json.Delim)
 	if !ok {
 		return token, nil
+	}
+	if depthExceeded(depth, maxDepth) {
+		return nil, ErrLimitExceeded
 	}
 	switch delim {
 	case '{':
@@ -139,7 +147,7 @@ func decodeJSONToken(decoder *json.Decoder) (any, error) {
 			if _, exists := object[key]; exists {
 				return nil, fmt.Errorf("duplicate JSON key %q", key)
 			}
-			value, err := decodeJSONToken(decoder)
+			value, err := decodeJSONToken(decoder, maxDepth, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -155,7 +163,7 @@ func decodeJSONToken(decoder *json.Decoder) (any, error) {
 	case '[':
 		var array []any
 		for decoder.More() {
-			value, err := decodeJSONToken(decoder)
+			value, err := decodeJSONToken(decoder, maxDepth, depth+1)
 			if err != nil {
 				return nil, err
 			}

@@ -63,9 +63,7 @@ func (c *Structure) applyEnvForKey(key string) error {
 		loggedValue = maskedValue
 	}
 	if err := dv.Set(value); err != nil {
-		if secret {
-			err = fmt.Errorf("invalid value (redacted: field is secret)")
-		}
+		err = c.redactSecretValueError(key, err)
 		c.log().Info("cfggo: error setting config from environment variable", "key", key, "env", envVar, "value", loggedValue, "err", err)
 		return fmt.Errorf("key %q from env %s: %w", key, envVar, err)
 	}

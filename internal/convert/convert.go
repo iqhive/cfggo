@@ -267,6 +267,9 @@ func convertStringToMap(s string, target reflect.Type, ew ErrorWrapper) (interfa
 	}
 
 	// "key:val,key:val" format.
+	if strings.TrimSpace(s) == "" {
+		return reflect.MakeMap(target).Interface(), nil
+	}
 	m := reflect.MakeMap(target)
 	for _, pair := range strings.Split(s, ",") {
 		kv := strings.SplitN(pair, ":", 2)

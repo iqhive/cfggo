@@ -3,6 +3,7 @@ package validcfg
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -11,7 +12,9 @@ import (
 
 // Common validators
 
-// Required returns a validator that checks if a value is not nil
+// Required returns a validator that checks if a value is not nil. A typed nil
+// pointer, func, chan, map or slice (e.g. (*T)(nil)) counts as nil, and empty
+// strings, slices and maps are rejected too
 func Required() Validator {
 	return func(value interface{}) error {
 		if value == nil {
@@ -23,8 +26,17 @@ func Required() Validator {
 			return errors.New("value is required")
 		}
 
-		// Check for zero values in slices and maps
 		v := reflect.ValueOf(value)
+
+		// A typed nil is not == nil once stored in an interface{}, so ask reflect
+		switch v.Kind() {
+		case reflect.Ptr, reflect.Func, reflect.Chan, reflect.Interface, reflect.Map, reflect.Slice:
+			if v.IsNil() {
+				return errors.New("value is required")
+			}
+		}
+
+		// Check for zero values in slices and maps
 		if (v.Kind() == reflect.Slice || v.Kind() == reflect.Map) && v.Len() == 0 {
 			return errors.New("value is required")
 		}
@@ -107,6 +119,12 @@ func Range(min, max float64) Validator {
 			return fmt.Errorf("Range validator can only be applied to numeric types, got %s", v.Kind())
 		}
 
+		// NaN compares false against everything, so it would otherwise pass
+		// any range
+		if math.IsNaN(val) {
+			return fmt.Errorf("value must be between %v and %v, got NaN", min, max)
+		}
+
 		if val < min || val > max {
 			return fmt.Errorf("value must be between %v and %v", min, max)
 		}
@@ -115,17 +133,87 @@ func Range(min, max float64) Validator {
 	}
 }
 
-// OneOf returns a validator that checks if a value is one of the provided options
+// OneOf returns a validator that checks if a value is one of the provided
+// options. Numeric values are compared by value rather than by Go type, so
+// OneOf(1, 2, 3) accepts int64(2), uint16(2) and 2.0 (cfggo stores values
+// converted to the field's declared type, which rarely matches an untyped
+// constant). The comparison is exact: 2.5 never matches 2, and integers are
+// compared as integers rather than through a lossy float64. Non-numeric values
+// must equal an option under reflect.DeepEqual
 func OneOf(options ...interface{}) Validator {
+	msg := fmt.Sprintf("value must be one of %v", options)
 	return func(value interface{}) error {
 		for _, option := range options {
-			if reflect.DeepEqual(value, option) {
+			if reflect.DeepEqual(value, option) || numericEqual(value, option) {
 				return nil
 			}
 		}
 
-		return fmt.Errorf("value must be one of %v", options)
+		return errors.New(msg)
 	}
+}
+
+// numericClass groups the numeric reflect kinds so numericEqual can pick an
+// exact comparison for each pairing. The order matters: numericEqual sorts its
+// operands by class so it only handles each mixed pairing once
+type numericClass int
+
+const (
+	notNumeric numericClass = iota
+	signedInt
+	unsignedInt
+	floatNum
+)
+
+func numericClassOf(k reflect.Kind) numericClass {
+	switch k {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return signedInt
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return unsignedInt
+	case reflect.Float32, reflect.Float64:
+		return floatNum
+	}
+	return notNumeric
+}
+
+// numericEqual reports whether a and b are both numbers with the same value,
+// whatever their Go types. Integers are compared exactly (never via float64,
+// which cannot represent every int64/uint64) and a float only equals an
+// integer when it is a whole number the integer type can hold. NaN equals
+// nothing. Non-numeric operands, including nil, never compare equal
+func numericEqual(a, b interface{}) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	ca, cb := numericClassOf(va.Kind()), numericClassOf(vb.Kind())
+	if ca == notNumeric || cb == notNumeric {
+		return false
+	}
+	if ca > cb {
+		va, vb, ca, cb = vb, va, cb, ca
+	}
+
+	switch {
+	case ca == signedInt && cb == signedInt:
+		return va.Int() == vb.Int()
+	case ca == signedInt && cb == unsignedInt:
+		return va.Int() >= 0 && uint64(va.Int()) == vb.Uint()
+	case ca == unsignedInt && cb == unsignedInt:
+		return va.Uint() == vb.Uint()
+	case ca == signedInt && cb == floatNum:
+		f := vb.Float()
+		return isWholeFloat(f) && f >= math.MinInt64 && f < 1<<63 && int64(f) == va.Int()
+	case ca == unsignedInt && cb == floatNum:
+		f := vb.Float()
+		return isWholeFloat(f) && f >= 0 && f < 1<<64 && uint64(f) == va.Uint()
+	default: // both floats
+		return va.Float() == vb.Float()
+	}
+}
+
+// isWholeFloat reports whether f is a finite whole number (NaN and the
+// infinities are not)
+func isWholeFloat(f float64) bool {
+	return !math.IsInf(f, 0) && f == math.Trunc(f)
 }
 
 // Regex returns a validator that checks if a string matches a regular
@@ -160,7 +248,7 @@ func Email() Validator {
 	return func(value interface{}) error {
 		s, ok := value.(string)
 		if !ok {
-			return fmt.Errorf("Regex validator can only be applied to strings, got %T", value)
+			return fmt.Errorf("Email validator can only be applied to strings, got %T", value)
 		}
 
 		if !defaultEmailRegex.MatchString(s) {

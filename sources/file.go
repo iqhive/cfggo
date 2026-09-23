@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 )
@@ -20,7 +21,7 @@ type HandlerFile struct {
 	defaultConfig bool
 
 	// MaxBytes is the largest file LoadConfig accepts; zero means
-	// DefaultMaxFileBytes
+	// DefaultMaxFileBytes, and math.MaxInt64 effectively disables the cap
 	MaxBytes int64
 }
 
@@ -47,12 +48,20 @@ func (h *HandlerFile) LoadConfig() (json.RawMessage, error) {
 	if limit <= 0 {
 		limit = DefaultMaxFileBytes
 	}
+	// Read one byte past the limit so an oversized file is detected without
+	// reading it whole. At math.MaxInt64 the cap is effectively disabled and
+	// limit+1 would overflow to a negative count, which io.LimitReader treats
+	// as "read nothing" and would silently load an empty document
+	readLimit := limit
+	if limit < math.MaxInt64 {
+		readLimit = limit + 1
+	}
 	file, err := os.Open(h.Filename)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	data, err := io.ReadAll(io.LimitReader(file, readLimit))
 	if err != nil {
 		return nil, err
 	}

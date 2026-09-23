@@ -1,9 +1,12 @@
 package conf
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -184,6 +187,58 @@ func TestEncodeDecodeRoundTripPreservesTypes(t *testing.T) {
 		}
 		if !reflect.DeepEqual(a, b) {
 			t.Fatalf("round trip changed %q:\nfirst  = %s\nsecond = %s\nvia    = %q", doc, first, second, encoded)
+		}
+	}
+}
+
+func TestDecodeMaxLinesIgnoresTrailingNewline(t *testing.T) {
+	codec, err := New(WithLimits(Limits{MaxLines: 2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range []string{"a=1\nb=2\n", "a=1\nb=2", "a=1\n\n", "\n\n", ""} {
+		if _, err := codec.Decode([]byte(doc)); err != nil {
+			t.Fatalf("Decode(%q) error = %v, want nil", doc, err)
+		}
+	}
+	for _, doc := range []string{"a=1\nb=2\nc=3\n", "a=1\nb=2\nc=3", "a=1\nb=2\n\n", "\n\n\n"} {
+		if _, err := codec.Decode([]byte(doc)); !errors.Is(err, ErrLimitExceeded) {
+			t.Fatalf("Decode(%q) error = %v, want ErrLimitExceeded", doc, err)
+		}
+	}
+}
+
+func TestDecodeRejectsNewlineFloodBeforeSplitting(t *testing.T) {
+	// Far over MaxLines but well under MaxInputBytes: the line count must be
+	// rejected before the input is split into a slice header per line
+	input := bytes.Repeat([]byte{'\n'}, 1<<20)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := Decode(input)
+	runtime.ReadMemStats(&after)
+	if !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("error = %v, want ErrLimitExceeded", err)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > uint64(len(input)) {
+		t.Fatalf("Decode allocated %d bytes rejecting a %d byte newline flood", allocated, len(input))
+	}
+}
+
+func TestDecodeKeyConflictReportsEarliestLine(t *testing.T) {
+	var doc strings.Builder
+	doc.WriteString("[key.first]\nx=1\n[key]\n") // the earliest descendant value is on line 2
+	for i := 0; i < 32; i++ {
+		fmt.Fprintf(&doc, "child%02d=%d\n", i, i) // lines 4..35
+	}
+	doc.WriteString("[global]\nkey=scalar\n") // line 37 conflicts with the children
+	for run := 0; run < 8; run++ {
+		_, err := Decode([]byte(doc.String()))
+		var parseErr *ParseError
+		if !errors.Is(err, ErrKeyConflict) || !errors.As(err, &parseErr) {
+			t.Fatalf("error = %#v, want ErrKeyConflict ParseError", err)
+		}
+		if parseErr.Line != 37 || parseErr.FirstLine != 2 {
+			t.Fatalf("conflict at line %d first defined on line %d, want 37 and 2", parseErr.Line, parseErr.FirstLine)
 		}
 	}
 }

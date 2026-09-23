@@ -129,7 +129,9 @@ func TestConvertString(t *testing.T) {
 		// TextUnmarshaler (pointer receiver)
 		{"TextUnmarshaler", "42", typeTextType, textType{V: 42}, false},
 		{"pointer TextUnmarshaler", "42", typeTextPtr, &textType{V: 42}, false},
-		{"value TextUnmarshaler", "ignored", reflect.TypeOf(valueTextType("")), valueTextType("ignored"), false},
+		// A value receiver cannot store the text, so the result is the zero
+		// value: the type's own UnmarshalText wins over its string kind
+		{"value TextUnmarshaler", "ignored", reflect.TypeOf(valueTextType("")), valueTextType(""), false},
 	}
 
 	for _, tc := range cases {

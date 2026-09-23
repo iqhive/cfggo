@@ -24,6 +24,10 @@ type ConfigVar struct {
 	// propagated to the config map during Parse, no matter which flag set
 	// (private or flag.CommandLine) performs the parsing.
 	IsBool bool
+	// Owner identifies the configuration that registered the flag, so a
+	// second configuration sharing the same flag set can tell its own earlier
+	// registration (a retried Init) from a name clash with another owner
+	Owner any
 }
 
 // IsBoolFlag reports whether this flag is boolean. The standard library's flag

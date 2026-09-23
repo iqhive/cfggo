@@ -19,30 +19,9 @@ func (c *Structure) Set(key string, value interface{}) error {
 		return err
 	}
 
-	// Exclude concurrent Reloads (which release configMutex between phases)
-	// so this Set cannot be lost to a reload rollback or snapshot restore.
-	// Released before callbacks fire so a callback may itself trigger a Reload
-	c.reloadMutex.RLock()
-	c.configMutex.Lock()
-	old, exists := c.configData[key]
-	if !exists {
-		c.configMutex.Unlock()
-		c.reloadMutex.RUnlock()
-		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q%s", key, c.didYouMeanSuffix(key))
-	}
-	old = cloneMutableInterface(old)
-	err := c.set(key, value)
-	var newVal interface{}
-	if err == nil {
-		c.markChangedLocked()
-		c.recordSourceLocked(key, SourceSet)
-		newVal = cloneMutableInterface(c.configData[key])
-	}
-	c.configMutex.Unlock()
-	c.reloadMutex.RUnlock()
-
+	old, newVal, err := c.setLocked(key, value)
 	if err != nil {
-		return c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
+		return err
 	}
 	// Only assemble the change set when someone is listening,
 	// so a plain Set stays allocation-free in the common case
@@ -52,10 +31,36 @@ func (c *Structure) Set(key string, value interface{}) error {
 	return nil
 }
 
+// setLocked performs the locked part of Set and returns clones of the old and
+// new values for change notification. Both locks are released by defer so a
+// panic inside the conversion (arbitrary UnmarshalText / UnmarshalJSON code
+// on a custom type) cannot leave the instance permanently locked
+func (c *Structure) setLocked(key string, value interface{}) (old, newVal interface{}, err error) {
+	// Exclude concurrent Reloads (which release configMutex between phases)
+	// so this Set cannot be lost to a reload rollback or snapshot restore.
+	// Released before callbacks fire so a callback may itself trigger a Reload
+	c.reloadMutex.RLock()
+	defer c.reloadMutex.RUnlock()
+	c.configMutex.Lock()
+	defer c.configMutex.Unlock()
+
+	old, exists := c.configData[key]
+	if !exists {
+		return nil, nil, c.WrapError(ErrUnknownKey, ErrCodeNotFound, "Set: unknown configuration key %q%s", key, c.didYouMeanSuffix(key))
+	}
+	old = cloneMutableInterface(old)
+	if err := c.set(key, value); err != nil {
+		return nil, nil, c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
+	}
+	c.markChangedLocked()
+	c.recordSourceLocked(key, SourceSet)
+	return old, cloneMutableInterface(c.configData[key]), nil
+}
+
 // validateForSet runs the registered validator (if any) for key against the
-// value as it would be stored: converted to the key's current concrete type
-// when one is known. It runs before any lock is taken because a validator is
-// arbitrary user code that may itself read configuration.
+// value as it would be stored: converted to the key's declared (or current
+// concrete) type when one is known. It runs before any lock is taken because
+// a validator is arbitrary user code that may itself read configuration.
 func (c *Structure) validateForSet(key string, value interface{}) error {
 	c.validationMutex.RLock()
 	_, hasValidator := c.validationMap[key]
@@ -66,20 +71,53 @@ func (c *Structure) validateForSet(key string, value interface{}) error {
 
 	c.configMutex.RLock()
 	existing, exists := c.configData[key]
+	target := c.storeTypeLocked(key, existing)
 	c.configMutex.RUnlock()
 	if !exists {
 		return nil
 	}
 
 	checked := value
-	if existingType := reflect.TypeOf(existing); existingType != nil {
-		converted, err := iconvert.ConvertValue(value, existingType, c)
+	if target != nil {
+		converted, err := iconvert.ConvertValue(value, target, c.convertWrapper(key))
 		if err != nil {
 			return c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "Set: key %q from %s", key, SourceSet)
 		}
 		checked = converted
 	}
 	return c.validateValueForKey(key, checked, SourceSet)
+}
+
+// storeTypeLocked returns the type a value for key is converted to before it
+// is stored: the accessor's declared type (the T of func() T) for a
+// struct-backed key, so a func() interface{} field keeps accepting values of
+// any type rather than being pinned to the dynamic type of whatever it holds;
+// otherwise the current value's type (a NewFlag key's default fixes its type);
+// otherwise the declared fallback (interface{} for a NewFlag key without a
+// typed value). nil means the key has no known type and values are stored as
+// they arrive. The caller must hold configMutex
+func (c *Structure) storeTypeLocked(key string, existing interface{}) reflect.Type {
+	if c.plan != nil {
+		if leaf, ok := c.plan.byKey[key]; ok && leaf.info.IsAccessor {
+			return leaf.info.Type
+		}
+	}
+	if t := reflect.TypeOf(existing); t != nil {
+		return t
+	}
+	return c.declaredTypeLocked(key)
+}
+
+// convertWrapper returns the error wrapper handed to the converter for key.
+// Conversion errors quote the rejected input, and the wrapper may be a
+// caller-supplied one that logs everything it sees, so for a secret-tagged key
+// no wrapper is passed: the converter then returns a plain error, which
+// redactSecretValueError replaces before it can reach a log or a caller
+func (c *Structure) convertWrapper(key string) iconvert.ErrorWrapper {
+	if c.isSecretKey(key) {
+		return nil
+	}
+	return c
 }
 
 // redactSecretValueError replaces a conversion error for a secret-tagged key
@@ -118,16 +156,17 @@ func (c *Structure) markChangedLocked() {
 // set is the internal, non-locking version of Set.
 func (c *Structure) set(key string, value interface{}) error {
 	if existing, exists := c.configData[key]; exists {
-		existingType := reflect.TypeOf(existing)
-		if existingType == nil {
-			// existing is an untyped nil, eg a func() interface{} field with no default
-			// There is no concrete type to convert to, so store the incoming value as-is
-			// rather than letting reflect panic on a nil Type
+		target := c.storeTypeLocked(key, existing)
+		if target == nil {
+			// No declared type and an untyped nil value (eg a NewFlag key
+			// with a nil default). There is no concrete type to convert to,
+			// so store the incoming value as-is rather than letting reflect
+			// panic on a nil Type
 			c.configData[key] = cloneMutableInterface(value)
 			return nil
 		}
 
-		convertedValue, err := iconvert.ConvertValue(value, existingType, c)
+		convertedValue, err := iconvert.ConvertValue(value, target, c.convertWrapper(key))
 		if err != nil {
 			return err
 		}
@@ -176,10 +215,8 @@ func Value[T any](c *Structure, key string) (T, bool) {
 	if raw == nil {
 		return zero, false
 	}
-	rv := reflect.ValueOf(raw)
-	tt := reflect.TypeOf(&zero).Elem()
-	if rv.Type().ConvertibleTo(tt) {
-		cv := cloneMutableReflectValue(rv.Convert(tt))
+	if converted, ok := convertForRead(raw, reflect.TypeOf(&zero).Elem()); ok {
+		cv := cloneMutableReflectValue(reflect.ValueOf(converted))
 		if cv, ok := cv.Interface().(T); ok {
 			return cv, true
 		}

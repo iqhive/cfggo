@@ -252,9 +252,11 @@ func (g *Group) Register(namespace string, cfg interface{}, options ...Option) {
 			"Register: group is already initialized (namespace %q)", namespace))
 		return
 	}
-	if strings.ContainsAny(namespace, ". ") {
+	// The namespace becomes a flag-name prefix, and the standard flag package
+	// panics on a name that begins with "-" or contains "="
+	if strings.ContainsAny(namespace, ". =") || strings.HasPrefix(namespace, "-") {
 		g.regErrs = append(g.regErrs, g.wrapError(nil, ErrCodeInvalidArgument,
-			"Register: namespace %q must not contain '.' or spaces", namespace))
+			"Register: namespace %q must not contain '.', '=' or spaces, or begin with '-'", namespace))
 		return
 	}
 	if cfg == nil || isNilInterfaceValue(cfg) {
@@ -267,6 +269,14 @@ func (g *Group) Register(namespace string, cfg interface{}, options ...Option) {
 	if !ok {
 		g.regErrs = append(g.regErrs, g.wrapError(nil, ErrCodeInvalidArgument,
 			"Register: configuration for namespace %q (%T) must embed cfggo.Structure", namespace, cfg))
+		return
+	}
+	if member.structure() == nil {
+		// A struct value (not a pointer) that embeds *cfggo.Structure by
+		// pointer satisfies the interface but its Structure cannot be
+		// allocated in place
+		g.regErrs = append(g.regErrs, g.wrapError(nil, ErrCodeInvalidArgument,
+			"Register: configuration for namespace %q (%T) has a nil embedded *cfggo.Structure; register a pointer to the struct", namespace, cfg))
 		return
 	}
 	if namespace != "" {
@@ -447,8 +457,12 @@ func (g *Group) checkUnclaimedSections(document map[string]json.RawMessage, stri
 			continue
 		}
 		for _, key := range g.memberKeys(member) {
+			// A root member's key may appear in the document nested under its
+			// first segment ({"db": {"host": ...}}) or flat, exactly as Save
+			// writes it ({"db.host": ...}); both spellings are the member's
 			first, _, _ := strings.Cut(key, ".")
 			claimed[first] = true
+			claimed[key] = true
 		}
 	}
 
@@ -612,8 +626,29 @@ func (g *Group) memberKeys(member *groupMember) []string {
 			keys = append(keys, key)
 		}
 	}
+	// A key registered with NewFlag before Init takes part in every layer
+	// like a struct-backed one, so it claims its section and its flag and
+	// environment names take part in collision checks
+	s.configMutex.RLock()
+	for key := range s.extraKeys {
+		keys = append(keys, key)
+	}
+	s.configMutex.RUnlock()
 	sort.Strings(keys)
 	return keys
+}
+
+// requireInitialized reports an error for an operation that needs the group's
+// members to be initialised. Before Init the members hold no configuration,
+// so a Save would overwrite every section of the combined document with an
+// empty one and a Reload would act on members that are not wired
+func (g *Group) requireInitialized(op string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.initialized {
+		return g.wrapError(nil, ErrCodeInvalidArgument, "%s: group is not initialized; call Init first", op)
+	}
+	return nil
 }
 
 func (g *Group) memberEnvPrefix(namespace string) string {
@@ -638,14 +673,26 @@ func (g *Group) memberName(member *groupMember) string {
 }
 
 // loadDocument reads the combined configuration document and splits it into its
-// top-level sections.
+// top-level sections. A default (optional) source that cannot be loaded or
+// parsed yields an empty document with a warning, so Init can proceed on the
+// members' other sources
 func (g *Group) loadDocument() (map[string]json.RawMessage, error) {
+	return g.readDocument(g.handler != nil && g.handler.IsDefault())
+}
+
+// readDocument is loadDocument with an explicit policy for a failing source:
+// when tolerateFailure is false every load or parse failure is returned, even
+// for a default source. Reload and Save use that mode, because at that point
+// an empty document would not mean "nothing configured" but would silently
+// reset every member to its defaults (Reload) or discard every section the
+// members do not own (Save)
+func (g *Group) readDocument(tolerateFailure bool) (map[string]json.RawMessage, error) {
 	if g.handler == nil {
 		return nil, nil
 	}
 	data, err := g.handler.LoadConfig()
 	if err != nil {
-		if g.handler.IsDefault() {
+		if tolerateFailure {
 			g.log().Warn("cfggo: optional group configuration source could not be loaded", "err", err)
 			return nil, nil
 		}
@@ -656,7 +703,7 @@ func (g *Group) loadDocument() (map[string]json.RawMessage, error) {
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(data, &document); err != nil {
-		if g.handler.IsDefault() {
+		if tolerateFailure {
 			g.log().Warn("cfggo: ignoring malformed group configuration JSON", "err", err)
 			return nil, nil
 		}
@@ -700,6 +747,10 @@ func (g *Group) parseFlags() error {
 	}
 	args := iflags.FilterTestFlags(os.Args[1:])
 
+	// Collapse "--bool value" first so the unknown-flag scan below does not
+	// stop at the value token and miss an unknown flag after it
+	args = normalizeBoolFlagArgsIn(g.flagSet, args)
+
 	if g.ignoreFlags {
 		args = filterKnownFlagsIn(g.flagSet, args, func(name string) {
 			g.log().Debug("cfggo: ignoring unrecognized flag (not defined by any group member)", "flag", name)
@@ -716,16 +767,22 @@ func (g *Group) parseFlags() error {
 			ErrCodeNotFound, "Group: failed to parse command-line flags")
 	}
 
-	args = normalizeBoolFlagArgsIn(g.flagSet, args)
-
+	for _, member := range g.members {
+		_ = member.structure.takeFlagError()
+	}
 	if err := g.flagSet.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return g.wrapError(err, ErrCodeInvalidArgument, "Group: help requested")
 		}
 		// Each member scrubs the raw value of its own secret flags out of the
-		// flag package's error text before it is returned or logged
+		// flag package's error text before it is returned or logged, and
+		// re-attaches the error its setter produced so the validation or
+		// unknown-key sentinel survives the flag package's flattened message
 		for _, member := range g.members {
 			err = member.structure.redactFlagError(err)
+			if setterErr := member.structure.takeFlagError(); setterErr != nil {
+				err = wrapKind(setterErr, err)
+			}
 		}
 		return g.wrapError(err, ErrCodeInvalidArgument, "Group: failed to parse command-line flags")
 	}
@@ -783,6 +840,9 @@ func (g *Group) Validate() error {
 // environment-injected secrets are not persisted. A member's own Save is
 // forwarded here
 func (g *Group) Save() error {
+	if err := g.requireInitialized("Group.Save"); err != nil {
+		return err
+	}
 	g.saveMu.Lock()
 	defer g.saveMu.Unlock()
 	return g.save()
@@ -794,7 +854,21 @@ func (g *Group) save() error {
 	}
 	members := g.membersSnapshot()
 	versions := make([]uint64, len(members))
-	document := make(map[string]json.RawMessage, len(members))
+
+	// Start from the document as it is now, so top-level sections the members
+	// do not own survive the write: sections ignored with
+	// GroupWithIgnoredSections belong to other programs sharing the file, and
+	// an unclaimed section is a user's data that a save must not silently
+	// discard. Only the members' own sections are replaced below. A source
+	// that cannot be read is an error here rather than an empty base, because
+	// writing from an empty base would drop exactly those sections
+	document, err := g.readDocument(false)
+	if err != nil {
+		return g.wrapError(err, ErrorCode(err), "Group.Save: cannot read the current combined configuration to preserve sections owned by other programs")
+	}
+	if document == nil {
+		document = make(map[string]json.RawMessage, len(members))
+	}
 	for i, member := range members {
 		_, versions[i] = member.structure.changedState()
 		data, err := member.structure.persistableJSONBytes()
@@ -830,6 +904,9 @@ func (g *Group) save() error {
 // SaveIfChanged saves the combined configuration only when at least one member
 // has a value changed with Set since it was last saved.
 func (g *Group) SaveIfChanged() error {
+	if err := g.requireInitialized("Group.SaveIfChanged"); err != nil {
+		return err
+	}
 	g.saveMu.Lock()
 	defer g.saveMu.Unlock()
 
@@ -854,10 +931,18 @@ func (g *Group) SaveIfChanged() error {
 // callback may itself call Group.Reload, as it may call Structure.Reload.
 // Unclaimed sections are logged but never make a reload fail
 func (g *Group) Reload() error {
+	if err := g.requireInitialized("Group.Reload"); err != nil {
+		return err
+	}
 	members := g.membersSnapshot()
 
+	// A source that cannot be read or parsed fails the reload for every
+	// member, even when it is a default (optional) source: feeding the members
+	// an empty document instead would silently reset each of them to its
+	// defaults, whereas a standalone Structure keeps its previous values when
+	// its source fails to reload
 	g.reloadMu.Lock()
-	document, err := g.loadDocument()
+	document, err := g.readDocument(false)
 	if err != nil {
 		g.reloadMu.Unlock()
 		return err

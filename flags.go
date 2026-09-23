@@ -27,6 +27,11 @@ import (
 // and Set can change it; a private flag set that Init has already parsed is
 // not parsed again
 func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, configDescription string) {
+	// Exclude a concurrent Reload (which swaps the live map for its
+	// candidate at commit) so a key added here is never dropped by that swap
+	c.reloadMutex.RLock()
+	defer c.reloadMutex.RUnlock()
+
 	c.configMutex.Lock()
 	if c.extraKeys == nil {
 		c.extraKeys = make(map[string]string)
@@ -59,6 +64,15 @@ func (c *Structure) NewFlag(configVarName string, defaultValue interface{}, conf
 	}
 }
 
+// validFlagName reports whether name can be registered on a flag.FlagSet:
+// the standard flag package panics on a name that begins with "-" or
+// contains "=". Configuration keys come from struct tags but also from
+// loaded documents (an unrecognized key is still registered so it can be
+// overridden), so a malformed key must be skipped rather than crash Init
+func validFlagName(name string) bool {
+	return name != "" && !strings.HasPrefix(name, "-") && !strings.Contains(name, "=")
+}
+
 func (c *Structure) newFlag(configVarName string, defaultValue interface{}, configDescription string) {
 	c.ensureFlagSet()
 
@@ -74,32 +88,45 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 	// never prefixed, so plans, accessors, and file/env keys are unaffected.
 	flagName := c.flagNamePrefix + configVarName
 
+	if !validFlagName(flagName) {
+		c.log().Warn("cfggo: configuration key cannot be used as a flag name (it begins with '-' or contains '='); no flag registered", "key", configVarName)
+		return
+	}
+
 	if existing := c.flagSet.Lookup(flagName); existing != nil {
-		if cv, ok := existing.Value.(*flags.ConfigVar); ok && cv.Name == configVarName {
-			// Already registered for this key (eg a retried Init on a host
-			// flag set): nothing to do
+		if cv, ok := existing.Value.(*flags.ConfigVar); ok && cv.Name == configVarName && cv.Owner == c {
+			// Already registered by this configuration for this key (eg a
+			// retried Init on a host flag set): nothing to do
 			return
 		}
-		c.log().Error("cfggo: flag already registered, skipping", "flag", flagName)
+		// Another owner registered the name first (the host, or another
+		// configuration sharing the set). Silently reusing its flag would
+		// route command-line values to the wrong configuration
+		c.log().Error("cfggo: flag already registered by another owner, skipping", "flag", flagName, "key", configVarName)
 		return
 	}
 
 	// Special handling for boolean flags: register a bool-aware ConfigVar so the
 	// value propagates to the config map during Parse (whether cfggo parses its
 	// own private flag set or the host parses flag.CommandLine), and so the
-	// standard flag package allows the "--flag" / "--flag=true" forms.
-	if boolVal, isBool := defaultValue.(bool); isBool {
+	// standard flag package allows the "--flag" / "--flag=true" forms. A named
+	// bool type (type Toggle bool) is a boolean flag too
+	if defaultValue != nil && reflect.TypeOf(defaultValue).Kind() == reflect.Bool {
 		// Only seed the default when the key has no value yet, mirroring the
 		// non-bool path below: a value already loaded from a file, the
 		// environment, or a Set call must not be silently overwritten
-		if _, exists := c.configData[configVarName]; !exists {
-			c.configData[configVarName] = boolVal
+		current, exists := c.configData[configVarName]
+		if !exists {
+			c.configData[configVarName] = defaultValue
+			current = defaultValue
 		}
 		dvar := &flags.ConfigVar{
-			Name:   configVarName,
-			Want:   reflect.TypeOf(boolVal),
-			Setter: c.createSetter(configVarName),
-			IsBool: true,
+			Name:     configVarName,
+			Want:     c.storeTypeLocked(configVarName, current),
+			Setter:   c.createSetter(configVarName),
+			IsBool:   true,
+			IsSecret: c.isSecretKey(configVarName),
+			Owner:    c,
 		}
 		c.flagSet.Var(dvar, flagName, configDescription)
 		return
@@ -110,14 +137,12 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		c.configData[configVarName] = defaultValue
 		current = defaultValue
 	}
-	want := reflect.TypeOf(current)
-	if want == nil {
-		// An untyped nil (eg a func() interface{} field with no default) has
-		// no runtime type; use the type the struct declares so the flag still
-		// accepts a value instead of failing with a nil target type. The
-		// config lock is held here, so use the locked variant
-		want = c.declaredTypeLocked(configVarName)
-	}
+	// The flag converts into the type the struct declares for the key (so a
+	// func() interface{} field keeps accepting any value), falling back to
+	// the current value's type for a NewFlag key (whose default fixes its
+	// type) and to interface{} when neither is known. The config lock is
+	// held here, so use the locked variant
+	want := c.storeTypeLocked(configVarName, current)
 	if want == nil {
 		c.log().Debug("cfggo: flag not registered: key has neither a value nor a declared type", "key", configVarName)
 		return
@@ -127,6 +152,7 @@ func (c *Structure) newFlag(configVarName string, defaultValue interface{}, conf
 		Want:     want,
 		Setter:   c.createSetter(configVarName),
 		IsSecret: c.isSecretKey(configVarName),
+		Owner:    c,
 	}
 	c.flagSet.Var(dvar, flagName, configDescription)
 }
@@ -150,7 +176,18 @@ func (c *Structure) registerConfigPathFlag() {
 // createSetter returns a closure that acquires the instance's configMutex and
 // stores the value.
 func (c *Structure) createSetter(key string) func(interface{}) error {
-	return func(value interface{}) error {
+	return func(value interface{}) (err error) {
+		// The standard flag package formats a Set failure into a new string
+		// error (with %v, not %w), which loses the validation / unknown-key
+		// sentinels. Keep the last failure so parseFlags can re-attach it to
+		// the error the flag package returns
+		defer func() {
+			if err != nil {
+				c.configMutex.Lock()
+				c.lastFlagErr = err
+				c.configMutex.Unlock()
+			}
+		}()
 		if err := c.validateValueForKey(key, value, SourceFlag); err != nil {
 			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s failed validation", key, SourceFlag)
 		}
@@ -158,23 +195,45 @@ func (c *Structure) createSetter(key string) func(interface{}) error {
 		c.configMutex.Lock()
 		defer c.configMutex.Unlock()
 		if err := c.set(key, value); err != nil {
-			return c.WrapError(err, ErrCodeInvalidArgument, "key %q from %s", key, SourceFlag)
+			return c.WrapError(c.redactSecretValueError(key, err), ErrCodeInvalidArgument, "key %q from %s", key, SourceFlag)
 		}
 		c.recordSourceLocked(key, SourceFlag)
 		return nil
 	}
 }
 
-func (c *Structure) parseFlags() error {
+// takeFlagError returns and clears the error recorded by the most recent
+// failing flag setter, if any
+func (c *Structure) takeFlagError() error {
 	c.configMutex.Lock()
 	defer c.configMutex.Unlock()
+	err := c.lastFlagErr
+	c.lastFlagErr = nil
+	return err
+}
 
+func (c *Structure) parseFlags() error {
+	// The lock is held while the argument list is prepared and released for
+	// the Parse call itself, because Parse invokes the flag setters, which
+	// take the lock. It is deliberately not deferred across that call: a
+	// panic in a setter (arbitrary conversion code) would otherwise reach a
+	// deferred Unlock of an already-unlocked mutex and crash the process
+	c.configMutex.Lock()
 	if c.flagSet.Parsed() {
+		c.configMutex.Unlock()
 		c.log().Debug("cfggo: flags already parsed")
 		return nil
 	}
 
 	args := flags.FilterTestFlags(os.Args[1:])
+
+	// Collapse "--bool value" into "--bool=value" for known boolean flags. The
+	// standard flag package stops parsing at the first non-flag token, so an
+	// uncollapsed boolean value (e.g. "--boolval true") would otherwise be read
+	// as a positional argument and silently drop every flag that follows it.
+	// It runs before the unknown-flag scan so that scan does not stop at the
+	// boolean value token and miss an unknown flag after it
+	args = c.normalizeBoolFlagArgs(args)
 
 	// When WithIgnoreUnknownVars is enabled, only parse the flags cfggo knows
 	// about. Flags owned by other libraries or simple typos are filtered out so
@@ -192,50 +251,47 @@ func (c *Structure) parseFlags() error {
 			// would, so the user can see what is accepted
 			c.flagSet.Usage()
 		}
+		c.configMutex.Unlock()
 		return c.WrapError(
 			wrapKind(ErrUnknownKey, fmt.Errorf("flag provided but not defined: -%s%s", name, suffix)),
 			ErrCodeNotFound,
 			"",
 		)
 	}
-
-	// Collapse "--bool value" into "--bool=value" for known boolean flags. The
-	// standard flag package stops parsing at the first non-flag token, so an
-	// uncollapsed boolean value (e.g. "--boolval true") would otherwise be read
-	// as a positional argument and silently drop every flag that follows it.
-	args = c.normalizeBoolFlagArgs(args)
-
-	// Temporarily release the lock during parsing to avoid deadlocks with Set().
+	c.lastFlagErr = nil
+	fs := c.flagSet
 	c.configMutex.Unlock()
-	var parseErr error
-	if parseErr = c.flagSet.Parse(args); parseErr != nil {
+
+	parseErr := fs.Parse(args)
+	setterErr := c.takeFlagError()
+
+	if parseErr != nil {
 		if errors.Is(parseErr, flag.ErrHelp) {
 			// Usage has already been printed by the flag package. Hand the
 			// sentinel back so the host can errors.Is(err, flag.ErrHelp) and
 			// exit cleanly; it is not a configuration error worth logging
-			c.configMutex.Lock()
 			return c.WrapError(parseErr, ErrCodeInvalidArgument, "help requested")
 		}
 		// The flag package echoes the rejected raw value ("invalid value "x"
 		// for flag -name"); strip it for secret-tagged keys before it reaches
 		// a log line or the caller
 		parseErr = c.redactFlagError(parseErr)
+		if setterErr != nil {
+			// Re-attach the setter's error so errors.Is(err, ErrValidation)
+			// and errors.As(err, &validcfg.ValidationError{}) work through
+			// the flag package's flattened message
+			parseErr = wrapKind(setterErr, parseErr)
+		}
 		c.log().Error("cfggo: error parsing flags", "err", parseErr)
+		return c.WrapError(parseErr, ErrCodeInvalidArgument, "parse command-line flags")
 	}
-	c.configMutex.Lock()
 
 	// Leftover positional arguments usually indicate a "--bool value" mistake
 	// (boolean flags require the "--bool=value" form) or a stray argument. Only
 	// their number is logged: a stray token may be a credential meant for a flag
-	if parseErr == nil {
-		if rest := c.flagSet.Args(); len(rest) > 0 {
-			c.log().Warn("cfggo: ignoring unexpected positional arguments after flag parsing "+
-				"(boolean flags must use the --flag=value form to set an explicit value)", "count", len(rest))
-		}
-	}
-
-	if parseErr != nil {
-		return c.WrapError(parseErr, ErrCodeInvalidArgument, "parse command-line flags")
+	if rest := fs.Args(); len(rest) > 0 {
+		c.log().Warn("cfggo: ignoring unexpected positional arguments after flag parsing "+
+			"(boolean flags must use the --flag=value form to set an explicit value)", "count", len(rest))
 	}
 	return nil
 }

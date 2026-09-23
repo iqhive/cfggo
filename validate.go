@@ -38,12 +38,22 @@ func (c *Structure) validateConfigShape() error {
 		return nil
 	}
 
+	// A key registered with NewFlag takes part in every layer like a
+	// struct-backed key, so a validator for it is a known target too
+	c.configMutex.RLock()
+	extra := cloneStringMap(c.extraKeys)
+	c.configMutex.RUnlock()
+
 	c.validationMutex.RLock()
 	unknown := make([]string, 0)
 	for key := range c.validationMap {
-		if leaf, ok := c.plan.byKey[key]; !ok || !leaf.info.IsAccessor {
-			unknown = append(unknown, key)
+		if leaf, ok := c.plan.byKey[key]; ok && leaf.info.IsAccessor {
+			continue
 		}
+		if _, ok := extra[key]; ok {
+			continue
+		}
+		unknown = append(unknown, key)
 	}
 	c.validationMutex.RUnlock()
 
@@ -87,14 +97,23 @@ func (c *Structure) validateSnapshot(data map[string]interface{}, provenance map
 		return nil
 	}
 
+	// Validate in key order so the aggregate error (and its message) is
+	// deterministic rather than following map iteration order
+	keys := make([]string, 0, len(data))
+	for key := range data {
+		if _, exists := validators[key]; exists {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+
 	var errs validcfg.ValidationErrors
-	for key, value := range data {
-		if validator, exists := validators[key]; exists {
-			if err := validator(value); err != nil {
-				err = c.redactSecretValueError(key, err)
-				ve := validcfg.ValidationError{Key: key, Err: err}
-				errs = append(errs, ve.WithProvenance(c.provenanceValue(key, value), provenance[key].String()))
-			}
+	for _, key := range keys {
+		value := data[key]
+		if err := validators[key](value); err != nil {
+			err = c.redactSecretValueError(key, err)
+			ve := validcfg.ValidationError{Key: key, Err: err}
+			errs = append(errs, ve.WithProvenance(c.provenanceValue(key, value), provenance[key].String()))
 		}
 	}
 
@@ -116,7 +135,9 @@ func (c *Structure) ValidateKey(key string) error {
 		return c.WrapError(ErrUnknownKey, ErrCodeNotFound, "key %q not found%s", key, c.didYouMeanSuffix(key))
 	}
 
-	return c.validateValueForKey(key, value, source)
+	// The validator is user code: hand it a copy so it cannot mutate a live
+	// slice or map in place, bypassing Set
+	return c.validateValueForKey(key, cloneMutableInterface(value), source)
 }
 
 func (c *Structure) validateValueForKey(key string, value interface{}, source Source) error {

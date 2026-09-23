@@ -7,7 +7,10 @@
 // object, null, true, false or a number. So port = 8080 is the number 8080 and
 // name = api is the string "api"; quote a value (version = "1.0") to keep a
 // number-like literal as text. Encode writes JSON literals, so a rewritten
-// document decodes to the same types it was encoded from.
+// document decodes to the same types it was encoded from. It writes a nested
+// object as a single JSON value, rather than as a section, when any of its
+// keys is not a plain path segment (for example a map keyed by "a.b"), so
+// such keys are never split.
 //
 // A # starts a comment wherever it appears on a line. To include a literal # in
 // a quoted string, write it as the JSON escape \u0023.

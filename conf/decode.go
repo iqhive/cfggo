@@ -33,10 +33,17 @@ func (c *Codec) decode(input []byte, filename string) (json.RawMessage, error) {
 	paths := &pathNode{children: make(map[string]*pathNode)}
 	var section []string
 	entries := 0
-	lines := bytes.Split(input, []byte{'\n'})
-	if len(lines) > c.limits.MaxLines {
+	// Count lines before splitting so a newline flood is rejected without
+	// allocating a slice header per line. A trailing newline terminates the
+	// last line rather than starting an empty one
+	lineCount := bytes.Count(input, []byte{'\n'})
+	if len(input) > 0 && input[len(input)-1] != '\n' {
+		lineCount++
+	}
+	if lineCount > c.limits.MaxLines {
 		return nil, &ParseError{Filename: filename, Err: ErrLimitExceeded}
 	}
+	lines := bytes.Split(input, []byte{'\n'})
 	for index, raw := range lines {
 		lineNumber := index + 1
 		if len(raw) > c.limits.MaxLineBytes {
@@ -79,7 +86,11 @@ func (c *Codec) decode(input []byte, filename string) (json.RawMessage, error) {
 		}
 		fullPath := append(append([]string(nil), section...), parts...)
 		valueText := strings.TrimSpace(line[equals+1:])
-		value, err := parseValue(valueText, c.limits.MaxDepth)
+		// The key's path already occupies len(fullPath) levels of the depth
+		// budget, so the value may only nest the remainder (a scalar always
+		// fits). The canonical JSON then stays within MaxDepth and Encode can
+		// rewrite it
+		value, err := parseValue(valueText, c.limits.MaxDepth-len(fullPath))
 		if err != nil {
 			return nil, &ParseError{Filename: filename, Line: lineNumber, Column: equals + 2, Err: err}
 		}
@@ -127,7 +138,8 @@ func parsePath(path string, maxDepth int) ([]string, error) {
 // are JSON. The bare literals null, true and false and any bare JSON number
 // are JSON too, so a document Encode wrote (with JSON literals) decodes to the
 // types it was encoded from; quote such a value to keep it as text. Anything
-// else is text
+// else is text. maxDepth bounds the value's container nesting only: a scalar
+// is accepted even when maxDepth is zero
 func parseValue(input string, maxDepth int) (any, error) {
 	if input == "" {
 		return "", nil
@@ -201,14 +213,18 @@ func insertPath(root map[string]any, paths *pathNode, path []string, value any, 
 	return nil
 }
 
+// earliestLine returns the lowest line number on which node or any descendant
+// was assigned a value, so a conflict error points at the first definition
+// rather than at whichever child the map happened to yield first
 func earliestLine(node *pathNode) int {
-	if node.line != 0 {
+	if node.value {
 		return node.line
 	}
+	earliest := 0
 	for _, child := range node.children {
-		if line := earliestLine(child); line != 0 {
-			return line
+		if line := earliestLine(child); line != 0 && (earliest == 0 || line < earliest) {
+			earliest = line
 		}
 	}
-	return 0
+	return earliest
 }

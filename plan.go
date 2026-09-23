@@ -118,11 +118,36 @@ type structPlan struct {
 	ptrGroups [][]int              // index paths to *struct config groups, pre-order
 	byKey     map[string]*planLeaf // lookup by dotted config key
 	ignored   map[string]bool      // dotted keys of `-`-tagged fields
+	// groups holds the dotted prefix of every nested group that contains at
+	// least one accessor ("db" for "db.host"), so a loader can tell a null
+	// or empty section apart from an unknown key
+	groups map[string]bool
 	// suspects lists leaf fields that carry an explicit cfggo/cfg/config tag
 	// but are not func() T accessors, so they will never back a config value.
 	// They are almost always a mistake (eg `Port int` instead of
 	// `Port func() int`) and are surfaced as a warning during Init()
 	suspects []suspectField
+	// keyOwner maps each accessor key to the Go field that declared it, used
+	// while building the plan to reject two accessors that share a key
+	keyOwner map[string]string
+	// cycles records every group field whose type is one of its own
+	// ancestors, and typeAccessors whether a walked type holds any accessor.
+	// Together they decide, once the walk is complete, whether a cycle is an
+	// unrepresentable configuration shape or just a plain recursive value
+	// type (a linked list, a tree) that holds no configuration
+	cycles        []cycleRef
+	typeAccessors map[reflect.Type]bool
+}
+
+type cycleRef struct {
+	field  string
+	key    string
+	ftype  reflect.Type
+	groupT reflect.Type
+	// tagged reports an explicit cfggo/cfg/config tag on the field: the
+	// author declared it a configuration group, so the cycle is an error
+	// whether or not the group holds an accessor yet
+	tagged bool
 }
 
 // suspectField describes a tagged-but-ignored field for the Init warning.
@@ -152,15 +177,35 @@ func planForType(t reflect.Type, snakeCaseFieldNames bool) (*structPlan, error) 
 	}
 
 	p := &structPlan{
-		byKey:   make(map[string]*planLeaf),
-		ignored: make(map[string]bool),
+		byKey:         make(map[string]*planLeaf),
+		ignored:       make(map[string]bool),
+		groups:        make(map[string]bool),
+		keyOwner:      make(map[string]string),
+		typeAccessors: make(map[reflect.Type]bool),
 	}
-	if err := p.walk(t, "", nil, snakeCaseFieldNames, []reflect.Type{t}); err != nil {
+	n, err := p.walk(t, "", nil, snakeCaseFieldNames, []reflect.Type{t}, false)
+	if err != nil {
 		return nil, err
+	}
+	p.typeAccessors[t] = n > 0
+	// A field whose type is one of its own ancestors is an unbounded shape
+	// if that ancestor holds configuration or the field is explicitly tagged
+	// as a group; an untagged plain recursive value type (a linked list, a
+	// tree) that holds no accessor is simply not a configuration group and
+	// was skipped
+	for _, cy := range p.cycles {
+		if cy.tagged || p.typeAccessors[cy.groupT] {
+			return nil, fmt.Errorf("recursive configuration struct: field %s (key %q) has type %s, "+
+				"which already contains this group; cfggo cannot represent unbounded nesting",
+				cy.field, cy.key, cy.ftype)
+		}
 	}
 	for i := range p.leaves {
 		p.byKey[p.leaves[i].info.Key] = &p.leaves[i]
 	}
+	p.keyOwner = nil
+	p.cycles = nil
+	p.typeAccessors = nil
 
 	actual, _ := structPlanCache.LoadOrStore(key, p)
 	return actual.(*structPlan), nil
@@ -172,11 +217,14 @@ func isAccessorType(t reflect.Type) bool {
 	return t.Kind() == reflect.Func && t.NumIn() == 0 && t.NumOut() == 1
 }
 
-// walk records every leaf of t under prefix. path holds the struct types
-// currently being walked, root first, and is used to reject recursive shapes:
-// without it a group such as `Next *Node` inside Node would recurse until the
-// process ran out of stack
-func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseFieldNames bool, path []reflect.Type) error {
+// walk records every leaf of t under prefix and reports how many accessor
+// leaves it found beneath t. path holds the struct types currently being
+// walked, root first, and is used to reject recursive shapes: without it a
+// group such as `Next *Node` inside Node would recurse until the process ran
+// out of stack. secret is inherited from an enclosing group field tagged
+// secret:"true", so every value beneath such a group is masked
+func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseFieldNames bool, path []reflect.Type, secret bool) (int, error) {
+	accessors := 0
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if field.Anonymous && (field.Type == structureType || field.Type == structurePtrType) {
@@ -229,19 +277,42 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 
 		// Nested struct / *struct fields are config groups: recurse
 		if groupT, isPtr, ok := groupType(field); ok {
+			cyclic := false
 			for _, seen := range path {
 				if seen == groupT {
-					return fmt.Errorf("recursive configuration struct: field %s (key %q) has type %s, "+
-						"which already contains this group; cfggo cannot represent unbounded nesting",
-						field.Name, fullKey, field.Type)
+					cyclic = true
+					break
 				}
 			}
+			if cyclic {
+				// Whether this is an error is decided once the ancestor's
+				// walk has completed (see planForType); without the check a
+				// group such as `Next *Node` inside Node would recurse until
+				// the process ran out of stack
+				p.cycles = append(p.cycles, cycleRef{field: field.Name, key: fullKey, ftype: field.Type, groupT: groupT, tagged: hasExplicitConfigTag(field)})
+				continue
+			}
+			ptrGroupsBefore := len(p.ptrGroups)
 			if isPtr {
 				p.ptrGroups = append(p.ptrGroups, fieldIndex)
 			}
-			if err := p.walk(groupT, fullKey, fieldIndex, snakeCaseFieldNames, append(path, groupT)); err != nil {
-				return err
+			groupSecret := secret || isSecretTag(field.Tag.Get("secret"))
+			n, err := p.walk(groupT, fullKey, fieldIndex, snakeCaseFieldNames, append(path, groupT), groupSecret)
+			if err != nil {
+				return 0, err
 			}
+			p.typeAccessors[groupT] = p.typeAccessors[groupT] || n > 0
+			if n == 0 {
+				// A pointer to a struct with no accessor anywhere beneath it
+				// (eg *sql.DB, *http.Client) is not a configuration group:
+				// leave it nil rather than allocating a zero value behind the
+				// caller's back. Dropping it also drops any pointer groups
+				// recorded beneath it, which are equally empty
+				p.ptrGroups = p.ptrGroups[:ptrGroupsBefore]
+			} else {
+				p.groups[fullKey] = true
+			}
+			accessors += n
 			continue
 		}
 
@@ -250,7 +321,7 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 			info: fieldInfo{
 				Key:      fullKey,
 				Help:     field.Tag.Get("help"),
-				IsSecret: isSecretTag(field.Tag.Get("secret")),
+				IsSecret: secret || isSecretTag(field.Tag.Get("secret")),
 			},
 		}
 		if dv, ok := field.Tag.Lookup("default"); ok {
@@ -261,12 +332,21 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 		// Only zero-arg, single-return funcs (func() T) back a config value
 		ft := field.Type
 		if isAccessorType(ft) {
+			if owner, dup := p.keyOwner[fullKey]; dup {
+				// Two accessors sharing one key would both read (and Set,
+				// Save and flag-parse) the same map entry, each converting
+				// the other's value to its own type. Reject the shape rather
+				// than let one field silently shadow the other
+				return 0, fmt.Errorf("duplicate configuration key %q: declared by fields %s and %s", fullKey, owner, field.Name)
+			}
+			p.keyOwner[fullKey] = field.Name
 			out := ft.Out(0)
 			leaf.info.IsAccessor = true
 			leaf.info.Type = out
 			leaf.ftype = ft
 			leaf.kind = classify(out)
 			leaf.zero = reflect.Zero(out).Interface()
+			accessors++
 		} else if hasExplicitConfigTag(field) {
 			// A field with an explicit cfggo/cfg/config tag that is not a
 			// func() T accessor is silently dropped from the config map, which
@@ -276,7 +356,7 @@ func (p *structPlan) walk(t reflect.Type, prefix string, index []int, snakeCaseF
 
 		p.leaves = append(p.leaves, leaf)
 	}
-	return nil
+	return accessors, nil
 }
 
 // groupType reports whether field is a nested config group (a struct or
@@ -344,12 +424,15 @@ func configNameFromField(field reflect.StructField, snakeCaseFieldNames bool) st
 	if name == "" {
 		name = field.Tag.Get("json")
 	}
-	if name == "" {
-		name = fallbackConfigName(field, snakeCaseFieldNames)
-	}
 	// Strip options after a comma (e.g. `json:"name,omitempty"`).
 	if idx := strings.IndexByte(name, ','); idx != -1 {
 		name = name[:idx]
+	}
+	// A tag that carries only options (`json:",omitempty"`) names nothing:
+	// use the field name, exactly as encoding/json does, instead of dropping
+	// the field (which would leave its accessor nil and panic on first call)
+	if name == "" {
+		name = fallbackConfigName(field, snakeCaseFieldNames)
 	}
 	return name
 }
@@ -430,10 +513,17 @@ func (c *Structure) applyPlan() error {
 
 	// Allocate pointer-backed config groups so the accessor fields beneath them
 	// are addressable. Pre-order ordering guarantees each group's ancestors are
-	// already non-nil before it is reached
+	// already non-nil before it is reached. A nil pointer cfggo cannot set (an
+	// unexported embedded *struct) is an error: the accessors beneath it could
+	// never be installed, and reaching through it would panic
 	for _, idx := range c.plan.ptrGroups {
 		fv := v.FieldByIndex(idx)
-		if fv.Kind() == reflect.Ptr && fv.IsNil() && fv.CanSet() {
+		if fv.Kind() == reflect.Ptr && fv.IsNil() {
+			if !fv.CanSet() {
+				return c.WrapError(nil, ErrCodeInvalidArgument,
+					"Init: configuration group %s is a nil pointer that cfggo cannot allocate (the field is unexported); allocate it before Init or export the field",
+					v.Type().FieldByIndex(idx).Name)
+			}
 			fv.Set(reflect.New(fv.Type().Elem()))
 		}
 	}
@@ -464,7 +554,7 @@ func (c *Structure) applyPlan() error {
 		}
 		val := leaf.zero
 		if leaf.info.HasDefault && leaf.info.DefaultTag != "" {
-			if parsed, err := iconvert.ConvertString(leaf.info.DefaultTag, leaf.info.Type, c); err != nil {
+			if parsed, err := iconvert.ConvertString(leaf.info.DefaultTag, leaf.info.Type, c.convertWrapper(leaf.info.Key)); err != nil {
 				return c.WrapError(c.redactSecretValueError(leaf.info.Key, err), ErrCodeInvalidArgument, "invalid default value for key %q", leaf.info.Key)
 			} else {
 				val = parsed
@@ -561,16 +651,35 @@ func (c *Structure) makeAccessor(leaf *planLeaf) reflect.Value {
 			}
 			rv := reflect.ValueOf(raw)
 			if !rv.Type().AssignableTo(outType) {
-				if rv.Type().ConvertibleTo(outType) {
-					rv = rv.Convert(outType)
-				} else {
+				converted, ok := convertForRead(raw, outType)
+				if !ok {
 					return []reflect.Value{reflect.Zero(outType)}
 				}
+				rv = reflect.ValueOf(converted)
 			}
 			rv = cloneMutableReflectValue(rv)
 			return []reflect.Value{rv}
 		})
 	}
+}
+
+// convertForRead converts a stored value whose dynamic type differs from the
+// type a reader asked for (the T of Value[T], readTyped or a func() T
+// accessor), which happens for a func() interface{} field or a NewFlag key
+// that holds whatever was last stored. It uses the same converter as Set so a
+// read never yields a value Set would have refused: reflect's own Convert
+// would silently wrap an out-of-range integer (300 read as int8 gives 44) and
+// turn an integer into the rune with that code point when read as a string.
+// It reports false when no faithful conversion exists
+func convertForRead(raw interface{}, target reflect.Type) (interface{}, bool) {
+	converted, err := iconvert.ConvertValue(raw, target, nil)
+	if err != nil || converted == nil {
+		return nil, false
+	}
+	if !reflect.TypeOf(converted).AssignableTo(target) {
+		return nil, false
+	}
+	return converted, true
 }
 
 func cloneMutableReflectValue(v reflect.Value) reflect.Value {
@@ -624,11 +733,11 @@ func cloneMutableReflectValue(v reflect.Value) reflect.Value {
 	}
 }
 
-// cloneStructValue copies v and deep-clones its exported map, slice and
-// interface-held-container fields (recursively through nested structs), so a
-// struct-typed accessor such as func() Options cannot leak a slice that
-// aliases live config. Unexported fields are copied as-is because reflection
-// cannot assign to them. It reports false, returning v itself, when no field
+// cloneStructValue copies v and deep-clones its exported map, slice, pointer
+// and interface-held-container fields (recursively through nested structs),
+// so a struct-typed accessor such as func() Options cannot leak a slice or a
+// pointer that aliases live config. Unexported fields are copied as-is because
+// reflection cannot assign to them. It reports false, returning v itself, when no field
 // needed cloning, which keeps plain value structs (time.Time, ...) free
 func cloneStructValue(v reflect.Value) (reflect.Value, bool) {
 	t := v.Type()
@@ -640,7 +749,7 @@ func cloneStructValue(v reflect.Value) (reflect.Value, bool) {
 		fv := v.Field(i)
 		var cp reflect.Value
 		switch fv.Kind() {
-		case reflect.Map, reflect.Slice:
+		case reflect.Map, reflect.Slice, reflect.Pointer:
 			if fv.IsNil() {
 				continue
 			}
@@ -693,10 +802,8 @@ func readTyped[T any](c *Structure, key string) T {
 		return zero
 	}
 
-	rv := reflect.ValueOf(raw)
-	tt := reflect.TypeOf(&zero).Elem()
-	if rv.Type().ConvertibleTo(tt) {
-		if cv, ok := rv.Convert(tt).Interface().(T); ok {
+	if converted, ok := convertForRead(raw, reflect.TypeOf(&zero).Elem()); ok {
+		if cv, ok := converted.(T); ok {
 			return cv
 		}
 	}

@@ -76,6 +76,17 @@ func snapshotRequestBody(req *http.Request) ([]byte, error) {
 	return data, nil
 }
 
+// cloneHeader copies h for an outgoing request. A request built as a bare
+// struct literal (rather than via http.NewRequest) carries a nil Header, and
+// Header.Clone preserves that nil, so the result is normalised to an empty
+// map that Set can write to without panicking
+func cloneHeader(h http.Header) http.Header {
+	if cloned := h.Clone(); cloned != nil {
+		return cloned
+	}
+	return make(http.Header)
+}
+
 // IsDefault returns true if this is a default configuration handler
 func (h *HandlerHTTP) IsDefault() bool {
 	return h.defaultConfig
@@ -154,7 +165,7 @@ func (h *HandlerHTTP) LoadConfig() (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header = h.source.Header.Clone()
+	req.Header = cloneHeader(h.source.Header)
 
 	resp, err := h.httpClient().Do(req)
 	if err != nil {
@@ -197,7 +208,7 @@ func (h *HandlerHTTP) SaveConfig(data json.RawMessage) error {
 		return err
 	}
 	req.ContentLength = int64(len(data))
-	req.Header = h.dest.Header.Clone()
+	req.Header = cloneHeader(h.dest.Header)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := h.httpClient().Do(req)

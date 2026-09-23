@@ -3,6 +3,7 @@ package conf
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,6 +78,40 @@ func TestFileHandlerRewritePreservesMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("new mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestFileHandlerLoadHonoursInputLimit(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "config.conf")
+	if err := os.WriteFile(filename, []byte("port=8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	load := func(maxInputBytes int64) (json.RawMessage, error) {
+		t.Helper()
+		codec, err := New(WithLimits(Limits{MaxInputBytes: maxInputBytes}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		handler, err := NewFileHandler(filename, false, WithCodec(codec))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return handler.LoadConfig()
+	}
+
+	// math.MaxInt64 disables the limit; it must not overflow into an empty read
+	for _, limit := range []int64{math.MaxInt64, 10} {
+		loaded, err := load(limit)
+		if err != nil {
+			t.Fatalf("LoadConfig with MaxInputBytes %d: %v", limit, err)
+		}
+		if string(loaded) != `{"port":8080}` {
+			t.Fatalf("LoadConfig with MaxInputBytes %d = %s", limit, loaded)
+		}
+	}
+	// A file larger than the limit is still rejected by the codec
+	if _, err := load(9); !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("oversized file error = %v, want ErrLimitExceeded", err)
 	}
 }
 

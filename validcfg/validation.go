@@ -72,9 +72,21 @@ func (v ValidationError) Is(target error) bool {
 // ValidationErrors represents multiple validation errors
 type ValidationErrors []ValidationError
 
-// Is reports that a ValidationErrors matches ErrValidation.
+// Is reports that a ValidationErrors matches ErrValidation, while still
+// unwrapping to each ValidationError for more specific matches.
 func (v ValidationErrors) Is(target error) bool {
 	return target == ErrValidation
+}
+
+// Unwrap returns each ValidationError so that errors.As can find a
+// ValidationError, and errors.Is a validator's underlying cause, inside the
+// multi-error returned by Validate and Init
+func (v ValidationErrors) Unwrap() []error {
+	errs := make([]error, len(v))
+	for i, ve := range v {
+		errs[i] = ve
+	}
+	return errs
 }
 
 // Error implements the error interface

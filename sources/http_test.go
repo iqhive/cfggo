@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -236,5 +237,76 @@ func TestHandlerHTTPFollowsSafeRedirects(t *testing.T) {
 	}
 	if string(data) != `{"ok":true}` {
 		t.Fatalf("LoadConfig() = %s, want {\"ok\":true}", string(data))
+	}
+}
+
+// A request built as a bare struct literal (rather than via http.NewRequest)
+// has a nil Header, which Request.Clone and Header.Clone both preserve.
+// SaveConfig must still be able to set Content-Type on the outgoing request
+// instead of panicking on a nil map, and LoadConfig must not send a nil
+// Header either.
+func TestHandlerHTTPToleratesNilRequestHeader(t *testing.T) {
+	var savedBody string
+	var savedContentType string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/load":
+			_, _ = io.WriteString(w, `{"loaded":true}`)
+		case "/save":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("ReadAll(save body) error = %v", err)
+			}
+			savedBody = string(body)
+			savedContentType = r.Header.Get("Content-Type")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	sourceURL, err := url.Parse(server.URL + "/load")
+	if err != nil {
+		t.Fatal(err)
+	}
+	destURL, err := url.Parse(server.URL + "/save")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &http.Request{Method: http.MethodGet, URL: sourceURL}
+	dest := &http.Request{Method: http.MethodPost, URL: destURL}
+	handler := NewHandlerHTTP(source, dest, false)
+
+	if err := handler.SaveConfig(json.RawMessage(`{"saved":true}`)); err != nil {
+		t.Fatalf("SaveConfig() with nil Header error = %v", err)
+	}
+	if savedBody != `{"saved":true}` {
+		t.Fatalf("saved body = %q, want saved JSON", savedBody)
+	}
+	if savedContentType != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", savedContentType)
+	}
+
+	data, err := handler.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with nil Header error = %v", err)
+	}
+	if string(data) != `{"loaded":true}` {
+		t.Fatalf("LoadConfig() = %s, want loaded JSON", string(data))
+	}
+}
+
+func TestCloneHeaderNeverReturnsNil(t *testing.T) {
+	if got := cloneHeader(nil); got == nil {
+		t.Fatal("cloneHeader(nil) = nil, want an empty map")
+	}
+	src := http.Header{"X-Keep": []string{"yes"}}
+	got := cloneHeader(src)
+	if got.Get("X-Keep") != "yes" {
+		t.Fatalf("cloneHeader lost X-Keep: %#v", got)
+	}
+	got.Set("X-Keep", "changed")
+	if src.Get("X-Keep") != "yes" {
+		t.Fatalf("cloneHeader aliased the source header: %#v", src)
 	}
 }

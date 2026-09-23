@@ -66,21 +66,21 @@ func (c *Structure) isSecretKey(key string) bool {
 // environment variable. The result is sorted
 func (c *Structure) unrecognizedKeys() []string {
 	c.configMutex.RLock()
-	keys := make([]string, 0, len(c.configData))
-	for k := range c.configData {
-		keys = append(keys, k)
-	}
-	extra := cloneStringMap(c.extraKeys)
-	c.configMutex.RUnlock()
+	defer c.configMutex.RUnlock()
+	return c.unrecognizedKeysLocked()
+}
 
+// unrecognizedKeysLocked is unrecognizedKeys for callers that already hold
+// configMutex
+func (c *Structure) unrecognizedKeysLocked() []string {
 	var out []string
-	for _, k := range keys {
+	for k := range c.configData {
 		if c.plan != nil {
 			if leaf, ok := c.plan.byKey[k]; ok && leaf.info.IsAccessor {
 				continue
 			}
 		}
-		if _, ok := extra[k]; ok {
+		if _, ok := c.extraKeys[k]; ok {
 			continue
 		}
 		if c.ignoredKeys[k] {

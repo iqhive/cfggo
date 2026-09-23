@@ -2,6 +2,7 @@ package sources
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -106,5 +107,25 @@ func TestHandlerFileRejectsOversizedFiles(t *testing.T) {
 	}
 	if DefaultMaxFileBytes != 10<<20 {
 		t.Fatalf("DefaultMaxFileBytes = %d, want 10 MiB to match the HTTP and conf caps", DefaultMaxFileBytes)
+	}
+}
+
+// A caller can effectively disable the size cap by setting MaxBytes to the
+// largest int64. LoadConfig must not compute limit+1 for that value: the
+// overflow would hand io.LimitReader a negative count and silently load an
+// empty document.
+func TestHandlerFileMaxInt64MaxBytesStillLoads(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(filename, []byte(`{"port":8080}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandlerFile(filename, false)
+	h.MaxBytes = math.MaxInt64
+	data, err := h.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig with MaxBytes = MaxInt64: %v", err)
+	}
+	if string(data) != `{"port":8080}` {
+		t.Fatalf("LoadConfig with MaxBytes = MaxInt64 = %q, want the whole file", string(data))
 	}
 }

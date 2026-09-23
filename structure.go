@@ -143,6 +143,11 @@ type Structure struct {
 	// are not reported as unrecognized. Guarded by configMutex
 	extraKeys map[string]string
 
+	// lastFlagErr is the error returned by the most recent failing flag
+	// setter during a Parse, so the sentinel it carries can be re-attached to
+	// the flattened error the flag package returns. Guarded by configMutex
+	lastFlagErr error
+
 	// ignoredKeys holds configuration keys that should be exempt from the
 	// "unrecognized key" diagnostics (eg command-line-only flags). Populated via
 	// WithIgnoreKeys. It replaces the previous process-global IgnoreFlags so the
@@ -376,11 +381,19 @@ func (c *Structure) restoreInitState(snapshot initStateSnapshot) {
 	c.logger = snapshot.logger
 	c.errorWrapper = snapshot.errorWrapper
 	c.metaMutex.Unlock()
-	c.plan = snapshot.plan
 	c.parent = snapshot.parent
 	c.initialized.Store(false)
 
 	c.configMutex.Lock()
+	// When the plan was built and the defaults captured (accessors wired),
+	// the plan is kept: it is immutable and cached per type, so a retried
+	// Init produces the same one, and the default values that stay live
+	// below are still backed by it, so String/Explain/Report keep masking
+	// secret defaults and the keys are not misreported as unrecognized.
+	// Otherwise nothing was wired and the pre-Init plan (nil) is restored
+	if !planBuilt || c.defaultData == nil {
+		c.plan = snapshot.plan
+	}
 	if !planBuilt {
 		c.changed = snapshot.changed
 		c.changeVersion = snapshot.changeVersion
@@ -494,9 +507,11 @@ func (c *Structure) useSnakeCaseFieldNames() bool {
 }
 
 func (c *Structure) initLocked(parent interface{}, options ...Option) error {
+	c.validationMutex.Lock()
 	if c.validationMap == nil {
 		c.validationMap = make(map[string]validcfg.Validator)
 	}
+	c.validationMutex.Unlock()
 
 	c.metaMutex.Lock()
 	if c.logger == nil {
@@ -547,6 +562,18 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	for parentType.Kind() == reflect.Ptr {
 		parentType = parentType.Elem()
 	}
+	if parentType.Kind() != reflect.Struct {
+		return c.WrapError(nil, ErrCodeInvalidArgument, "Init: parent must be a pointer to a struct, got pointer to %s", parentType.Kind())
+	}
+	if parentType == structureType && len(c.extraKeys) == 0 {
+		// cfg.InitSelf() on a struct that embeds Structure resolves to the
+		// embedded Structure's method, so parent is the bare Structure and
+		// none of the embedding struct's accessor fields can be wired. The
+		// call succeeds with an empty configuration and the real Init then
+		// fails with ErrAlreadyInitialized, which is confusing; say so
+		c.log().Warn("cfggo: Init called with a bare cfggo.Structure as parent (InitSelf on an embedding struct?); " +
+			"no accessor fields will be wired; call cfggo.Init(cfg) or cfg.Init(cfg) with the embedding struct")
+	}
 	plan, err := planForType(parentType, c.useSnakeCaseFieldNames())
 	if err != nil {
 		return c.WrapError(err, ErrCodeInvalidArgument, "Init: unsupported configuration struct")
@@ -569,14 +596,26 @@ func (c *Structure) initLocked(parent interface{}, options ...Option) error {
 	}
 
 	if c.configHandler != nil {
-		if err := c.loadConfig(false); err != nil {
-			// A non-default source that fails to load is fatal to Init; a
-			// default source (WithDefaultFileConfig) is allowed to be absent.
-			if !c.configHandler.IsDefault() {
+		data, err := c.readConfigSource()
+		switch {
+		case err != nil && c.configHandler.IsDefault():
+			// A default source (WithDefaultFileConfig) is allowed to be
+			// absent or unreadable
+			c.log().Warn("cfggo: optional configuration source could not be loaded", "err", err)
+		case err != nil:
+			// A non-default source that fails to load is fatal to Init
+			c.log().Error("cfggo: Init failed", "err", err)
+			return err
+		default:
+			// A document that was read but is malformed or holds values the
+			// struct cannot take is a hard error for every source, default
+			// or not: an optional file may be missing, but a present file is
+			// expected to be correct. WithLenientLoad downgrades it to a
+			// warning (handled inside the loader)
+			if err := c.loadJSONConfigFromBytes(data, false); err != nil {
 				c.log().Error("cfggo: Init failed", "err", err)
 				return err
 			}
-			c.log().Warn("cfggo: optional configuration source could not be loaded", "err", err)
 		}
 	}
 
@@ -668,7 +707,17 @@ func (c *Structure) validateAtInit() error {
 // that would otherwise be silently ignored. WithStrictKeys upgrades this to an
 // error.
 func (c *Structure) checkUnrecognizedKeys() error {
-	if unrecognized := c.unrecognizedKeys(); len(unrecognized) > 0 {
+	return c.reportUnrecognizedKeys(c.unrecognizedKeys())
+}
+
+// checkUnrecognizedKeysLocked is checkUnrecognizedKeys for callers that already
+// hold configMutex (Reload runs it while building its private candidate)
+func (c *Structure) checkUnrecognizedKeysLocked() error {
+	return c.reportUnrecognizedKeys(c.unrecognizedKeysLocked())
+}
+
+func (c *Structure) reportUnrecognizedKeys(unrecognized []string) error {
+	if len(unrecognized) > 0 {
 		for _, key := range unrecognized {
 			attrs := []any{"key", key}
 			if suggestion := c.suggestKey(key); suggestion != "" {
@@ -716,19 +765,13 @@ func (c *Structure) GetLogger() cfglogger.Logger {
 	return c.log()
 }
 
-// declaredType returns the accessor return type declared for key by the parent
-// struct (the T of func() T), or nil when key is not backed by an accessor. A
-// key registered with NewFlag has no declared type and yields interface{}, so
-// the env and flag layers infer a value for it. It gives those layers a target
-// type for a key whose current value is an untyped nil, such as a func()
-// interface{} field with no default
-func (c *Structure) declaredType(key string) reflect.Type {
-	c.configMutex.RLock()
-	defer c.configMutex.RUnlock()
-	return c.declaredTypeLocked(key)
-}
-
-// declaredTypeLocked is declaredType for callers that already hold configMutex
+// declaredTypeLocked returns the accessor return type declared for key by the
+// parent struct (the T of func() T), or nil when key is not backed by an
+// accessor. A key registered with NewFlag has no declared type and yields
+// interface{}, so the env and flag layers infer a value for it. It gives those
+// layers a target type for a key whose current value is an untyped nil, such
+// as a func() interface{} field with no default. The caller must hold
+// configMutex
 func (c *Structure) declaredTypeLocked(key string) reflect.Type {
 	if c.plan != nil {
 		if leaf, ok := c.plan.byKey[key]; ok && leaf.info.IsAccessor {

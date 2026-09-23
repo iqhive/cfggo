@@ -14,7 +14,11 @@ type encodedEntry struct {
 	value any
 }
 
-// Encode renders canonical JSON as deterministic conf text.
+// Encode renders canonical JSON as deterministic conf text. Root keys are
+// cfggo's dotted configuration keys and are split into sections. A nested
+// object is flattened the same way only when every key is a plain path
+// segment; otherwise (for example a map value keyed by "a.b") it is written
+// as a single JSON value so Decode restores it unchanged
 func (c *Codec) Encode(input json.RawMessage) ([]byte, error) {
 	if int64(len(input)) > c.limits.MaxInputBytes {
 		return nil, &ParseError{Err: ErrLimitExceeded}
@@ -117,18 +121,55 @@ func flattenObject(object map[string]any, prefix []string, entries *[]encodedEnt
 			return fmt.Errorf("conf: cannot encode key %q: %w", key, err)
 		}
 		path := append(append([]string(nil), prefix...), parts...)
-		if nested, ok := object[key].(map[string]any); ok {
-			if len(nested) == 0 {
-				*entries = append(*entries, encodedEntry{path: path, value: nested})
-			} else if err := flattenObject(nested, path, entries, limits, depth+1); err != nil {
+		value := object[key]
+		if nested, ok := value.(map[string]any); ok && len(nested) != 0 && plainSegments(nested) {
+			if err := flattenObject(nested, path, entries, limits, depth+1); err != nil {
 				return err
 			}
-		} else {
-			*entries = append(*entries, encodedEntry{path: path, value: object[key]})
+			continue
 		}
+		// A leaf shares the depth budget with its path, exactly as Decode
+		// bounds a value by MaxDepth minus the key's depth, so Encode never
+		// writes a document Decode would reject
+		if nestingDepth(value) > limits.MaxDepth-len(path) {
+			return &ParseError{Err: ErrLimitExceeded}
+		}
+		*entries = append(*entries, encodedEntry{path: path, value: value})
 		if len(*entries) > limits.MaxEntries {
 			return &ParseError{Err: ErrLimitExceeded}
 		}
 	}
 	return nil
+}
+
+// plainSegments reports whether every key of a nested object is a single path
+// segment, so the object can be flattened into dotted keys and sections. A key
+// containing "." would be split into nested objects, and one parsePath rejects
+// cannot be written at all, so such an object is emitted as one JSON leaf
+func plainSegments(object map[string]any) bool {
+	for key := range object {
+		if _, err := parsePath(key, 1); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// nestingDepth counts the container levels of a decoded JSON value: 0 for a
+// scalar, 1 for [] or {}, 2 for [[]] and so on
+func nestingDepth(value any) int {
+	deepest := 0
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, child := range typed {
+			deepest = max(deepest, nestingDepth(child))
+		}
+	case []any:
+		for _, child := range typed {
+			deepest = max(deepest, nestingDepth(child))
+		}
+	default:
+		return 0
+	}
+	return deepest + 1
 }

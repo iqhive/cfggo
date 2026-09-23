@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 
 	"github.com/iqhive/cfggo/sources"
@@ -74,7 +75,13 @@ func (h *FileHandler) LoadConfig() (json.RawMessage, error) {
 		return nil, err
 	}
 	defer file.Close()
-	input, err := io.ReadAll(io.LimitReader(file, h.codec.limits.MaxInputBytes+1))
+	// Read one byte past the limit so decode can reject an oversized file,
+	// without overflowing when MaxInputBytes is math.MaxInt64
+	limit := h.codec.limits.MaxInputBytes
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	input, err := io.ReadAll(io.LimitReader(file, limit))
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"reflect"
 	"strconv"
@@ -24,6 +25,7 @@ var (
 	textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
 	timeDurationType    = reflect.TypeOf(time.Duration(0))
 	timeTimeType        = reflect.TypeOf(time.Time{})
+	byteType            = reflect.TypeOf(byte(0))
 )
 
 // wrapErr returns a formatted error, optionally wrapping it through ew.
@@ -39,7 +41,10 @@ func wrapErr(ew ErrorWrapper, cause error, code int, msg string, args ...interfa
 
 // ConvertString converts the string s to the given target type.
 // This is the canonical parser for values arriving as strings: flag values,
-// environment variables, and `default` struct tags.
+// environment variables, and `default` struct tags. A type with its own
+// UnmarshalText method (or whose pointer has one) parses itself, whatever its
+// underlying kind; time.Duration and time.Time are the exceptions and keep
+// their duration and RFC 3339 forms
 func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
 	// Empty string for bool is false (not an error), because flag packages can
 	// invoke Set("") for bare boolean flags.
@@ -68,6 +73,16 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 	// or the string itself) so callers get a typed value rather than bare text
 	if target.Kind() == reflect.Interface && target.NumMethod() == 0 {
 		return inferInterfaceValue(s), nil
+	}
+
+	// A type that parses its own text comes before the kind switch: a named
+	// type whose underlying kind is a builtin (net.IP is a byte slice,
+	// slog.Level an int, `type Colour string`) would otherwise be parsed as
+	// that kind, turning "1.2.3.4" into a base64 error and "info" into an
+	// integer one. The builtin kinds themselves have no methods and are
+	// unaffected; time.Duration and time.Time were handled above
+	if textUnmarshalerTarget(target) {
+		return unmarshalText(s, target, ew)
 	}
 
 	switch target.Kind() {
@@ -112,6 +127,12 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		if err != nil {
 			return nil, wrapErr(ew, err, 400, "cannot parse float %q: %v", s, err)
 		}
+		// ParseFloat accepts "NaN", "Inf", "infinity" and friends, but a
+		// non-finite value cannot be written back out: json.Marshal (and so
+		// Save) refuses it
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, wrapErr(ew, nil, 400, "cannot parse float %q: value must be finite", s)
+		}
 		return reflect.ValueOf(v).Convert(target).Interface(), nil
 
 	case reflect.Slice:
@@ -121,34 +142,8 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 		return convertStringToMap(s, target, ew)
 
 	default:
-		// Pointer target that itself implements TextUnmarshaler (e.g. func() *T
-		// where *T has UnmarshalText). Allocate a non-nil T before invoking the
-		// method; calling it on reflect.Zero(target) would use a nil receiver.
-		if target.Kind() == reflect.Pointer && target.Implements(textUnmarshalerType) {
-			ptr := reflect.New(target.Elem())
-			if err := ptr.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
-				return nil, wrapErr(ew, err, 400, "UnmarshalText(%v) failed: %v", target, err)
-			}
-			return ptr.Interface(), nil
-		}
-		// Prefer pointer-receiver TextUnmarshaler (the common Go convention).
-		ptrType := reflect.PointerTo(target)
-		if ptrType.Implements(textUnmarshalerType) {
-			ptr := reflect.New(target)
-			if err := ptr.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
-				return nil, wrapErr(ew, err, 400, "UnmarshalText(%v) failed: %v", target, err)
-			}
-			return ptr.Elem().Interface(), nil
-		}
-		// Value-receiver TextUnmarshaler.
-		if target.Implements(textUnmarshalerType) {
-			v := reflect.New(target).Elem()
-			if err := v.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
-				return nil, wrapErr(ew, err, 400, "UnmarshalText(%v) failed: %v", target, err)
-			}
-			return v.Interface(), nil
-		}
-		// JSON fallback for structs, maps, etc.
+		// JSON fallback for structs, pointers, arrays, non-empty interfaces
+		// and anything else without a text form of its own
 		ptr := reflect.New(target)
 		if err := json.Unmarshal([]byte(s), ptr.Interface()); err != nil {
 			return nil, wrapErr(ew, err, 400, "cannot parse %q as %v", s, target)
@@ -157,10 +152,45 @@ func ConvertString(s string, target reflect.Type, ew ErrorWrapper) (interface{},
 	}
 }
 
+// textUnmarshalerTarget reports whether values of type target parse their own
+// text: target or *target implements encoding.TextUnmarshaler. Builtin kinds
+// have no methods and never qualify. A non-empty interface type is excluded
+// even when it declares UnmarshalText itself (encoding.TextUnmarshaler, say):
+// its zero value is a nil interface with no concrete type to unmarshal into,
+// so calling the method would panic
+func textUnmarshalerTarget(target reflect.Type) bool {
+	if target.Kind() == reflect.Interface {
+		return false
+	}
+	return target.Implements(textUnmarshalerType) || reflect.PointerTo(target).Implements(textUnmarshalerType)
+}
+
+// unmarshalText parses s with the target's UnmarshalText method. For a pointer
+// target (func() *T where *T has UnmarshalText) a non-nil T is allocated and
+// its address returned; calling the method on reflect.Zero(target) would use a
+// nil receiver. Otherwise a fresh T is filled in through its address, which
+// reaches a pointer-receiver method (the common Go convention) as well as a
+// value-receiver one
+func unmarshalText(s string, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
+	elem := target
+	if target.Kind() == reflect.Pointer {
+		elem = target.Elem()
+	}
+	ptr := reflect.New(elem)
+	if err := ptr.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
+		return nil, wrapErr(ew, err, 400, "UnmarshalText(%v) failed: %v", target, err)
+	}
+	if target.Kind() == reflect.Pointer {
+		return ptr.Interface(), nil
+	}
+	return ptr.Elem().Interface(), nil
+}
+
 // inferInterfaceValue picks a Go value for text destined for an interface{}
 // slot: an int when the text is an integer literal that fits (int64 beyond
-// that), a float64 for other numbers (an integral float such as 1e3 becomes an
-// int), a bool for true/false, a decoded JSON object or array, else the string
+// that), a float64 for other finite numbers (an integral float such as 1e3
+// becomes an int; "NaN" and "Inf" stay text), a bool for true/false, a decoded
+// JSON object or array, else the string
 func inferInterfaceValue(s string) interface{} {
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 		if int64(int(i)) == i {
@@ -168,7 +198,7 @@ func inferInterfaceValue(s string) interface{} {
 		}
 		return i
 	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
+	if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
 		if isWholeFinite(f) && f >= -9223372036854775808.0 && f < 9223372036854775808.0 {
 			if i := int64(f); int64(int(i)) == i {
 				return int(i)
@@ -198,12 +228,22 @@ func inferInterfaceValue(s string) interface{} {
 func convertStringToSlice(s string, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
 	elemType := target.Elem()
 
-	// JSON array.
+	// JSON array: decoded untyped with exact numbers, then converted element
+	// by element, so `["1","2"]` reaches a []int as 1 and 2, a number in a
+	// []string becomes its literal text, and an integer beyond 2^53 reaches a
+	// []int64 or []interface{} unrounded. Text that starts with "[" is JSON or
+	// nothing: malformed JSON, or an element that does not fit the target, is
+	// an error rather than a comma-separated reading of the brackets
 	if strings.HasPrefix(s, "[") {
-		slice := reflect.New(target).Elem()
-		if err := json.Unmarshal([]byte(s), slice.Addr().Interface()); err == nil {
-			return slice.Interface(), nil
+		decoded, err := decodeJSONText(s)
+		if err != nil {
+			return nil, wrapErr(ew, err, 400, "cannot parse %q as a JSON array for %v: %v", s, target, err)
 		}
+		items, ok := decoded.([]interface{})
+		if !ok {
+			return nil, wrapErr(ew, nil, 400, "cannot parse %q as a JSON array for %v", s, target)
+		}
+		return convertSlice(reflect.ValueOf(items), target, ew)
 	}
 
 	if s == "" {
@@ -247,8 +287,34 @@ func convertStringToBytes(s string, target reflect.Type, ew ErrorWrapper) (inter
 		}
 	}
 	out := reflect.MakeSlice(target, len(decoded), len(decoded))
-	reflect.Copy(out, reflect.ValueOf(decoded))
+	if target.Elem() == byteType {
+		reflect.Copy(out, reflect.ValueOf(decoded))
+		return out.Interface(), nil
+	}
+	// reflect.Copy requires identical element types, so a slice of a named
+	// byte type (type B byte; []B) is filled one element at a time
+	for i, b := range decoded {
+		out.Index(i).SetUint(uint64(b))
+	}
 	return out.Interface(), nil
+}
+
+// decodeJSONText decodes s, which starts with "[" or "{", into an untyped
+// container ([]interface{} or map[string]interface{}) with numbers kept exact:
+// a json.Decoder with UseNumber followed by NormalizeJSONNumbers, so an
+// integer beyond 2^53 is not rounded through float64 on the way to a typed
+// element. Data after the value is an error, as it is for json.Unmarshal
+func decodeJSONText(s string) (interface{}, error) {
+	var v interface{}
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("unexpected data after the JSON value")
+	}
+	return NormalizeJSONNumbers(v)
 }
 
 // convertStringToMap parses s as a JSON object or "k:v,k:v" pairs.
@@ -256,14 +322,21 @@ func convertStringToMap(s string, target reflect.Type, ew ErrorWrapper) (interfa
 	keyType := target.Key()
 	valType := target.Elem()
 
-	// JSON object - A map made with reflect.MakeMap is not addressable, so
-	// unmarshal into a pointer to a fresh map value (reflect.New) instead
-	// then return the dereferenced map
+	// JSON object: decoded untyped with exact numbers, then converted entry by
+	// entry, so `{"a":"1"}` reaches a map[string]int as 1 and an integer beyond
+	// 2^53 reaches a map[string]interface{} unrounded. Text that starts with
+	// "{" is JSON or nothing: malformed JSON, or an entry that does not fit the
+	// target, is an error rather than a key:value reading of the braces
 	if strings.HasPrefix(s, "{") {
-		ptr := reflect.New(target)
-		if err := json.Unmarshal([]byte(s), ptr.Interface()); err == nil {
-			return ptr.Elem().Interface(), nil
+		decoded, err := decodeJSONText(s)
+		if err != nil {
+			return nil, wrapErr(ew, err, 400, "cannot parse %q as a JSON object for %v: %v", s, target, err)
 		}
+		entries, ok := decoded.(map[string]interface{})
+		if !ok {
+			return nil, wrapErr(ew, nil, 400, "cannot parse %q as a JSON object for %v", s, target)
+		}
+		return convertMap(reflect.ValueOf(entries), target, ew)
 	}
 
 	// "key:val,key:val" format.
@@ -354,18 +427,10 @@ func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (inte
 		return ConvertString(reflect.ValueOf(value).String(), target, ew)
 	}
 
-	// time.Duration target with a numeric source.
-	if target == timeDurationType {
-		src := reflect.ValueOf(value)
-		switch src.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			return time.Duration(src.Int()), nil
-		case reflect.Float32, reflect.Float64:
-			return time.Duration(int64(src.Float())), nil
-		}
-	}
-
-	// Numeric to numeric.
+	// Numeric to numeric. This covers a time.Duration target too (its kind is
+	// int64), so a float source gets the same NaN, infinity, whole-number and
+	// range checks as for any integer target instead of storing whatever
+	// int64(f) happens to produce
 	if isNumeric(srcType) && isNumeric(target) {
 		return convertNumeric(reflect.ValueOf(value), target)
 	}
@@ -375,17 +440,34 @@ func ConvertValue(value interface{}, target reflect.Type, ew ErrorWrapper) (inte
 		return convertSlice(reflect.ValueOf(value), target, ew)
 	}
 
+	// Slice to array, or to a pointer to one, element-wise. reflect.Convert
+	// accepts both pairings but panics when the slice is shorter than the
+	// array, so the length is checked here and a mismatch is an error rather
+	// than a truncated or zero-padded array
+	if srcType.Kind() == reflect.Slice {
+		switch {
+		case target.Kind() == reflect.Array:
+			return convertArray(reflect.ValueOf(value), target, ew)
+		case target.Kind() == reflect.Pointer && target.Elem().Kind() == reflect.Array:
+			arr, err := convertArray(reflect.ValueOf(value), target.Elem(), ew)
+			if err != nil {
+				return nil, err
+			}
+			ptr := reflect.New(target.Elem())
+			ptr.Elem().Set(reflect.ValueOf(arr))
+			return ptr.Interface(), nil
+		}
+	}
+
 	// Map to map (element-wise, e.g. map[string]interface{} to map[string]string).
 	if srcType.Kind() == reflect.Map && target.Kind() == reflect.Map {
 		return convertMap(reflect.ValueOf(value), target, ew)
 	}
 
-	// Standard reflect conversion (handles same-kind numeric aliases, etc.).
-	// reflect treats integer -> string as a valid conversion that yields the
-	// rune with that code point ("A" for 65), which is never what a
-	// configuration caller means, so that pairing is excluded and falls through
-	// to the (failing) JSON round-trip below
-	if srcType.ConvertibleTo(target) && !(isInteger(srcType) && target.Kind() == reflect.String) {
+	// Standard reflect conversion (handles same-kind numeric aliases, etc.),
+	// limited to the pairings that are both safe and meaningful here; the
+	// rest fall through to the (usually failing) JSON round-trip below
+	if convertible(srcType, target) {
 		return reflect.ValueOf(value).Convert(target).Interface(), nil
 	}
 
@@ -431,6 +513,32 @@ func isInteger(t reflect.Type) bool {
 		return true
 	}
 	return false
+}
+
+// convertible reports whether reflect.Value.Convert from src to target is a
+// conversion ConvertValue may hand to reflect. ConvertibleTo also admits the
+// pairings that must never reach Convert: an integer to a string, which yields
+// the rune with that code point ("A" for 65) rather than the digits, which is
+// never what a configuration caller means; and a slice to an array or to an
+// array pointer, the only conversions Go defines to panic at run time (when
+// the slice is shorter than the array). Both are checked by kind here rather
+// than recovered from
+func convertible(src, target reflect.Type) bool {
+	if !src.ConvertibleTo(target) {
+		return false
+	}
+	if isInteger(src) && target.Kind() == reflect.String {
+		return false
+	}
+	if src.Kind() == reflect.Slice {
+		if target.Kind() == reflect.Array {
+			return false
+		}
+		if target.Kind() == reflect.Pointer && target.Elem().Kind() == reflect.Array {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeJSONNumber converts a json.Number literal to the Go value cfggo
@@ -611,6 +719,26 @@ func convertSlice(src reflect.Value, target reflect.Type, ew ErrorWrapper) (inte
 		elem, err := ConvertValue(src.Index(i).Interface(), elemType, ew)
 		if err != nil {
 			return nil, wrapErr(ew, err, 400, "cannot convert slice[%d]: %v", i, err)
+		}
+		out.Index(i).Set(valueForType(elem, elemType))
+	}
+	return out.Interface(), nil
+}
+
+// convertArray fills a fresh array of type target from the elements of the
+// slice src, converting each to the array's element type. The lengths must
+// match exactly: a shorter slice would leave zero-valued elements and a longer
+// one would silently drop values
+func convertArray(src reflect.Value, target reflect.Type, ew ErrorWrapper) (interface{}, error) {
+	if src.Len() != target.Len() {
+		return nil, wrapErr(ew, nil, 400, "cannot convert %v of length %d to %v: length must be %d", src.Type(), src.Len(), target, target.Len())
+	}
+	elemType := target.Elem()
+	out := reflect.New(target).Elem()
+	for i := 0; i < src.Len(); i++ {
+		elem, err := ConvertValue(src.Index(i).Interface(), elemType, ew)
+		if err != nil {
+			return nil, wrapErr(ew, err, 400, "cannot convert array[%d]: %v", i, err)
 		}
 		out.Index(i).Set(valueForType(elem, elemType))
 	}

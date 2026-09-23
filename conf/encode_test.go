@@ -63,3 +63,54 @@ func TestEncodeRejectsInvalidInputAndLimits(t *testing.T) {
 		t.Fatalf("ambiguous path error = %v, want ErrDuplicateKey", err)
 	}
 }
+
+func TestEncodeKeepsNonPathKeysAsJSONLeaf(t *testing.T) {
+	// Root keys are cfggo's dotted config keys and are split into sections. A
+	// nested object whose keys are not plain path segments (a map value keyed
+	// by "a.b", or by text parsePath rejects) is written as one JSON value so
+	// Decode restores it unchanged instead of splitting its keys
+	input := json.RawMessage(`{"labels":{"a.b":1,"plain":"x"},"database.tags":{"host#1":true},"database.pool":{"size":12},"mixed":{"ok":{"k.v":null}}}`)
+	got, err := Encode(input)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	want := "labels={\"a.b\":1,\"plain\":\"x\"}\n\n" +
+		"[database]\ntags={\"host\\u00231\":true}\n\n" +
+		"[database.pool]\nsize=12\n\n" +
+		"[mixed]\nok={\"k.v\":null}\n"
+	if string(got) != want {
+		t.Fatalf("Encode output:\n%s\nwant:\n%s", got, want)
+	}
+
+	decoded, err := Decode(got)
+	if err != nil {
+		t.Fatalf("Decode encoded output: %v", err)
+	}
+	var after any
+	if err := json.Unmarshal(decoded, &after); err != nil {
+		t.Fatal(err)
+	}
+	wantDecoded := map[string]any{
+		"labels": map[string]any{"a.b": float64(1), "plain": "x"},
+		"database": map[string]any{
+			"tags": map[string]any{"host#1": true},
+			"pool": map[string]any{"size": float64(12)},
+		},
+		"mixed": map[string]any{"ok": map[string]any{"k.v": nil}},
+	}
+	if !reflect.DeepEqual(after, wantDecoded) {
+		t.Fatalf("round trip = %#v, want %#v", after, wantDecoded)
+	}
+	again, err := Encode(decoded)
+	if err != nil {
+		t.Fatalf("Encode decoded output: %v", err)
+	}
+	if string(again) != want {
+		t.Fatalf("second Encode differs:\n%s\nwant:\n%s", again, want)
+	}
+
+	// Root keys are still validated as paths
+	if _, err := Encode(json.RawMessage(`{"a#b":1}`)); !errors.Is(err, ErrSyntax) {
+		t.Fatalf("root key error = %v, want ErrSyntax", err)
+	}
+}

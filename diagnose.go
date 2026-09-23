@@ -356,7 +356,7 @@ func (c *Structure) renderHuman(withSource bool) string {
 		if c.isSecretKey(key) {
 			values[key] = maskedValue
 		} else {
-			values[key] = fmt.Sprintf("%v", value)
+			values[key] = displayValue(value)
 		}
 		if withSource {
 			srcs[key] = c.provenance[key]
@@ -403,6 +403,22 @@ func (c *Structure) renderHuman(withSource bool) string {
 	}
 	tw.Flush()
 	return sb.String()
+}
+
+// displayValue renders a configuration value for the human-readable dumps.
+// A pointer value (a func() *T field) is shown as what it points to rather
+// than as a memory address, which tells the reader nothing
+func displayValue(value interface{}) string {
+	if value == nil {
+		return "<nil>"
+	}
+	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return "<nil>"
+		}
+		return fmt.Sprintf("%+v", rv.Elem().Interface())
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 // formatSourceChain joins a source chain with arrows, eg "default->env->set"

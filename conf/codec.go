@@ -17,6 +17,9 @@ const (
 )
 
 // Limits bounds parser and encoder resource use. Zero fields use defaults.
+// MaxLines counts lines, so a trailing newline does not add an empty one.
+// MaxDepth bounds a key's path segments plus its value's container nesting
+// together, which is the depth of the canonical JSON.
 type Limits struct {
 	MaxInputBytes  int64
 	MaxOutputBytes int64

@@ -12,23 +12,28 @@ import (
 	iconvert "github.com/iqhive/cfggo/internal/convert"
 )
 
-func (c *Structure) loadConfig(alreadyLocked bool) error {
+// readConfigSource fetches the raw document from the configured handler. It
+// performs the (possibly slow) I/O without holding any cfggo lock so Reload can
+// read a file or HTTP endpoint first and apply the result under the lock in one
+// short critical section
+func (c *Structure) readConfigSource() ([]byte, error) {
 	if c.configHandler == nil {
-		return c.WrapError(ErrNoHandler, 400, "")
+		return nil, c.WrapError(ErrNoHandler, 400, "")
 	}
 
 	src := c.handlerSource()
 	data, err := c.configHandler.LoadConfig()
 	if err != nil {
-		return c.WrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument,
+		return nil, c.WrapError(wrapKind(ErrSource, err), ErrCodeInvalidArgument,
 			"failed to load configuration from %s source", src)
 	}
-
-	return c.loadJSONConfigFromBytes(data, alreadyLocked)
+	return data, nil
 }
 
 func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) error {
-	if len(data) == 0 {
+	if len(bytes.TrimSpace(data)) == 0 {
+		// A file holding only whitespace (or a trailing newline) is as empty
+		// as a zero-length one
 		c.log().Debug("cfggo: empty or nil config data provided")
 		return nil
 	}
@@ -72,9 +77,15 @@ func (c *Structure) loadJSONConfigFromBytes(data []byte, alreadyLocked bool) err
 			if value == nil {
 				// An explicit JSON null clears the value. For a known key keep
 				// the typed zero value so accessors and flags stay correctly
-				// typed; otherwise store a bare nil
-				if existing, ok := c.configData[fullKey]; ok && existing != nil {
-					c.configData[fullKey] = reflect.Zero(reflect.TypeOf(existing)).Interface()
+				// typed; otherwise store a bare nil. A null in place of a
+				// whole nested section ({"db": null}) simply supplies no
+				// values for that section: it is not a key of its own
+				if _, ok := c.configData[fullKey]; !ok && c.isGroupPrefix(fullKey) {
+					continue
+				}
+				existing, ok := c.configData[fullKey]
+				if t := c.storeTypeLocked(fullKey, existing); ok && t != nil {
+					c.configData[fullKey] = reflect.Zero(t).Interface()
 				} else {
 					c.configData[fullKey] = nil
 				}
@@ -368,6 +379,15 @@ func (c *Structure) isAccessorKey(key string) bool {
 	}
 	leaf, ok := c.plan.byKey[key]
 	return ok && leaf.info.IsAccessor
+}
+
+// isGroupPrefix reports whether key names a nested configuration group, ie
+// some accessor key is nested beneath it ("db" for "db.host")
+func (c *Structure) isGroupPrefix(key string) bool {
+	if c.plan == nil {
+		return false
+	}
+	return c.plan.groups[key]
 }
 
 func (c *Structure) saveConfig() error {

@@ -46,6 +46,10 @@ jobs:
       - name: Run race detector
         run: go test -race -count=1 ./...
 
+      - name: README hero fixtures and generated SVG
+        if: matrix.go-version == 'stable'
+        run: make hero-check
+
   quality:
     name: Formatting, vet, lint, coverage
     runs-on: ubuntu-latest

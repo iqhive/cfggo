@@ -1,5 +1,9 @@
 # cfggo
 
+<p align="center">
+  <img src="docs/hero.svg" width="836" alt="Animated cfggo terminal: a hexadecimal wordmark resolves, typed configuration follows default, JSON, environment and flag precedence, and live reload updates port and debug accessors. Closes with cfggo and the IQ Hive logo.">
+</p>
+
 > **Type-safe, hot-reloadable configuration for Go. No untyped lookups, no boilerplate.**
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/iqhive/cfggo.svg)](https://pkg.go.dev/github.com/iqhive/cfggo)

@@ -1,6 +1,6 @@
 # cfggo README hero
 
-This example uses [iqhive/banner v1.0.0](https://github.com/iqhive/banner) for
+This example uses [iqhive/banner v1.0.4](https://github.com/iqhive/banner) for
 wordmark glyphs and spacing, the entire seeded intro sweep, themes, cell/frame
 model, SVG rendering and terminal playback. The root module
 and its consumer dependencies are unchanged; this tooling has its own module.

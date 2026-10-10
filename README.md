@@ -10,7 +10,7 @@
 [![golangci-lint](https://img.shields.io/badge/golangci--lint-passing-brightgreen.svg)](https://github.com/iqhive/cfggo/actions/workflows/ci.yml)
 [![CI](https://github.com/iqhive/cfggo/actions/workflows/ci.yml/badge.svg)](https://github.com/iqhive/cfggo/actions)
 [![Coverage](https://codecov.io/g/iqhive/cfggo/branch/main/graph/badge.svg)](https://codecov.io/gh/iqhive/cfggo)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/iqhive/cfggo)](https://github.com/iqhive/cfggo/releases)
 
 **Status:** `v1.x` · production-ready · follows [Semantic Versioning](https://semver.org).
@@ -1398,7 +1398,7 @@ Contributions are welcome! If you find any issues or have suggestions for new fe
 
 ## License
 
-`cfggo` is licensed under the [MIT License](LICENSE).
+`cfggo` is licensed under the [Apache License, Version 2.0](LICENSE).
 
 ## Acknowledgments
 
@@ -1406,3 +1406,15 @@ Contributions are welcome! If you find any issues or have suggestions for new fe
 package. It aims to provide a more lightweight and flexible alternative with
 additional features like type safety, value provenance, and custom configuration
 handlers.
+
+## Licence and trademarks
+
+The first-party software in this repository is licensed under the
+[Apache License, Version 2.0](LICENSE). Third-party components and any
+files with separate licence notices remain subject to their respective
+terms.
+
+The Apache licence does not grant general permission to use IQ Hive
+trademarks. See [Trademarks](TRADEMARKS.md).
+
+See [Contributing](CONTRIBUTING.md) for contribution terms and guidance.

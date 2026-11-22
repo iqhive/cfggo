@@ -594,8 +594,12 @@ func (c *Structure) ensureFlagSetLocked() {
 //	invalid boolean value "RAW" for -name: ...
 //
 // The quoted group accepts Go escape sequences so a value containing quotes
-// or backslashes is still matched as a whole
-var flagValuePattern = regexp.MustCompile(`invalid (?:boolean )?value ("(?:[^"\\]|\\.)*") for (?:flag )?-([^\s:=]+):`)
+// or backslashes is still matched as a whole. The flag name is captured up to
+// the ": " the flag package writes after it, so a name that itself holds a ':'
+// or a space (both legal in a flag name) is matched whole and still recognised
+// as a secret; a character-class name match would truncate at the first ':' or
+// space and leave such a secret's raw value unredacted
+var flagValuePattern = regexp.MustCompile(`invalid (?:boolean )?value ("(?:[^"\\]|\\.)*") for (?:flag )?-(.*?): `)
 
 // redactFlagText replaces the raw value in any flag-package error text that
 // refers to a secret-tagged key of this configuration with the mask used

@@ -192,3 +192,71 @@ func TestHelpFlagReturnsErrHelpWithUsage(t *testing.T) {
 		})
 	}
 }
+
+// specialNameSecretConfig holds secret keys whose flag names contain characters
+// the standard flag package permits but which a character-class name match
+// truncates at: a colon and a space. Redaction must recognise these names
+// exactly rather than parsing the name out of the error text.
+type specialNameSecretConfig struct {
+	Structure
+	ColonKey func() int `cfggo:"pin:code" secret:"true"`
+	SpaceKey func() int `cfggo:"my pass" secret:"true"`
+	PlainKey func() int `cfggo:"password" secret:"true"`
+	Ordinary func() int `cfggo:"port" default:"8080"`
+}
+
+// TestSecretFlagValueRedactedForSpecialCharacterKeyNames drives a real parse
+// failure for each secret key shape and asserts the rejected value never
+// reaches the flag set output or the error a host passes through
+// RedactFlagError. Before the fix, a secret whose flag name contained ':' or
+// whitespace was not recognised as a secret and its raw value leaked.
+func TestSecretFlagValueRedactedForSpecialCharacterKeyNames(t *testing.T) {
+	for _, key := range []string{"password", "pin:code", "my pass"} {
+		t.Run(key, func(t *testing.T) {
+			fs := flag.NewFlagSet("t", flag.ContinueOnError)
+			var out bytes.Buffer
+			fs.SetOutput(&out)
+			cfg := &specialNameSecretConfig{}
+			if err := cfg.Init(cfg, WithoutEnv(), WithFlagSet(fs)); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			parseErr := fs.Parse([]string{"--" + key + "=" + rawFlagSecret})
+			if parseErr == nil {
+				t.Fatalf("Parse succeeded, want a conversion failure for %q", key)
+			}
+			if strings.Contains(out.String(), rawFlagSecret) {
+				t.Errorf("flag set output leaks the raw secret for %q: %s", key, out.String())
+			}
+			redacted := cfg.RedactFlagError(parseErr)
+			if strings.Contains(redacted.Error(), rawFlagSecret) {
+				t.Errorf("RedactFlagError leaks the raw secret for %q: %s", key, redacted)
+			}
+			if !strings.Contains(redacted.Error(), `"`+maskedValue+`"`) {
+				t.Errorf("RedactFlagError = %q, want the rejected value masked", redacted)
+			}
+		})
+	}
+}
+
+// TestRedactFlagTextMatchesSecretFlagNamesExactly pins redactFlagText directly:
+// each secret flag name (however exotic) is redacted, while unknown and
+// non-secret flags are left untouched.
+func TestRedactFlagTextMatchesSecretFlagNamesExactly(t *testing.T) {
+	cfg := &specialNameSecretConfig{}
+	if err := cfg.Init(cfg, WithoutFlags(), WithoutEnv()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cases := []struct{ in, want string }{
+		{`invalid value "v" for flag -pin:code: bad`, `invalid value "****" for flag -pin:code: bad`},
+		{`invalid value "v" for flag -my pass: bad`, `invalid value "****" for flag -my pass: bad`},
+		{`invalid value "v" for flag -password: bad`, `invalid value "****" for flag -password: bad`},
+		{`invalid boolean value "v" for -pin:code: bad`, `invalid boolean value "****" for -pin:code: bad`},
+		{`invalid value "v" for flag -port: bad`, `invalid value "v" for flag -port: bad`},
+		{`invalid value "v" for flag -notasecret: bad`, `invalid value "v" for flag -notasecret: bad`},
+	}
+	for _, tc := range cases {
+		if got := cfg.redactFlagText(tc.in); got != tc.want {
+			t.Errorf("redactFlagText(%q)\n got: %q\nwant: %q", tc.in, got, tc.want)
+		}
+	}
+}

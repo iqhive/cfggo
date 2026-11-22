@@ -3,6 +3,8 @@ package cfggo
 import (
 	"encoding/json"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +87,38 @@ func FuzzRendersSurviveArbitraryDocuments(f *testing.F) {
 		_ = cfg.DiagnoseData().String()
 		_ = cfg.Report()
 		_ = cfg.ExplainKey("data")
+	})
+}
+
+// FuzzRedactFlagTextMasksSecretValues drives the flag-error redactor with
+// adversarial rejected values -- arbitrary text including quotes, backslashes
+// and substrings that themselves look like flag errors -- across secret flags
+// of several name shapes (plain, ':' and ' ' included). The security invariant
+// is that a secret flag's rejected value is always replaced by the mask, while
+// a non-secret flag keeps its value. Before the fix for flag names holding ':'
+// or whitespace, such a secret's raw value leaked here.
+func FuzzRedactFlagTextMasksSecretValues(f *testing.F) {
+	cfg := &specialNameSecretConfig{}
+	if err := cfg.Init(cfg, WithoutFlags(), WithoutEnv()); err != nil {
+		f.Fatal(err)
+	}
+	for _, seed := range []string{"", "hunter2", `a"b`, `a\b`, "a\nb", `x for flag -password: y`, "S3CR3T"} {
+		f.Add(seed, "bad value")
+	}
+	f.Fuzz(func(t *testing.T, value, other string) {
+		for _, name := range []string{"password", "pin:code", "my pass", "port"} {
+			secret := name != "port"
+			rawPrefix := "invalid value " + strconv.Quote(value) + " for flag -" + name
+			msg := rawPrefix + ": " + other
+			got := cfg.redactFlagText(msg)
+			if secret {
+				maskedPrefix := "invalid value \"" + maskedValue + "\" for flag -" + name
+				if !strings.HasPrefix(got, maskedPrefix) {
+					t.Fatalf("secret value not masked for %q:\n msg: %q\n got: %q", name, msg, got)
+				}
+			} else if !strings.HasPrefix(got, rawPrefix) {
+				t.Fatalf("non-secret value not preserved for %q:\n msg: %q\n got: %q", name, msg, got)
+			}
+		}
 	})
 }

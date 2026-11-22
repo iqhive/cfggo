@@ -752,11 +752,15 @@ func convertMap(src reflect.Value, target reflect.Type, ew ErrorWrapper) (interf
 		if err != nil {
 			return nil, err
 		}
+		convertedKey := valueForType(ck, target.Key())
+		if out.MapIndex(convertedKey).IsValid() {
+			return nil, wrapErr(ew, nil, 400, "duplicate map key after conversion to %v", target.Key())
+		}
 		cv, err := ConvertValue(src.MapIndex(k).Interface(), target.Elem(), ew)
 		if err != nil {
 			return nil, err
 		}
-		out.SetMapIndex(valueForType(ck, target.Key()), valueForType(cv, target.Elem()))
+		out.SetMapIndex(convertedKey, valueForType(cv, target.Elem()))
 	}
 	return out.Interface(), nil
 }

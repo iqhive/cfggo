@@ -1,6 +1,7 @@
 package cfggo
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -122,5 +123,29 @@ func TestModuleHasNoThirdPartyRequires(t *testing.T) {
 		case inRequireBlock:
 			t.Errorf("go.mod has a third-party require: %q", line)
 		}
+	}
+}
+
+// GO-2026-6859 is a net/http server crash fixed in Go 1.27.4. Keep the
+// repository's development and security-scan toolchain on a fixed standard
+// library without raising the minimum Go version required from library users.
+func TestToolchainIncludesHTTPHeaderRaceFix(t *testing.T) {
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	var toolchain string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "toolchain" {
+			toolchain = fields[1]
+		}
+	}
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(toolchain, "go%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatalf("go.mod toolchain %q is not a concrete patched release: %v", toolchain, err)
+	}
+	if major < 1 || major == 1 && (minor < 27 || minor == 27 && patch < 4) {
+		t.Fatalf("go.mod toolchain %s is affected by GO-2026-6859; use go1.27.4 or newer", toolchain)
 	}
 }

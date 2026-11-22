@@ -682,33 +682,64 @@ func convertForRead(raw interface{}, target reflect.Type) (interface{}, bool) {
 	return converted, true
 }
 
+// cloneVisit identifies a mutable container by its runtime identity. Slice
+// length and capacity distinguish different views over the same backing array.
+type cloneVisit struct {
+	typ reflect.Type
+	ptr uintptr
+	len int
+	cap int
+}
+
 func cloneMutableReflectValue(v reflect.Value) reflect.Value {
+	return cloneMutableReflectValueSeen(v, make(map[cloneVisit]reflect.Value))
+}
+
+// cloneMutableReflectValueSeen deep-clones mutable values while preserving
+// cycles. Registering each clone before descending prevents self-referential
+// maps, slices, and pointers from recursing until the process runs out of stack.
+func cloneMutableReflectValueSeen(v reflect.Value, seen map[cloneVisit]reflect.Value) reflect.Value {
 	switch v.Kind() {
 	case reflect.Map:
 		if v.IsNil() {
 			return v
 		}
+		visit := cloneVisit{typ: v.Type(), ptr: v.Pointer()}
+		if cp, ok := seen[visit]; ok {
+			return cp
+		}
 		cp := reflect.MakeMapWithSize(v.Type(), v.Len())
+		seen[visit] = cp
 		iter := v.MapRange()
 		for iter.Next() {
-			cp.SetMapIndex(iter.Key(), cloneMutableReflectValue(iter.Value()))
+			cp.SetMapIndex(iter.Key(), cloneMutableReflectValueSeen(iter.Value(), seen))
 		}
 		return cp
 	case reflect.Slice:
 		if v.IsNil() {
 			return v
 		}
+		visit := cloneVisit{typ: v.Type(), ptr: v.Pointer(), len: v.Len(), cap: v.Cap()}
+		if cp, ok := seen[visit]; ok {
+			return cp
+		}
 		cp := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		seen[visit] = cp
 		for i := 0; i < v.Len(); i++ {
-			cp.Index(i).Set(cloneMutableReflectValue(v.Index(i)))
+			cp.Index(i).Set(cloneMutableReflectValueSeen(v.Index(i), seen))
 		}
 		return cp
 	case reflect.Pointer:
 		if v.IsNil() {
 			return v
 		}
+		visit := cloneVisit{typ: v.Type(), ptr: v.Pointer()}
+		if cp, ok := seen[visit]; ok {
+			return cp
+		}
 		cp := reflect.New(v.Type().Elem())
-		cp.Elem().Set(cloneMutableReflectValue(v.Elem()))
+		seen[visit] = cp
+		cp.Elem().Set(cloneMutableReflectValueSeen(v.Elem(), seen))
 		return cp
 	case reflect.Interface:
 		// A container held behind an interface (eg the nested objects and
@@ -720,11 +751,11 @@ func cloneMutableReflectValue(v reflect.Value) reflect.Value {
 			return v
 		}
 		if elem := v.Elem(); elem.Kind() == reflect.Map || elem.Kind() == reflect.Slice {
-			return cloneMutableReflectValue(elem)
+			return cloneMutableReflectValueSeen(elem, seen)
 		}
 		return v
 	case reflect.Struct:
-		if cp, cloned := cloneStructValue(v); cloned {
+		if cp, cloned := cloneStructValue(v, seen); cloned {
 			return cp
 		}
 		return v
@@ -739,7 +770,7 @@ func cloneMutableReflectValue(v reflect.Value) reflect.Value {
 // pointer that aliases live config. Unexported fields are copied as-is because
 // reflection cannot assign to them. It reports false, returning v itself, when no field
 // needed cloning, which keeps plain value structs (time.Time, ...) free
-func cloneStructValue(v reflect.Value) (reflect.Value, bool) {
+func cloneStructValue(v reflect.Value, seen map[cloneVisit]reflect.Value) (reflect.Value, bool) {
 	t := v.Type()
 	var out reflect.Value
 	for i := 0; i < t.NumField(); i++ {
@@ -753,7 +784,7 @@ func cloneStructValue(v reflect.Value) (reflect.Value, bool) {
 			if fv.IsNil() {
 				continue
 			}
-			cp = cloneMutableReflectValue(fv)
+			cp = cloneMutableReflectValueSeen(fv, seen)
 		case reflect.Interface:
 			if fv.IsNil() {
 				continue
@@ -761,9 +792,9 @@ func cloneStructValue(v reflect.Value) (reflect.Value, bool) {
 			if elem := fv.Elem(); elem.Kind() != reflect.Map && elem.Kind() != reflect.Slice {
 				continue
 			}
-			cp = cloneMutableReflectValue(fv)
+			cp = cloneMutableReflectValueSeen(fv, seen)
 		case reflect.Struct:
-			nested, cloned := cloneStructValue(fv)
+			nested, cloned := cloneStructValue(fv, seen)
 			if !cloned {
 				continue
 			}

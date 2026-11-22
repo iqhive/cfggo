@@ -702,7 +702,11 @@ func (g *Group) readDocument(tolerateFailure bool) (map[string]json.RawMessage, 
 		return nil, nil
 	}
 	var document map[string]json.RawMessage
-	if err := json.Unmarshal(data, &document); err != nil {
+	err = rejectDuplicateJSONKeys(data)
+	if err == nil {
+		err = json.Unmarshal(data, &document)
+	}
+	if err != nil {
 		if tolerateFailure {
 			g.log().Warn("cfggo: ignoring malformed group configuration JSON", "err", err)
 			return nil, nil

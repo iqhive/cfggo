@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"sort"
 	"strings"
@@ -223,8 +224,14 @@ func (c *Structure) persistableJSONBytes() ([]byte, error) {
 // convert.NormalizeJSONNumbers) so integers beyond 2^53 are not silently
 // rounded through float64 on their way to an int64/uint64 field, while
 // ordinary values keep the float64 dynamic type encoding/json would produce.
-// Like json.Unmarshal, trailing data after the top-level value is an error
+// Like json.Unmarshal, trailing data after the top-level value is an error.
+// Duplicate object keys are rejected at every depth instead of silently
+// letting the last value win, which could make different JSON parsers disagree
+// about security-sensitive configuration.
 func decodeJSONConfig(data []byte) (map[string]interface{}, error) {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return nil, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	var rawConfig map[string]interface{}
@@ -240,6 +247,69 @@ func decodeJSONConfig(data []byte) (map[string]interface{}, error) {
 	}
 	rawConfig, _ = normalised.(map[string]interface{})
 	return rawConfig, nil
+}
+
+// rejectDuplicateJSONKeys scans a complete JSON value without materialising
+// it, rejecting repeated names in every object. encoding/json otherwise keeps
+// only the last occurrence, hiding the ambiguity before cfggo can detect it.
+func rejectDuplicateJSONKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := scanUniqueJSONValue(dec); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			return errors.New("invalid character after top-level value")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanUniqueJSONValue(dec *json.Decoder) error {
+	token, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		seen := make(map[string]struct{})
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("duplicate JSON object key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := scanUniqueJSONValue(dec); err != nil {
+				return err
+			}
+		}
+		_, err = dec.Token()
+		return err
+	case '[':
+		for dec.More() {
+			if err := scanUniqueJSONValue(dec); err != nil {
+				return err
+			}
+		}
+		_, err = dec.Token()
+		return err
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delim)
+	}
 }
 
 // startAutoSave launches, when WithAutoSave(ctx) was supplied, a single

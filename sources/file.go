@@ -165,5 +165,7 @@ func resolveSaveTarget(filename string) (string, error) {
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(filename), target)
 	}
-	return target, nil
+	// EvalSymlinks stops at the first missing component. Continue through the
+	// remaining chain so every link survives and the final target is created.
+	return resolveSaveTarget(target)
 }

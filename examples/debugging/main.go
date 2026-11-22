@@ -120,7 +120,7 @@ func showSecretRedaction() {
 
 func writeFile(dir, name, data string) string {
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		panic(err)
 	}
 	return path

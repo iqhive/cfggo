@@ -25,7 +25,7 @@ func (d *dynamicVar) Set(s string) error {
 		return fmt.Errorf("dynamicVar has nil type")
 	}
 
-	value, err := iconvert.ConvertString(s, d.want, d.config)
+	value, err := iconvert.ConvertString(s, d.want, d.config.convertWrapper(d.name))
 	if err != nil {
 		src := d.source
 		if src == SourceUnknown {

@@ -72,6 +72,17 @@ func TestInitHelpers(t *testing.T) {
 	}
 }
 
+func TestWriteFileCreatesOwnerOnlyConfig(t *testing.T) {
+	path := writeFile(t.TempDir(), "secret.json", `{"api_key":"secret"}`)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("writeFile mode = %04o, want 0600", got)
+	}
+}
+
 func TestShowInitErrorSuccessPath(t *testing.T) {
 	output := captureStdout(t, func() {
 		showInitError("ok", nil)

@@ -11,9 +11,12 @@ import (
 	"time"
 )
 
-// maxHTTPResponseBytes bounds the size of a configuration payload read from an
-// HTTP source so a misbehaving endpoint cannot exhaust process memory.
-const maxHTTPResponseBytes = 10 << 20 // 10 MiB
+// HTTP configuration bodies are bounded in both directions so a misbehaving
+// endpoint or caller-supplied body cannot exhaust process memory.
+const (
+	maxHTTPResponseBytes = 10 << 20 // 10 MiB
+	maxHTTPRequestBytes  = maxHTTPResponseBytes
+)
 
 // defaultHTTPClient is used when no custom Client is supplied. Unlike
 // http.DefaultClient it carries a timeout so a hung config endpoint cannot
@@ -59,20 +62,27 @@ func snapshotRequestBody(req *http.Request) ([]byte, error) {
 	if req == nil || req.Body == nil {
 		return nil, nil
 	}
+
+	body := req.Body
 	if req.GetBody != nil {
-		body, err := req.GetBody()
+		var err error
+		body, err = req.GetBody()
 		if err != nil {
 			return nil, err
 		}
-		defer body.Close()
-		return io.ReadAll(body)
 	}
-	data, err := io.ReadAll(req.Body)
+	defer body.Close()
+
+	data, err := io.ReadAll(io.LimitReader(body, maxHTTPRequestBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	req.Body.Close()
-	req.Body = io.NopCloser(bytes.NewReader(data))
+	if len(data) > maxHTTPRequestBytes {
+		return nil, fmt.Errorf("config request body exceeds %d bytes", maxHTTPRequestBytes)
+	}
+	if req.GetBody == nil {
+		req.Body = io.NopCloser(bytes.NewReader(data))
+	}
 	return data, nil
 }
 
@@ -93,21 +103,25 @@ func (h *HandlerHTTP) IsDefault() bool {
 }
 
 func (h *HandlerHTTP) httpClient() *http.Client {
-	if h.Client != nil {
-		return h.Client
+	// Re-check the URL scheme on every redirect hop even when the caller
+	// supplies a client. Otherwise its default redirect policy could downgrade
+	// an HTTPS config endpoint to plaintext HTTP. Preserve the caller's own
+	// redirect policy as an additional check, and never mutate its Client.
+	base := h.Client
+	if base == nil {
+		base = defaultHTTPClient
 	}
-	// The default client re-checks the URL scheme on every redirect hop, so a
-	// https config endpoint cannot silently downgrade the connection by
-	// redirecting to a plaintext http URL (Go only strips sensitive headers on
-	// cross-host redirects, not on same-host scheme downgrades). A
-	// caller-supplied Client owns its own redirect policy.
-	client := *defaultHTTPClient
+	customRedirect := base.CheckRedirect
+	client := *base
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if err := h.checkURLScheme(req.URL); err != nil {
 			return fmt.Errorf("redirect refused: %w", err)
 		}
 		if len(via) >= 10 {
 			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if customRedirect != nil {
+			return customRedirect(req, via)
 		}
 		return nil
 	}
@@ -142,6 +156,24 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// redactHTTPError removes URL passwords from client errors. In particular,
+// net/http replaces url.Error.URL with the raw Location header after a
+// CheckRedirect failure, bypassing the redaction in checkURLScheme.
+func redactHTTPError(err error) error {
+	urlErr, ok := err.(*url.Error)
+	if !ok {
+		return err
+	}
+	redacted := *urlErr
+	parsed, parseErr := url.Parse(urlErr.URL)
+	if parseErr != nil {
+		redacted.URL = "<invalid URL>"
+	} else {
+		redacted.URL = parsed.Redacted()
+	}
+	return &redacted
+}
+
 // LoadConfig loads configuration from the HTTP source
 func (h *HandlerHTTP) LoadConfig() (json.RawMessage, error) {
 	if h.source == nil {
@@ -169,7 +201,7 @@ func (h *HandlerHTTP) LoadConfig() (json.RawMessage, error) {
 
 	resp, err := h.httpClient().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, redactHTTPError(err)
 	}
 	defer func() {
 		if resp != nil && resp.Body != nil {
@@ -213,7 +245,7 @@ func (h *HandlerHTTP) SaveConfig(data json.RawMessage) error {
 
 	resp, err := h.httpClient().Do(req)
 	if err != nil {
-		return err
+		return redactHTTPError(err)
 	}
 	defer func() {
 		if resp != nil && resp.Body != nil {

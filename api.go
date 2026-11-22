@@ -128,13 +128,19 @@ var currentLevel atomic.Int32
 func init() { currentLevel.Store(int32(LogLevelInfo)) }
 
 // SetLogLevel adjusts the verbosity of the global logger. Messages below the
-// given level are discarded by the underlying handler.
+// given level are discarded by the underlying handler. Unrecognised levels use
+// LogLevelInfo, consistently with ParseLogLevel and LogLevel.slogLevel.
 //
 // SetLogLevel forwards the level to any global logger that implements
 // cfglogger.LevelSetter (the built-in DefaultLogger does). If you supply a
 // custom logger that does not implement LevelSetter, that logger controls its
 // own level and SetLogLevel only records the level for a later SetLogOutput
 func SetLogLevel(level LogLevel) {
+	switch level {
+	case LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError, LogLevelNone:
+	default:
+		level = LogLevelInfo
+	}
 	currentLevel.Store(int32(level))
 	if ls, ok := GlobalLogger().(cfglogger.LevelSetter); ok {
 		ls.SetLevel(level.slogLevel())

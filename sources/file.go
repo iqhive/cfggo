@@ -90,6 +90,16 @@ func (h *HandlerFile) SaveConfig(data json.RawMessage) error {
 	// their current permissions.
 	mode := os.FileMode(0600)
 	if info, err := os.Stat(target); err == nil {
+		// An atomic replace only makes sense for a regular file. Anything
+		// else at the path (a FIFO, a device such as /dev/null, a socket, a
+		// directory) is there for a reason other than holding a config
+		// document: renaming over it would silently swap the special file
+		// for a regular one, breaking whatever depended on it (every writer
+		// of /dev/null would start filling a real file, for example). Point
+		// the handler at a regular path instead
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("configuration path %s is not a regular file (%s); refusing to replace it", target, info.Mode().Type())
+		}
 		mode = info.Mode().Perm()
 	} else if !os.IsNotExist(err) {
 		return err

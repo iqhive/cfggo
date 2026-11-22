@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/iqhive/cfggo/internal/safefmt"
 )
 
 // ErrValidation is a sentinel that all validation failures match via
@@ -53,7 +55,10 @@ func (v ValidationError) Error() string {
 		if src == "" {
 			src = "unknown"
 		}
-		return fmt.Sprintf("validation failed for '%s' (value=%v, from %s): %v", v.Key, v.Value, src, v.Err)
+		// The value renders through safefmt rather than fmt's %v: it can be
+		// a cyclic container, which fmt formats by recursing until the
+		// goroutine stack overflows — a fatal, unrecoverable process crash
+		return fmt.Sprintf("validation failed for '%s' (value=%s, from %s): %v", v.Key, safefmt.Sprint(v.Value), src, v.Err)
 	}
 	return fmt.Sprintf("validation failed for '%s': %v", v.Key, v.Err)
 }

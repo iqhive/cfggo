@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"regexp"
 	"unicode/utf8"
+
+	"github.com/iqhive/cfggo/internal/safefmt"
 )
 
 // Common validators
@@ -141,7 +143,9 @@ func Range(min, max float64) Validator {
 // compared as integers rather than through a lossy float64. Non-numeric values
 // must equal an option under reflect.DeepEqual
 func OneOf(options ...interface{}) Validator {
-	msg := fmt.Sprintf("value must be one of %v", options)
+	// Rendered through safefmt: an option may be a cyclic container, which
+	// fmt's %v formats by recursing until the stack overflows
+	msg := "value must be one of " + safefmt.Sprint(options)
 	return func(value interface{}) error {
 		for _, option := range options {
 			if reflect.DeepEqual(value, option) || numericEqual(value, option) {

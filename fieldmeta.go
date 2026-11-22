@@ -102,7 +102,7 @@ func (c *Structure) suggestKey(key string) string {
 		if !leaf.info.IsAccessor {
 			continue
 		}
-		distance := editDistance(key, candidate)
+		distance := editDistanceLimited(key, candidate, maxSuggestionDistance)
 		if best == "" || distance < bestDistance || (distance == bestDistance && candidate < best) {
 			best = candidate
 			bestDistance = distance
@@ -154,6 +154,116 @@ func suggestionDistanceLimit(a, b string) int {
 	}
 }
 
+// maxSuggestionDistance is the largest distance suggestionDistanceLimit can
+// return, so editDistanceLimited can cut off work beyond it
+const maxSuggestionDistance = 3
+
+// editDistanceLimited returns the Levenshtein distance between a and b when it
+// is at most limit, and limit+1 otherwise.
+//
+// suggestKey runs a distance computation for every (unknown key, known key)
+// pair, and the unknown keys come from a loaded document that can be filled
+// with arbitrary strings, so the full quadratic matrix would let a large
+// hostile file cost minutes of CPU at startup. Two properties of edit distance
+// bound the work instead:
+//
+//   - d(a, b) >= |len(a) - len(b)|, so a pair whose lengths differ by more
+//     than limit is rejected without allocating anything. This also means the
+//     bottom-right cell is always inside the final row's band, so the walk
+//     never reads a cell it did not write.
+//   - every cell of the dynamic program outside a diagonal band of width
+//     2*limit+1 is greater than limit, so only the band is filled (with a
+//     sentinel written on each edge so the next row never reads a stale
+//     cell), and the first row whose smallest value exceeds the limit ends
+//     the walk.
+//
+// Distances up to limit are exact, which is all the suggestion logic
+// compares: larger distances only ever mean "not a match" and are reported
+// as the single value limit+1. The walk is by bytes, matching editDistance,
+// so the two agree on every pair.
+func editDistanceLimited(a, b string, limit int) int {
+	if a == b {
+		return 0
+	}
+	exceeds := limit + 1
+	if abs(len(a)-len(b)) > limit {
+		return exceeds
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		if j <= limit {
+			prev[j] = j
+		} else {
+			prev[j] = exceeds
+		}
+	}
+	for i := 1; i <= len(a); i++ {
+		lo := i - limit
+		if lo < 1 {
+			lo = 1
+		}
+		hi := i + limit
+		if hi > len(b) {
+			hi = len(b)
+		}
+		// The j == 0 column is exact while it is inside the band, and a
+		// sentinel once i outruns the limit
+		if i <= limit {
+			curr[0] = i
+		} else {
+			curr[0] = exceeds
+		}
+		// Sentinel edges, so the next row's reads at lo-1 and hi+1 never see
+		// a cell this row did not write
+		if lo > 1 {
+			curr[lo-1] = exceeds
+		}
+		if hi < len(b) {
+			curr[hi+1] = exceeds
+		}
+		rowMin := curr[0]
+		for j := lo; j <= hi; j++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			d := prev[j] + 1
+			if v := curr[j-1] + 1; v < d {
+				d = v
+			}
+			if v := prev[j-1] + cost; v < d {
+				d = v
+			}
+			curr[j] = d
+			if d < rowMin {
+				rowMin = d
+			}
+		}
+		if rowMin > limit {
+			// Every remaining row can only be further away
+			return exceeds
+		}
+		prev, curr = curr, prev
+	}
+	if prev[len(b)] > limit {
+		return exceeds
+	}
+	return prev[len(b)]
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// editDistance is the plain, unbounded Levenshtein implementation. It is the
+// oracle editDistanceLimited is verified against in
+// TestEditDistanceLimitedMatchesPlain; the suggestion paths use the bounded
+// variant so a document full of long unknown keys cannot make suggestion
+// computation quadratic in the document size
 func editDistance(a, b string) int {
 	if a == b {
 		return 0

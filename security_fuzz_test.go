@@ -1,11 +1,13 @@
 package cfggo
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
 
 	iconvert "github.com/iqhive/cfggo/internal/convert"
+	"github.com/iqhive/cfggo/sources"
 )
 
 func FuzzDecodeJSONConfig(f *testing.F) {
@@ -52,5 +54,36 @@ func FuzzConvertStringDoesNotPanic(f *testing.F) {
 				t.Fatalf("ConvertString(%q, %v) returned %T (%v), which is not assignable to the target", input, target, converted, converted)
 			}
 		}
+	})
+}
+
+// FuzzRendersSurviveArbitraryDocuments loads an arbitrary JSON document into
+// a real configuration and runs every human-readable render path over it.
+// These paths (String, DiagnoseData, Report, ExplainKey) format stored values
+// directly, so a document that makes any of them panic, hang, or recurse
+// without bound is a process crash from untrusted configuration input.
+func FuzzRendersSurviveArbitraryDocuments(f *testing.F) {
+	for _, seed := range []string{
+		`{}`,
+		`{"data":{"nested":{"deep":[1,2,{"x":null}]}}}`,
+		`{"data":9007199254740993}`,
+		`{"data":"text"}`,
+		`{"data":[[[[[1]]]]]}`,
+		`{"unknown":{"key":true}}`,
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, document string) {
+		cfg := &renderSafetyConfig{}
+		if err := cfg.Init(cfg,
+			WithConfigHandler(sources.NewHandlerBytes(json.RawMessage(document), false)),
+			WithoutFlags(), WithoutEnv(),
+		); err != nil {
+			return
+		}
+		_ = cfg.String()
+		_ = cfg.DiagnoseData().String()
+		_ = cfg.Report()
+		_ = cfg.ExplainKey("data")
 	})
 }

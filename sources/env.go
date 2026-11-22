@@ -3,7 +3,9 @@ package sources
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -39,6 +41,9 @@ func (h *HandlerEnv) LoadConfig() (json.RawMessage, error) {
 	}
 
 	config := make(map[string]interface{})
+	// byKey remembers which raw variable name produced each converted key,
+	// so a collision is reported instead of silently resolved
+	byKey := make(map[string]string)
 
 	// Get all environment variables
 	for _, env := range os.Environ() {
@@ -49,6 +54,7 @@ func (h *HandlerEnv) LoadConfig() (json.RawMessage, error) {
 
 		key := parts[0]
 		value := parts[1]
+		rawName := key
 
 		// Apply prefix filter if specified, stripping the prefix from the raw
 		// environment variable name BEFORE converting "_" to "."
@@ -67,6 +73,21 @@ func (h *HandlerEnv) LoadConfig() (json.RawMessage, error) {
 		// A prefix without a trailing separator (e.g. "MYAPP") leaves a leading
 		// "_" that becomes a leading "."; drop it so keys line up with config
 		configKey = strings.TrimPrefix(configKey, ".")
+
+		// Two raw variables can map onto the same converted key: the mapping
+		// lowercases and turns "_" into "." (MYAPP_X and MYAPP__X, or MYAPP_x
+		// and MYAPP_X). Which one won used to depend on os.Environ order,
+		// so the same process could load a different value after a restart.
+		// The environment is an override layer that commonly carries secrets,
+		// so an ambiguous key is an error naming both variables — never the
+		// values — rather than a silent last-writer-wins
+		if prior, exists := byKey[configKey]; exists {
+			names := []string{prior, rawName}
+			sort.Strings(names)
+			return nil, fmt.Errorf("HandlerEnv: environment variables %s and %s both map to configuration key %q; unset or rename one of them",
+				names[0], names[1], configKey)
+		}
+		byKey[configKey] = rawName
 
 		// Try to parse as JSON first, fallback to string. Numbers are kept as
 		// json.Number so the literal is re-emitted verbatim by json.Marshal and

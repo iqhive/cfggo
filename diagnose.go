@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/iqhive/cfggo/internal/safefmt"
 	"github.com/iqhive/cfggo/validcfg"
 )
 
@@ -223,7 +224,7 @@ func (d Diagnostics) String() string {
 		if typ == "" {
 			typ = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%v\t%s\t%s\t%s\n", k.Key, k.Value, typ, k.Source, status)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", k.Key, displayValue(k.Value), typ, k.Source, status)
 	}
 	tw.Flush()
 
@@ -303,7 +304,7 @@ func (c *Structure) ExplainKey(key string) string {
 func (k KeyDiagnostic) Explain() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s:\n", k.Key)
-	fmt.Fprintf(&sb, "  value: %v\n", k.Value)
+	fmt.Fprintf(&sb, "  value: %s\n", displayValue(k.Value))
 	if k.Type != "" {
 		fmt.Fprintf(&sb, "  type: %s\n", k.Type)
 	} else {
@@ -407,7 +408,12 @@ func (c *Structure) renderHuman(withSource bool) string {
 
 // displayValue renders a configuration value for the human-readable dumps.
 // A pointer value (a func() *T field) is shown as what it points to rather
-// than as a memory address, which tells the reader nothing
+// than as a memory address, which tells the reader nothing.
+//
+// Rendering goes through safefmt rather than fmt's %v: a stored value can be
+// cyclic (Set accepts any value for an interface-typed key, and the clone
+// preserves cycles), and fmt recurses without cycle detection, which kills
+// the process with an unrecoverable stack overflow
 func displayValue(value interface{}) string {
 	if value == nil {
 		return "<nil>"
@@ -416,9 +422,9 @@ func displayValue(value interface{}) string {
 		if rv.IsNil() {
 			return "<nil>"
 		}
-		return fmt.Sprintf("%+v", rv.Elem().Interface())
+		return safefmt.Sprint(rv.Elem().Interface())
 	}
-	return fmt.Sprintf("%v", value)
+	return safefmt.Sprint(value)
 }
 
 // formatSourceChain joins a source chain with arrows, eg "default->env->set"

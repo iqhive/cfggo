@@ -1,12 +1,13 @@
 package cfglogger
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/iqhive/cfggo/internal/safefmt"
 )
 
 // Logger is the minimal logging surface cfggo depends on.
@@ -112,7 +113,10 @@ func formatValue(value any) string {
 		}
 	}
 
-	text := fmt.Sprint(value)
+	// Rendered through safefmt rather than fmt.Sprint: a logged attribute can
+	// carry a cyclic container, and fmt formats those by recursing until the
+	// goroutine stack overflows — a fatal, unrecoverable process crash
+	text := safefmt.Sprint(value)
 	if text == "" || strings.ContainsAny(text, " \t\r\n\"=") {
 		return strconv.Quote(text)
 	}

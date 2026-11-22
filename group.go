@@ -494,7 +494,7 @@ func (g *Group) suggestNamespace(name string) string {
 	best := ""
 	bestDistance := 0
 	for namespace := range g.namespaces {
-		distance := editDistance(name, namespace)
+		distance := editDistanceLimited(name, namespace, maxSuggestionDistance)
 		if best == "" || distance < bestDistance || (distance == bestDistance && namespace < best) {
 			best = namespace
 			bestDistance = distance
